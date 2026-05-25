@@ -210,7 +210,14 @@ export default function App() {
       const { getExportPreset } = await import('./data/export-presets');
       const preset = getExportPreset(exportPreset);
       const { resolveProcessingPlan } = await import('./data/preset-resolution');
-      const plan = resolveProcessingPlan({ genreId: gearProfile, exportPresetId: exportPreset });
+      const userOverrides = {
+        width: profileAdjustments.stereoWidth / 100,
+        bassTilt: profileAdjustments.lowShelfBoost,
+        mudCut: profileAdjustments.midRangeAdjust,
+        airTilt: profileAdjustments.highShelfBoost,
+        colorAmount: profileAdjustments.saturationAmount / 100,
+      };
+      const plan = resolveProcessingPlan({ genreId: gearProfile, exportPresetId: exportPreset, userOverrides });
       
       const settings = {
         circuitDrive,
@@ -219,13 +226,7 @@ export default function App() {
         exportPresetId: exportPreset,
         genreId: gearProfile,
         gearProfile,
-        userOverrides: {
-          width: profileAdjustments.stereoWidth / 100,
-          bassTilt: profileAdjustments.lowShelfBoost,
-          mudCut: profileAdjustments.midRangeAdjust,
-          airTilt: profileAdjustments.highShelfBoost,
-          colorAmount: profileAdjustments.saturationAmount / 100,
-        },
+        userOverrides,
       };
       
       player.rebuildChain(settings, plan, bypassMode, inputTrimDB);
@@ -304,6 +305,13 @@ export default function App() {
       const plan = resolveProcessingPlan({
         genreId: gearProfile,
         exportPresetId: exportPreset,
+        userOverrides: {
+          width: profileAdjustments.stereoWidth / 100,
+          bassTilt: profileAdjustments.lowShelfBoost,
+          mudCut: profileAdjustments.midRangeAdjust,
+          airTilt: profileAdjustments.highShelfBoost,
+          colorAmount: profileAdjustments.saturationAmount / 100,
+        },
       });
       
       // Initialize RealtimeAudioPlayer (processes audio live during playback)
@@ -506,6 +514,13 @@ export default function App() {
     const plan = resolveProcessingPlan({
       genreId: gearProfile,
       exportPresetId: exportPreset,
+      userOverrides: {
+        width: profileAdjustments.stereoWidth / 100,
+        bassTilt: profileAdjustments.lowShelfBoost,
+        mudCut: profileAdjustments.midRangeAdjust,
+        airTilt: profileAdjustments.highShelfBoost,
+        colorAmount: profileAdjustments.saturationAmount / 100,
+      },
     });
     
     const settings = {
