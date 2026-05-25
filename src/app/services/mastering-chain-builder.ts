@@ -429,12 +429,29 @@ function createSSLCompressor(
     compressor.release.value = 0.08;    // 80ms — pumping energy without suffocation
     compressor.knee.value = 4;          // Medium knee — not harsh
   } else {
-    // Dynamics mode — use loudnessStyle from genre preset
-    compressor.threshold.value = styleParams.ssl.threshold;
-    compressor.ratio.value = styleParams.ssl.ratio;
-    compressor.attack.value = styleParams.ssl.attack;
-    compressor.release.value = styleParams.ssl.release;
-    compressor.knee.value = styleParams.ssl.knee;
+    // Flow (dynamics) mode — use genre loudnessStyle BUT enforce dynamics-preserving ceiling.
+    // Flow must ALWAYS be gentler than Pressure. Genre params define character/timing,
+    // but we cap firmness so the waveform breathes.
+    //
+    // FLOW CEILINGS:
+    //   SSL threshold: no lower than -10 (Pressure is -6)
+    //   SSL ratio:     max 2.5 (Pressure is 4)
+    //   SSL attack:    min 8ms (Pressure is 5ms) — let transients through
+    //   SSL knee:      min 5 (Pressure is 4)
+    //   SSL release:   min 80ms
+    const flowThreshold = Math.max(styleParams.ssl.threshold, -10);
+    const flowRatio = Math.min(styleParams.ssl.ratio, 2.5);
+    const flowAttack = Math.max(styleParams.ssl.attack, 0.008);
+    const flowRelease = Math.max(styleParams.ssl.release, 0.08);
+    const flowKnee = Math.max(styleParams.ssl.knee, 5);
+
+    compressor.threshold.value = flowThreshold;
+    compressor.ratio.value = flowRatio;
+    compressor.attack.value = flowAttack;
+    compressor.release.value = flowRelease;
+    compressor.knee.value = flowKnee;
+    
+    console.log(`   [4] Flow SSL caps applied: threshold=${flowThreshold}dB, ratio=${flowRatio}:1, attack=${(flowAttack*1000).toFixed(0)}ms`);
   }
   
   // Unity gain output (SSL provides glue, not loudness)
@@ -574,18 +591,22 @@ function createLimiterStage(
   const isBrickwall = settings.logicMode === 'brickwall';
   
   // Use aggressive params if user chose brickwall, otherwise use loudnessStyle
+  // FLOW CEILING: In dynamics mode, cap limiter firmness to preserve dynamics.
+  // Flow must ALWAYS be gentler than Pressure.
   const limParams = isBrickwall 
     ? LOUDNESS_STYLE_PARAMS.aggressive.limiter 
     : styleParams.limiter;
+  // In Flow mode: disable Type1 WaveShaper (it adds aggressive punch/clipping)
+  // and use gentler Type2 knee — let the limiter be a safety net, not a loudness tool.
   const isType1Active = isBrickwall 
     ? LOUDNESS_STYLE_PARAMS.aggressive.type1Active 
-    : styleParams.type1Active;
+    : false;  // PATCH: Type1 off in Flow — it was adding aggressive clipping
   const type1ThresholdRatio = isBrickwall 
     ? LOUDNESS_STYLE_PARAMS.aggressive.type1ThresholdRatio 
-    : styleParams.type1ThresholdRatio;
+    : 0.99;   // PATCH: Effectively passthrough even if somehow active
   const type2KneeStart = isBrickwall 
     ? LOUDNESS_STYLE_PARAMS.aggressive.type2KneeStart 
-    : styleParams.type2KneeStart;
+    : Math.max(styleParams.type2KneeStart || 0.97, 0.97);  // PATCH: Gentle approach
   
   // === CEILING (from export preset, but loudnessStyle can't exceed it) ===
   const exportCeiling = params.deliveryTargets.ceiling;
@@ -601,7 +622,10 @@ function createLimiterStage(
   const requiredGainDB = targetLUFS - estimatedCurrentLUFS;
   
   // Clamp makeup by loudnessStyle's maxGR (prevents over-limiting)
-  const maxMakeupDB = isBrickwall ? 8 : limParams.maxGR;
+  // FLOW CEILING: In dynamics mode, cap maxGR to 4dB (Pressure allows 8dB).
+  // This is the single biggest lever — less makeup gain = less limiting = more dynamics.
+  const flowMaxGR = Math.min(limParams.maxGR, 4); // Flow: max 4dB gain reduction
+  const maxMakeupDB = isBrickwall ? 8 : flowMaxGR;
   const makeupGainDB = Math.max(-6, Math.min(requiredGainDB, maxMakeupDB));
   const makeupGainLinear = Math.pow(10, makeupGainDB / 20);
   
@@ -618,10 +642,21 @@ function createLimiterStage(
   // === DYNAMICS COMPRESSOR (primary limiter) ===
   const limiter = context.createDynamicsCompressor();
   limiter.threshold.value = finalCeiling - 3; // Start 3dB below ceiling
-  limiter.ratio.value = limParams.ratio;
-  limiter.attack.value = limParams.attack;
-  limiter.release.value = limParams.release;
-  limiter.knee.value = limParams.knee;
+  
+  // FLOW CEILING on limiter: cap ratio to 8 (Pressure uses 12), slower attack, softer knee
+  const flowLimRatio = isBrickwall ? limParams.ratio : Math.min(limParams.ratio, 8);
+  const flowLimAttack = isBrickwall ? limParams.attack : Math.max(limParams.attack, 0.003);
+  const flowLimRelease = isBrickwall ? limParams.release : Math.max(limParams.release, 0.10);
+  const flowLimKnee = isBrickwall ? limParams.knee : Math.max(limParams.knee, 4);
+  
+  limiter.ratio.value = flowLimRatio;
+  limiter.attack.value = flowLimAttack;
+  limiter.release.value = flowLimRelease;
+  limiter.knee.value = flowLimKnee;
+  
+  if (!isBrickwall) {
+    console.log(`   [6] Flow limiter caps applied: ratio=${flowLimRatio}:1, maxGR=${flowMaxGR}dB, attack=${(flowLimAttack*1000).toFixed(0)}ms`);
+  }
   
   // === TYPE 1 WAVESHAPER (Punchy Limiter) ===
   // Active in aggressive/brickwall mode, bypassed in balanced/clean
