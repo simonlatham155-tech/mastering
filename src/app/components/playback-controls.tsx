@@ -45,7 +45,10 @@ export function PlaybackControls({
   const waveformCanvasRef = useRef<HTMLCanvasElement | null>(null);
   
   // Current buffer (bypass mode determines which one to show)
-  const currentBuffer = bypassMode ? originalBuffer : (originalBuffer || null); // Always show original waveform for now
+  // PATCH 2026-05-25: Show processed waveform when in processed mode (was always showing original)
+  const currentBuffer = bypassMode
+    ? originalBuffer                                    // A/B = Original → show original waveform
+    : (processedBuffer || originalBuffer || null);      // A/B = Processed → show processed waveform (fallback to original if not rendered yet)
   
   // Handle slider change (while dragging)
   const handleSliderChange = (value: number[]) => {

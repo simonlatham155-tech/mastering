@@ -217,6 +217,17 @@ export default function App() {
       
       player.rebuildChain(settings, plan, bypassMode);
       console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
+      
+      // Re-render processed waveform in background for visualization
+      (async () => {
+        try {
+          const waveformBuffer = await audioProcessor.renderExport(settings);
+          setProcessedBuffer(waveformBuffer);
+          console.log('🎨 Processed waveform updated after settings change');
+        } catch (err) {
+          console.warn('Waveform re-render failed (non-critical):', err);
+        }
+      })();
     };
     
     rebuildAsync();
@@ -294,6 +305,34 @@ export default function App() {
       console.log('   No pre-rendering! Instant start! 🚀');
       
       toast.success('⚡ Draft mode ready - hit play to hear live processing!');
+      
+      // === BACKGROUND: Render processed waveform for visualization ===
+      // This runs async after the player is ready — doesn't block playback.
+      // The user can start playing immediately; waveform appears when ready.
+      (async () => {
+        try {
+          console.log('🎨 Generating processed waveform for visualization...');
+          const waveformBuffer = await audioProcessor.renderExport({
+            circuitDrive,
+            logicMode,
+            genreId: gearProfile,
+            exportPresetId: exportPreset,
+            targetLUFS: preset.lufs,
+            gearProfile,
+            userOverrides: {
+              width: profileAdjustments.stereoWidth / 100,
+              lowShelfBoost: profileAdjustments.lowShelfBoost,
+              midRangeAdjust: profileAdjustments.midRangeAdjust,
+              highShelfBoost: profileAdjustments.highShelfBoost,
+              saturationAmount: profileAdjustments.saturationAmount / 100,
+            },
+          });
+          setProcessedBuffer(waveformBuffer);
+          console.log('🎨 Processed waveform ready for visualization');
+        } catch (err) {
+          console.warn('Waveform render failed (non-critical):', err);
+        }
+      })();
       
       // Set up playback state polling
       const pollInterval = setInterval(() => {
@@ -970,7 +1009,7 @@ export default function App() {
                 bypassMode={bypassMode}
                 onBypassToggle={handleBypassToggle}
                 originalBuffer={originalBuffer}
-                processedBuffer={null}
+                processedBuffer={processedBuffer}
               />
             </div>
             
