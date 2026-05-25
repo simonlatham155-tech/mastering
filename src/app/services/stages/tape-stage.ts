@@ -115,9 +115,9 @@ export function buildTapeStage(
   for (let i = 0; i < 65536; i++) {
     const x = (i * 2 - 65536) / 65536;
     
-    // Tape input gain staging — wider range for audible THD control
-    // PATCH: Was 0.3 (1x-1.3x) — too subtle to hear. Now 1.5 (1x-2.5x)
-    const drive = 1 + driveAmount * 1.5; // 1x to 2.5x drive
+    // Tape input gain staging — audible THD without over-driving into limiter
+    // PATCH v2: Was 0.3 (inaudible), then 1.5 (too hot). Now 0.8 (1x-1.8x)
+    const drive = 1 + driveAmount * 0.8; // 1x to 1.8x drive
     const driven = x * drive;
     
     // === HYSTERESIS MODELING ===
@@ -135,8 +135,8 @@ export function buildTapeStage(
     
     // === TAPE HARMONIC COLORATION ===
     // Studer A800 spec: Harmonics scaled by drive for audible THD control
-    // PATCH: Was fixed 1.5%/0.8%/0.3% — now scales with driveAmount so knob matters
-    const harmonicScale = 1 + driveAmount * 3; // 1x at 0%, 4x at 100%
+    // PATCH v2: Harmonics scale with drive — audible but not overwhelming
+    const harmonicScale = 1 + driveAmount * 2; // 1x at 0%, 3x at 100%
     const thirdHarmonic = 0.015 * harmonicScale * Math.sin(3 * Math.PI * saturated);
     const fifthHarmonic = 0.008 * harmonicScale * Math.sin(5 * Math.PI * saturated);
     const seventhHarmonic = 0.003 * harmonicScale * Math.sin(7 * Math.PI * saturated);
@@ -175,7 +175,7 @@ export function buildTapeStage(
   
   // === INITIAL DRIVE + COMPENSATION ===
   // Initial drive + preGain
-  const preGain = Math.max(0.1, 1.0 + driveAmount * 1.5); // PATCH: Match wider drive range
+  const preGain = Math.max(0.1, 1.0 + driveAmount * 0.8); // PATCH v2: Match drive range
   
   // Apply preGain
   driveGain.gain.value = preGain;
@@ -202,8 +202,8 @@ export function buildTapeStage(
     setDrive(ctx: BaseAudioContext, drive: number, genreMult: number, genreId: string) {
       const compProfile = getCompProfile(genreId);
       
-      // Physical preGain from control signal — PATCH: Match wider drive range
-      const preGain = Math.max(0.1, 1.0 + drive * 1.5);
+      // Physical preGain from control signal — PATCH v2: Match drive range
+      const preGain = Math.max(0.1, 1.0 + drive * 0.8);
       const preGainDB = linearToDb(preGain);
       
       // Compensation from physical signal

@@ -116,24 +116,24 @@ const LOUDNESS_STYLE_PARAMS: Record<string, LoudnessStyleParams> = {
   aggressive: {
     ssl: {
       threshold: -4,      // Hit harder
-      ratio: 6,           // Strong glue
-      knee: 2,            // Hard knee
+      ratio: 4,           // PATCH: Was 6 — firm glue, not demolition
+      knee: 3,            // PATCH: Was 2 — slightly softer
       attack: 0.003,      // 3ms — catch transients
-      release: 0.05,      // 50ms — pumping energy
+      release: 0.06,      // 60ms — pumping energy
     },
     limiter: {
-      ratio: 20,          // Hard limiting
-      knee: 1,            // Near-hard knee
+      ratio: 12,          // PATCH: Was 20 — strong but not brick
+      knee: 2,            // PATCH: Was 1 — slightly softer
       attack: 0.001,      // 1ms — fast catch
-      release: 0.05,      // 50ms — pump energy for club/festival
+      release: 0.06,      // 60ms — pump energy for club/festival
       lookAhead: 0.010,   // 10ms — transparency
       holdTime: 0.0005,   // 0.5ms — fast limiting
-      maxGR: 8,           // Allow heavy limiting
+      maxGR: 6,           // PATCH: Was 8 — prevent over-squash
       ceiling: -0.3,      // Tight ceiling (overridden by export preset)
     },
     type1Active: true,
-    type1ThresholdRatio: 0.5,     // -6dB below ceiling = aggressive shaping
-    type2KneeStart: 0.95,        // Knee starts at 95% of ceiling
+    type1ThresholdRatio: 0.7,     // PATCH: Was 0.5 — less aggressive shaping
+    type2KneeStart: 0.96,        // PATCH: Was 0.95 — slightly gentler approach
   },
 
   balanced: {
@@ -407,13 +407,14 @@ function createSSLCompressor(
     compressor.release.value = 0.1;
     compressor.knee.value = 6;
   } else if (settings.logicMode === 'brickwall') {
-    // User explicitly chose brickwall — override genre loudnessStyle
-    // This is the "I want LOUD" button
-    compressor.threshold.value = -2;
-    compressor.ratio.value = 12;
-    compressor.attack.value = 0.003;    // 3ms
-    compressor.release.value = 0.05;    // 50ms
-    compressor.knee.value = 2;          // Hard
+    // User explicitly chose Pressure — firmer than Flow, but NOT demolishing
+    // PATCH: Was -2dB/12:1 — produced sausage waveforms on everything.
+    // Now -6dB/4:1 — audible punch and glue without destroying dynamics.
+    compressor.threshold.value = -6;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.005;    // 5ms — catch transients, preserve some snap
+    compressor.release.value = 0.08;    // 80ms — pumping energy without suffocation
+    compressor.knee.value = 4;          // Medium knee — not harsh
   } else {
     // Dynamics mode — use loudnessStyle from genre preset
     compressor.threshold.value = styleParams.ssl.threshold;
