@@ -208,10 +208,10 @@ export default function App() {
         gearProfile,
         userOverrides: {
           width: profileAdjustments.stereoWidth / 100,
-          lowShelfBoost: profileAdjustments.lowShelfBoost,
-          midRangeAdjust: profileAdjustments.midRangeAdjust,
-          highShelfBoost: profileAdjustments.highShelfBoost,
-          saturationAmount: profileAdjustments.saturationAmount / 100,
+          bassTilt: profileAdjustments.lowShelfBoost,
+          mudCut: profileAdjustments.midRangeAdjust,
+          airTilt: profileAdjustments.highShelfBoost,
+          colorAmount: profileAdjustments.saturationAmount / 100,
         },
       };
       
@@ -321,10 +321,10 @@ export default function App() {
             gearProfile,
             userOverrides: {
               width: profileAdjustments.stereoWidth / 100,
-              lowShelfBoost: profileAdjustments.lowShelfBoost,
-              midRangeAdjust: profileAdjustments.midRangeAdjust,
-              highShelfBoost: profileAdjustments.highShelfBoost,
-              saturationAmount: profileAdjustments.saturationAmount / 100,
+              bassTilt: profileAdjustments.lowShelfBoost,
+              mudCut: profileAdjustments.midRangeAdjust,
+              airTilt: profileAdjustments.highShelfBoost,
+              colorAmount: profileAdjustments.saturationAmount / 100,
             },
           });
           setProcessedBuffer(waveformBuffer);
@@ -447,10 +447,10 @@ export default function App() {
         gearProfile, // Legacy - keep during migration
         userOverrides: {
           width: profileAdjustments.stereoWidth / 100, // Convert 0-100% to 0-1.0
-          lowShelfBoost: profileAdjustments.lowShelfBoost,
-          midRangeAdjust: profileAdjustments.midRangeAdjust,
-          highShelfBoost: profileAdjustments.highShelfBoost,
-          saturationAmount: profileAdjustments.saturationAmount / 100, // Convert 0-100% to 0-1.0
+          bassTilt: profileAdjustments.lowShelfBoost,
+          mudCut: profileAdjustments.midRangeAdjust,
+          airTilt: profileAdjustments.highShelfBoost,
+          colorAmount: profileAdjustments.saturationAmount / 100, // Convert 0-100% to 0-1.0
         },
       });
 
@@ -504,10 +504,10 @@ export default function App() {
       gearProfile,
       userOverrides: {
         width: profileAdjustments.stereoWidth / 100,
-        lowShelfBoost: profileAdjustments.lowShelfBoost,
-        midRangeAdjust: profileAdjustments.midRangeAdjust,
-        highShelfBoost: profileAdjustments.highShelfBoost,
-        saturationAmount: profileAdjustments.saturationAmount / 100,
+        bassTilt: profileAdjustments.lowShelfBoost,
+        mudCut: profileAdjustments.midRangeAdjust,
+        airTilt: profileAdjustments.highShelfBoost,
+        colorAmount: profileAdjustments.saturationAmount / 100,
       },
     };
     

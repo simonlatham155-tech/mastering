@@ -73,7 +73,7 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
             {/* Mid Range */}
             <div>
               <div className="flex justify-between items-baseline mb-1">
-                <span className="text-xs font-mono text-zinc-600">Mid Range (1-4kHz)</span>
+                <span className="text-xs font-mono text-zinc-600">Mud Cut (250Hz)</span>
                 <span className="text-sm font-mono text-emerald-400">
                   {adjustments.midRangeAdjust > 0 ? '+' : ''}{adjustments.midRangeAdjust.toFixed(1)}dB
                 </span>

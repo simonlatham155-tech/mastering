@@ -98,7 +98,8 @@ export function buildTransformerStage(
     const biased = x + asymmetry * x * x;
     
     // Drive amount (subtle - character, not distortion)
-    const drive = 1.0 + config.saturationAmount * 0.15; // Max 1.15x drive
+    // PATCH: Was 0.15 (max 1.15x) — too subtle. Now 0.8 (max 1.8x)
+    const drive = 1.0 + config.saturationAmount * 0.8; // Max 1.8x drive
     const driven = biased * drive;
     const threshold = 0.5; // Only saturate peaks
     
@@ -176,7 +177,7 @@ export function buildTransformerStage(
       const compProfile = getCompProfile(genreId);
       
       // Compute physical preGain from control signal
-      const preGain = Math.max(0.1, 1.0 + drive * 0.15);
+      const preGain = Math.max(0.1, 1.0 + drive * 0.8);
       const preGainDB = linearToDb(preGain);
       
       // Compute compensation from physical signal
