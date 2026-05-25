@@ -9,6 +9,17 @@ interface InterSamplePeakMeterProps {
 }
 
 /**
+ * Map dB value to meter bar width percentage.
+ * -20dB → 0%, 0dB → 90% (aligned with the 0dB red marker at right-[10%]).
+ * Above 0dB extends into the red zone: 0dB → 90%, +3dB → 100%.
+ */
+function dbToMeterWidth(db: number): number {
+  if (db <= -20) return 0;
+  if (db <= 0) return ((db + 20) / 20) * 90;       // -20..0 maps to 0..90%
+  return Math.min(100, 90 + (db / 3) * 10);         // 0..+3 maps to 90..100%
+}
+
+/**
  * INTER-SAMPLE PEAK METER
  * "The Aha! Moment"
  * 
@@ -118,11 +129,11 @@ export function InterSamplePeakMeter({
             <motion.div
               className="absolute inset-y-0 left-0 bg-green-500"
               style={{
-                width: `${Math.min(100, ((digitalPeakDB + 20) / 20) * 100)}%`
+                width: `${dbToMeterWidth(digitalPeakDB)}%`
               }}
               initial={{ width: 0 }}
               animate={{
-                width: `${Math.min(100, ((digitalPeakDB + 20) / 20) * 100)}%`
+                width: `${dbToMeterWidth(digitalPeakDB)}%`
               }}
             />
             
@@ -158,11 +169,11 @@ export function InterSamplePeakMeter({
                 truePeakDBTP > 0 ? 'bg-red-500' : 'bg-green-500'
               }`}
               style={{
-                width: `${Math.min(100, ((truePeakDBTP + 20) / 20) * 100)}%`
+                width: `${dbToMeterWidth(truePeakDBTP)}%`
               }}
               initial={{ width: 0 }}
               animate={{
-                width: `${Math.min(100, ((truePeakDBTP + 20) / 20) * 100)}%`,
+                width: `${dbToMeterWidth(truePeakDBTP)}%`,
                 opacity: truePeakDBTP > 0 ? [0.8, 1, 0.8] : 1
               }}
               transition={truePeakDBTP > 0 ? {
