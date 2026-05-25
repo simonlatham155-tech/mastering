@@ -455,7 +455,7 @@ export class AudioProcessor {
    * This is the high-quality offline render for final export.
    * Uses OfflineAudioContext with full oversampling and integrated LUFS.
    */
-  async renderExport(settings: ProcessingSettings): Promise<AudioBuffer> {
+  async renderExport(settings: ProcessingSettings, inputTrimDB?: number): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
     }
@@ -502,6 +502,7 @@ export class AudioProcessor {
       settings,
       quality: 'export',
       useMinimalMaster,
+      inputTrimDB,
     });
 
     // Create source

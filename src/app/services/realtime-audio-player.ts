@@ -44,6 +44,7 @@ export class RealtimeAudioPlayer {
   private currentSettings: ProcessingSettings | null = null;
   private currentPlan: ProcessingPlan | null = null;
   private currentBypassMode: boolean = false;
+  private currentInputTrimDB: number | undefined = undefined;
   private isSwitchingBypass: boolean = false; // Flag to prevent state corruption during A/B switch
   
   constructor() {
@@ -71,7 +72,7 @@ export class RealtimeAudioPlayer {
    * Previously the chain was reused even when settings changed, meaning slider
    * tweaks made while paused were silently ignored.
    */
-  play(settings: ProcessingSettings, plan: ProcessingPlan, useMinimalMaster: boolean): void {
+  play(settings: ProcessingSettings, plan: ProcessingPlan, useMinimalMaster: boolean, inputTrimDB?: number): void {
     if (!this.audioContext || !this.audioBuffer) {
       throw new Error('No audio loaded');
     }
@@ -97,6 +98,7 @@ export class RealtimeAudioPlayer {
     this.currentSettings = settings;
     this.currentPlan = plan;
     this.currentBypassMode = useMinimalMaster;
+    this.currentInputTrimDB = inputTrimDB;
     
     // Build or rebuild mastering chain
     if (!this.masteringChain || settingsChanged) {
@@ -112,6 +114,7 @@ export class RealtimeAudioPlayer {
         settings,
         quality: 'draft',
         useMinimalMaster,
+        inputTrimDB,
       });
       
       if (settingsChanged) {
@@ -310,7 +313,7 @@ export class RealtimeAudioPlayer {
    * Rebuild the mastering chain (only needed when switching quality mode or major setting changes)
    * This WILL cause a momentary interruption
    */
-  rebuildChain(settings: ProcessingSettings, plan: ProcessingPlan, useMinimalMaster: boolean): void {
+  rebuildChain(settings: ProcessingSettings, plan: ProcessingPlan, useMinimalMaster: boolean, inputTrimDB?: number): void {
     const wasPlaying = this.isPlaying;
     const currentPosition = this.getState().currentTime;
     
@@ -341,6 +344,7 @@ export class RealtimeAudioPlayer {
         settings,
         quality: 'draft',
         useMinimalMaster,
+        inputTrimDB,
       });
     }
     
@@ -411,6 +415,7 @@ export class RealtimeAudioPlayer {
       settings: this.currentSettings,
       quality: 'draft',
       useMinimalMaster: newBypassMode,
+      inputTrimDB: this.currentInputTrimDB,
     });
     
     // Create new source and resume from saved position

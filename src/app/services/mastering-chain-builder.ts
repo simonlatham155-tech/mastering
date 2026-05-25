@@ -42,6 +42,7 @@ export interface MasteringChainConfig {
   settings: ProcessingSettings;
   quality: QualityMode;
   useMinimalMaster: boolean;
+  inputTrimDB?: number; // Auto input trim (negative = attenuate). Applied before any processing.
 }
 
 export interface MasteringChain {
@@ -196,7 +197,7 @@ const LOUDNESS_STYLE_PARAMS: Record<string, LoudnessStyleParams> = {
  * 6. Limiter (peak management + loudness targeting — loudnessStyle controls behavior)
  */
 export function buildMasteringChain(config: MasteringChainConfig): MasteringChain {
-  const { context, destination, params, settings, quality, useMinimalMaster } = config;
+  const { context, destination, params, settings, quality, useMinimalMaster, inputTrimDB } = config;
   
   const loudnessStyle = params.genreBehavior.loudnessStyle;
   const styleParams = LOUDNESS_STYLE_PARAMS[loudnessStyle] || LOUDNESS_STYLE_PARAMS.balanced;
@@ -214,6 +215,18 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   
   // Track current node in chain
   let currentNode: AudioNode = chainInput;
+  
+  // === AUTO INPUT TRIM ===
+  // If the input mix is too hot (peaks above -3dB), attenuate before any processing.
+  // This gives the saturation and compression stages proper headroom to work.
+  // The limiter's makeup gain brings the level back up at the end.
+  if (inputTrimDB && inputTrimDB < 0) {
+    const trimGain = context.createGain();
+    trimGain.gain.value = Math.pow(10, inputTrimDB / 20);
+    currentNode.connect(trimGain);
+    currentNode = trimGain;
+    console.log(`   [PRE] Input Trim: ${inputTrimDB.toFixed(1)}dB (auto headroom correction)`);
+  }
   
   // Track parameters for live updates
   const parameters: ChainParameters = {

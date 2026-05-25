@@ -51,6 +51,19 @@ export default function App() {
   const [meterValues, setMeterValues] = useState({ peak: 0, lra: 0 });
   const [heritageProfile, setHeritageProfile] = useState<HeritageProfile>('none');
   
+  // Auto Input Trim — if the mix peaks above -3dB, attenuate to give the chain headroom.
+  // Same as a mastering engineer turning down the input gain on a hot mix.
+  const inputTrimDB = (() => {
+    if (!analysis) return undefined;
+    const peakDB = analysis.peakLevel; // dBFS (negative)
+    const TARGET_HEADROOM = -6; // Where we want peaks to sit before processing
+    const TRIM_THRESHOLD = -3;  // Only trim if peaks are hotter than this
+    if (peakDB > TRIM_THRESHOLD) {
+      return TARGET_HEADROOM - peakDB; // Negative value = attenuate
+    }
+    return undefined; // No trim needed — mix has enough headroom
+  })();
+
   // Real-time audio player (processes audio live during playback - NO pre-rendering!)
   const realtimePlayerRef = useRef<RealtimeAudioPlayer | null>(null);
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
@@ -215,13 +228,13 @@ export default function App() {
         },
       };
       
-      player.rebuildChain(settings, plan, bypassMode);
+      player.rebuildChain(settings, plan, bypassMode, inputTrimDB);
       console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
       
       // Re-render processed waveform in background for visualization
       (async () => {
         try {
-          const waveformBuffer = await audioProcessor.renderExport(settings);
+          const waveformBuffer = await audioProcessor.renderExport(settings, inputTrimDB);
           setProcessedBuffer(waveformBuffer);
           console.log('🎨 Processed waveform updated after settings change');
         } catch (err) {
@@ -326,7 +339,7 @@ export default function App() {
               airTilt: profileAdjustments.highShelfBoost,
               colorAmount: profileAdjustments.saturationAmount / 100,
             },
-          });
+          }, inputTrimDB);
           setProcessedBuffer(waveformBuffer);
           console.log('🎨 Processed waveform ready for visualization');
         } catch (err) {
@@ -452,7 +465,7 @@ export default function App() {
           airTilt: profileAdjustments.highShelfBoost,
           colorAmount: profileAdjustments.saturationAmount / 100, // Convert 0-100% to 0-1.0
         },
-      });
+      }, inputTrimDB);
 
       // Export as WAV
       const blob = await audioProcessor.exportAsWAV(finalBuffer);
@@ -511,7 +524,7 @@ export default function App() {
       },
     };
     
-    realtimePlayerRef.current.play(settings, plan, bypassMode);
+    realtimePlayerRef.current.play(settings, plan, bypassMode, inputTrimDB);
   };
   
   const handlePause = () => {
@@ -596,6 +609,22 @@ export default function App() {
                 onDismiss={() => setShowHeritageAlert(false)}
               />
             </div>
+
+            {/* Input Trim Indicator */}
+            {inputTrimDB && inputTrimDB < 0 && (
+              <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-300 text-sm">
+                <span>🎚️</span>
+                <span>Input trimmed by <strong>{Math.abs(inputTrimDB).toFixed(1)}dB</strong> — your mix peaks at {analysis?.peakLevel?.toFixed(1)}dBFS. Headroom applied automatically for clean processing.</span>
+              </div>
+            )}
+
+            {/* Low Dynamic Range Warning */}
+            {analysis && analysis.dynamicRange < 6 && (
+              <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm">
+                <span>⚠️</span>
+                <span>Dynamic range is only <strong>{analysis.dynamicRange.toFixed(1)}dB</strong>. This mix may already be heavily compressed. If you have a limiter on your mix bus, try bypassing it before exporting.</span>
+              </div>
+            )}
 
             {/* Audio Input Section (Upload + Performance Mode) */}
             <div className="mb-6">
