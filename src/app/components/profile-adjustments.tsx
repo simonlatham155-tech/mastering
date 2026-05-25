@@ -47,7 +47,7 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
             {/* Low Shelf */}
             <div>
               <div className="flex justify-between items-baseline mb-1">
-                <span className="text-xs font-mono text-zinc-600">Low Shelf (80Hz)</span>
+                <span className="text-xs font-mono text-zinc-600">Low Shelf (80Hz) ±</span>
                 <span className="text-sm font-mono text-cyan-400">
                   {adjustments.lowShelfBoost > 0 ? '+' : ''}{adjustments.lowShelfBoost.toFixed(1)}dB
                 </span>
@@ -73,7 +73,7 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
             {/* Mid Range */}
             <div>
               <div className="flex justify-between items-baseline mb-1">
-                <span className="text-xs font-mono text-zinc-600">Mud Cut (250Hz)</span>
+                <span className="text-xs font-mono text-zinc-600">Mud Cut (250Hz) ±</span>
                 <span className="text-sm font-mono text-emerald-400">
                   {adjustments.midRangeAdjust > 0 ? '+' : ''}{adjustments.midRangeAdjust.toFixed(1)}dB
                 </span>
@@ -99,7 +99,7 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
             {/* High Shelf */}
             <div>
               <div className="flex justify-between items-baseline mb-1">
-                <span className="text-xs font-mono text-zinc-600">High Shelf (12kHz)</span>
+                <span className="text-xs font-mono text-zinc-600">High Shelf (12kHz) ±</span>
                 <span className="text-sm font-mono text-blue-400">
                   {adjustments.highShelfBoost > 0 ? '+' : ''}{adjustments.highShelfBoost.toFixed(1)}dB
                 </span>

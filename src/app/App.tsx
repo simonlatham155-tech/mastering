@@ -24,6 +24,7 @@ import { AdvancedCompressorControls, AdvancedCompressorSettings } from './compon
 import { AudioPlayer } from './components/audio-player';
 import { ProfileAdjustmentsPanel, ProfileAdjustments } from './components/profile-adjustments';
 import { resolveProcessingPlan } from './data/preset-resolution';
+import { getGenrePreset } from './data/genre-presets';
 import { toast, Toaster } from 'sonner';
 import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio-processor';
 import { analyzeAudioFile as analyzeInputAudio, AudioAnalysisResult } from './utils/audio-analyzer';
@@ -165,30 +166,35 @@ export default function App() {
   // Wire profile adjustment sliders to real-time audio parameter updates.
   // These fire instantly via AudioParam.setTargetAtTime (50ms ramp, no clicks).
   
-  // EQ + Stereo Width + Saturation → live updateParameter calls
+  // EQ + Stereo Width → live updateParameter calls (instant, no clicks)
+  // All slider values are OFFSETS from genre defaults (slider 0 / 50% = no change)
+  //
+  // NOTE: Saturation slider does NOT live-update drive AudioParams because
+  // transformer/tape drive involves preGain + auto-gain compensation that
+  // can't be set via a single AudioParam. Saturation applies on chain rebuild
+  // (triggered by the separate useEffect below).
   useEffect(() => {
     const player = realtimePlayerRef.current;
     if (!player) return;
     
-    // EQ: direct dB values
-    player.updateParameter('lowShelfGain', profileAdjustments.lowShelfBoost);
-    player.updateParameter('midRangeGain', profileAdjustments.midRangeAdjust);
-    player.updateParameter('highShelfGain', profileAdjustments.highShelfBoost);
+    const genre = getGenrePreset(gearProfile);
+    if (!genre) return;
     
-    // Stereo Width: 0-100% → 0-1.0
-    player.updateParameter('stereoWidth', profileAdjustments.stereoWidth / 100);
+    // EQ: genre default + slider offset (slider 0 = genre default, +3 = genre + 3dB)
+    player.updateParameter('lowShelfGain', genre.biases.bassTilt + profileAdjustments.lowShelfBoost);
+    player.updateParameter('midRangeGain', genre.biases.mudCut + profileAdjustments.midRangeAdjust);
+    player.updateParameter('highShelfGain', genre.biases.airTilt + profileAdjustments.highShelfBoost);
     
-    // Saturation: drive both transformer and tape proportionally
-    // saturationAmount 0-100 → transformer drive 0-1, tape drive 0-0.5
-    const satNorm = profileAdjustments.saturationAmount / 100;
-    player.updateParameter('transformerDrive', satNorm);
-    player.updateParameter('tapeDrive', satNorm * 0.5);
-  }, [profileAdjustments]);
+    // Stereo Width: genre default + offset (50% = genre default, 0% = -0.3, 100% = +0.3)
+    const widthOffset = (profileAdjustments.stereoWidth - 50) / 100 * 0.6;
+    player.updateParameter('stereoWidth', genre.biases.width + widthOffset);
+  }, [profileAdjustments.lowShelfBoost, profileAdjustments.midRangeAdjust, 
+      profileAdjustments.highShelfBoost, profileAdjustments.stereoWidth, gearProfile]);
   
   // Logic Mode / Genre / Export Preset → full chain rebuild (changes DSP topology)
   // Uses a ref to track previous values so we only rebuild on actual changes,
   // not on initial mount.
-  const prevChainSettingsRef = useRef({ logicMode, gearProfile, exportPreset, circuitDrive });
+  const prevChainSettingsRef = useRef({ logicMode, gearProfile, exportPreset, circuitDrive, saturationAmount: profileAdjustments.saturationAmount });
   
   useEffect(() => {
     const prev = prevChainSettingsRef.current;
@@ -196,9 +202,10 @@ export default function App() {
       prev.logicMode !== logicMode ||
       prev.gearProfile !== gearProfile ||
       prev.exportPreset !== exportPreset ||
-      prev.circuitDrive !== circuitDrive
+      prev.circuitDrive !== circuitDrive ||
+      prev.saturationAmount !== profileAdjustments.saturationAmount
     );
-    prevChainSettingsRef.current = { logicMode, gearProfile, exportPreset, circuitDrive };
+    prevChainSettingsRef.current = { logicMode, gearProfile, exportPreset, circuitDrive, saturationAmount: profileAdjustments.saturationAmount };
     
     if (!changed) return; // Skip initial mount
     
@@ -211,11 +218,11 @@ export default function App() {
       const preset = getExportPreset(exportPreset);
       const { resolveProcessingPlan } = await import('./data/preset-resolution');
       const userOverrides = {
-        width: profileAdjustments.stereoWidth / 100,
+        width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
         bassTilt: profileAdjustments.lowShelfBoost,
         mudCut: profileAdjustments.midRangeAdjust,
         airTilt: profileAdjustments.highShelfBoost,
-        colorAmount: profileAdjustments.saturationAmount / 100,
+        colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
       };
       const plan = resolveProcessingPlan({ genreId: gearProfile, exportPresetId: exportPreset, userOverrides });
       
@@ -306,11 +313,11 @@ export default function App() {
         genreId: gearProfile,
         exportPresetId: exportPreset,
         userOverrides: {
-          width: profileAdjustments.stereoWidth / 100,
+          width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
           bassTilt: profileAdjustments.lowShelfBoost,
           mudCut: profileAdjustments.midRangeAdjust,
           airTilt: profileAdjustments.highShelfBoost,
-          colorAmount: profileAdjustments.saturationAmount / 100,
+          colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
         },
       });
       
@@ -341,11 +348,11 @@ export default function App() {
             targetLUFS: preset.lufs,
             gearProfile,
             userOverrides: {
-              width: profileAdjustments.stereoWidth / 100,
+              width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
               bassTilt: profileAdjustments.lowShelfBoost,
               mudCut: profileAdjustments.midRangeAdjust,
               airTilt: profileAdjustments.highShelfBoost,
-              colorAmount: profileAdjustments.saturationAmount / 100,
+              colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
             },
           }, inputTrimDB);
           setProcessedBuffer(waveformBuffer);
@@ -467,11 +474,11 @@ export default function App() {
         targetLUFS,
         gearProfile, // Legacy - keep during migration
         userOverrides: {
-          width: profileAdjustments.stereoWidth / 100, // Convert 0-100% to 0-1.0
+          width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
           bassTilt: profileAdjustments.lowShelfBoost,
           mudCut: profileAdjustments.midRangeAdjust,
           airTilt: profileAdjustments.highShelfBoost,
-          colorAmount: profileAdjustments.saturationAmount / 100, // Convert 0-100% to 0-1.0
+          colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
         },
       }, inputTrimDB);
 
@@ -515,11 +522,11 @@ export default function App() {
       genreId: gearProfile,
       exportPresetId: exportPreset,
       userOverrides: {
-        width: profileAdjustments.stereoWidth / 100,
+        width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
         bassTilt: profileAdjustments.lowShelfBoost,
         mudCut: profileAdjustments.midRangeAdjust,
         airTilt: profileAdjustments.highShelfBoost,
-        colorAmount: profileAdjustments.saturationAmount / 100,
+        colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
       },
     });
     
@@ -531,11 +538,11 @@ export default function App() {
       genreId: gearProfile,
       gearProfile,
       userOverrides: {
-        width: profileAdjustments.stereoWidth / 100,
+        width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
         bassTilt: profileAdjustments.lowShelfBoost,
         mudCut: profileAdjustments.midRangeAdjust,
         airTilt: profileAdjustments.highShelfBoost,
-        colorAmount: profileAdjustments.saturationAmount / 100,
+        colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
       },
     };
     

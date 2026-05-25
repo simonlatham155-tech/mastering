@@ -126,8 +126,8 @@ export function resolveProcessingPlan(input: ResolutionInput): ProcessingPlan {
   
   // === GENRE BEHAVIOR (with user overrides) ===
   
-  // Width: User override OR genre default
-  const requestedWidth = userOverrides?.width ?? genrePreset.biases.width;
+  // Width: genre default + user OFFSET (user value is additive, 0 = no change)
+  const requestedWidth = genrePreset.biases.width + (userOverrides?.width ?? 0);
   
   // Width clamping (performance-mode dependent)
   const maxWidth = performanceMode === 'live' 
@@ -136,11 +136,11 @@ export function resolveProcessingPlan(input: ResolutionInput): ProcessingPlan {
   const effectiveWidth = clamp(requestedWidth, ENGINE_DEFAULTS.minWidth, maxWidth);
   const widthClamped = effectiveWidth !== requestedWidth;
   
-  // Other biases: User override OR genre default
-  const bassTilt = userOverrides?.bassTilt ?? genrePreset.biases.bassTilt;
-  const airTilt = userOverrides?.airTilt ?? genrePreset.biases.airTilt;
-  const mudCut = userOverrides?.mudCut ?? genrePreset.biases.mudCut;
-  const colorAmount = userOverrides?.colorAmount ?? genrePreset.biases.colorAmount;
+  // Other biases: genre default + user OFFSET (user value is additive, 0 = no change)
+  const bassTilt = genrePreset.biases.bassTilt + (userOverrides?.bassTilt ?? 0);
+  const airTilt = genrePreset.biases.airTilt + (userOverrides?.airTilt ?? 0);
+  const mudCut = genrePreset.biases.mudCut + (userOverrides?.mudCut ?? 0);
+  const colorAmount = clamp(genrePreset.biases.colorAmount + (userOverrides?.colorAmount ?? 0), 0, 1);
   const monoBassHz = userOverrides?.monoBassHz ?? genrePreset.biases.monoBassHz;
   
   // Toggles: User override OR genre default
