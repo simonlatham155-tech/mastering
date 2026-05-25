@@ -429,21 +429,23 @@ function createSSLCompressor(
     compressor.release.value = 0.08;    // 80ms — pumping energy without suffocation
     compressor.knee.value = 4;          // Medium knee — not harsh
   } else {
-    // Flow (dynamics) mode — use genre loudnessStyle BUT enforce dynamics-preserving ceiling.
-    // Flow must ALWAYS be gentler than Pressure. Genre params define character/timing,
-    // but we cap firmness so the waveform breathes.
+    // Flow (dynamics) mode — PRESERVE the dynamics of the original mix.
+    // The SSL acts as a gentle safety net, NOT a loudness or glue tool.
+    // Think: vinyl mastering. Tonal shaping is done upstream (EQ, saturation).
+    // Compression here should be almost inaudible.
     //
-    // FLOW CEILINGS:
-    //   SSL threshold: no lower than -10 (Pressure is -6)
-    //   SSL ratio:     max 2.5 (Pressure is 4)
-    //   SSL attack:    min 8ms (Pressure is 5ms) — let transients through
-    //   SSL knee:      min 5 (Pressure is 4)
-    //   SSL release:   min 80ms
-    const flowThreshold = Math.max(styleParams.ssl.threshold, -10);
-    const flowRatio = Math.min(styleParams.ssl.ratio, 2.5);
-    const flowAttack = Math.max(styleParams.ssl.attack, 0.008);
-    const flowRelease = Math.max(styleParams.ssl.release, 0.08);
-    const flowKnee = Math.max(styleParams.ssl.knee, 5);
+    // FLOW CEILINGS (much gentler than Pressure):
+    //   SSL threshold: no lower than -6 (Pressure is -6, aggressive is -4)
+    //                  → most genre thresholds are already ≥ -8, this just caps extremes
+    //   SSL ratio:     max 1.5 (Pressure is 4) — barely touching
+    //   SSL attack:    min 20ms (Pressure is 5ms) — let ALL transients through
+    //   SSL knee:      min 8 (Pressure is 4) — very soft onset
+    //   SSL release:   min 150ms — follows natural dynamics
+    const flowThreshold = Math.max(styleParams.ssl.threshold, -6);
+    const flowRatio = Math.min(styleParams.ssl.ratio, 1.5);
+    const flowAttack = Math.max(styleParams.ssl.attack, 0.020);
+    const flowRelease = Math.max(styleParams.ssl.release, 0.15);
+    const flowKnee = Math.max(styleParams.ssl.knee, 8);
 
     compressor.threshold.value = flowThreshold;
     compressor.ratio.value = flowRatio;
@@ -622,9 +624,11 @@ function createLimiterStage(
   const requiredGainDB = targetLUFS - estimatedCurrentLUFS;
   
   // Clamp makeup by loudnessStyle's maxGR (prevents over-limiting)
-  // FLOW CEILING: In dynamics mode, cap maxGR to 4dB (Pressure allows 8dB).
+  // FLOW CEILING: In dynamics mode, cap maxGR to 1.5dB (Pressure allows 8dB).
   // This is the single biggest lever — less makeup gain = less limiting = more dynamics.
-  const flowMaxGR = Math.min(limParams.maxGR, 4); // Flow: max 4dB gain reduction
+  // At 1.5dB max, the limiter barely engages. The waveform BREATHES.
+  // (Was 4dB — caused up to 6dB total GR even in Flow mode = sausage)
+  const flowMaxGR = Math.min(limParams.maxGR, 1.5); // Flow: max 1.5dB gain reduction
   const maxMakeupDB = isBrickwall ? 8 : flowMaxGR;
   const makeupGainDB = Math.max(-6, Math.min(requiredGainDB, maxMakeupDB));
   const makeupGainLinear = Math.pow(10, makeupGainDB / 20);
@@ -643,11 +647,13 @@ function createLimiterStage(
   const limiter = context.createDynamicsCompressor();
   limiter.threshold.value = finalCeiling - 3; // Start 3dB below ceiling
   
-  // FLOW CEILING on limiter: cap ratio to 8 (Pressure uses 12), slower attack, softer knee
-  const flowLimRatio = isBrickwall ? limParams.ratio : Math.min(limParams.ratio, 8);
-  const flowLimAttack = isBrickwall ? limParams.attack : Math.max(limParams.attack, 0.003);
-  const flowLimRelease = isBrickwall ? limParams.release : Math.max(limParams.release, 0.10);
-  const flowLimKnee = isBrickwall ? limParams.knee : Math.max(limParams.knee, 4);
+  // FLOW CEILING on limiter: soft safety net only, NOT a loudness tool.
+  // With only 1.5dB makeup, the limiter should barely engage anyway.
+  // These caps ensure it stays transparent if it does catch a transient.
+  const flowLimRatio = isBrickwall ? limParams.ratio : Math.min(limParams.ratio, 4);   // Was 8
+  const flowLimAttack = isBrickwall ? limParams.attack : Math.max(limParams.attack, 0.005); // Was 3ms
+  const flowLimRelease = isBrickwall ? limParams.release : Math.max(limParams.release, 0.15); // Was 100ms
+  const flowLimKnee = isBrickwall ? limParams.knee : Math.max(limParams.knee, 6);     // Was 4
   
   limiter.ratio.value = flowLimRatio;
   limiter.attack.value = flowLimAttack;
