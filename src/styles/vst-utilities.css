@@ -1,0 +1,181 @@
+/**
+ * VST Professional UI Utilities
+ * Based on Voger Design principles and Braun aesthetic
+ */
+
+@layer components {
+  /* Rack Unit - Brushed Aluminum */
+  .rack-unit {
+    position: relative;
+    background: linear-gradient(180deg, #1a1a1a, #0f0f0f), var(--material-brushed-aluminum);
+    border: 2px solid #2a2a2a;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    box-shadow: 
+      inset 0 2px 4px var(--light-shadow),
+      inset 0 -1px 2px var(--light-highlight),
+      0 8px 16px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Rack Screws - Tactile Details */
+  .rack-screw {
+    position: absolute;
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 50%;
+    background: #18181b;
+    border: 1px solid #3f3f46;
+    box-shadow: 
+      inset 0 1px 2px var(--light-shadow),
+      0 1px 0 var(--light-highlight);
+  }
+
+  .rack-screw::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 0.5rem;
+    height: 0.125rem;
+    background: #09090b;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .rack-screw-tl { top: 0.75rem; left: 1rem; }
+  .rack-screw-tr { top: 0.75rem; right: 1rem; }
+  .rack-screw-bl { bottom: 0.75rem; left: 1rem; }
+  .rack-screw-br { bottom: 0.75rem; right: 1rem; }
+
+  /* Glass Panel - Meter Displays */
+  .glass-panel {
+    background: var(--material-glass);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--material-glass-border);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    box-shadow: 
+      inset 0 1px 0 var(--light-highlight),
+      0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+
+  /* Soft Light - Welcoming Components */
+  .soft-light {
+    box-shadow: 
+      inset 0 2px 4px var(--light-highlight),
+      inset 0 -2px 4px var(--light-shadow),
+      0 4px 12px var(--light-soft-glow);
+  }
+
+  /* Hard Light - Surgical Components */
+  .hard-light {
+    box-shadow: 
+      inset 0 1px 0 var(--light-highlight),
+      inset 0 -1px 0 var(--light-shadow),
+      0 2px 8px var(--light-hard-glow);
+  }
+
+  /* Anodized Metal Knob */
+  .anodized-knob {
+    background: 
+      radial-gradient(circle at 30% 30%, #3a3a3a, #1a1a1a),
+      conic-gradient(
+        from 0deg,
+        rgba(255, 255, 255, 0.1) 0deg,
+        transparent 90deg,
+        transparent 270deg,
+        rgba(255, 255, 255, 0.1) 360deg
+      );
+    box-shadow: 
+      inset 0 2px 6px var(--light-shadow),
+      inset 0 -1px 3px var(--light-highlight),
+      0 4px 16px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Matte Plastic - Waveform Backgrounds */
+  .matte-plastic {
+    background: #0a0a0a;
+    border: 1px solid #27272a;
+    border-radius: 0.25rem;
+    box-shadow: 
+      inset 0 1px 2px rgba(0, 0, 0, 0.5),
+      0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+
+  /* Soft Rubber - Alert Panels */
+  .soft-rubber {
+    background: linear-gradient(135deg, #1a1a1a, #0f0f0f);
+    border: 1px solid #2a2a2a;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    box-shadow: 
+      0 4px 12px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* VST Typography Classes */
+  .vst-heading {
+    font-size: var(--text-heading);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+  }
+
+  .vst-label {
+    font-size: var(--text-label);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+  }
+
+  .vst-body {
+    font-size: var(--text-body);
+    font-weight: var(--font-weight-normal);
+    line-height: 1.4;
+    font-family: var(--font-mono);
+  }
+
+  /* Grid System */
+  .grid-8 { display: grid; gap: var(--grid-base); }
+  .grid-16 { display: grid; gap: calc(var(--grid-base) * 2); }
+  .grid-24 { display: grid; gap: calc(var(--grid-base) * 3); }
+  .grid-48 { display: grid; gap: var(--grid-gap); }
+
+  /* 12-Column Grid */
+  .grid-12-col {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: var(--grid-base);
+  }
+
+  .col-span-3 { grid-column: span 3; }
+  .col-span-4 { grid-column: span 4; }
+  .col-span-6 { grid-column: span 6; }
+  .col-span-8 { grid-column: span 8; }
+  .col-span-12 { grid-column: span 12; }
+
+  /* Surgical Precision Padding (8px increments) */
+  .p-8 { padding: var(--grid-base); }
+  .p-16 { padding: calc(var(--grid-base) * 2); }
+  .p-24 { padding: calc(var(--grid-base) * 3); }
+  .p-32 { padding: calc(var(--grid-base) * 4); }
+  .p-48 { padding: var(--grid-gap); }
+
+  /* Surgical Precision Gaps */
+  .gap-8 { gap: var(--grid-base); }
+  .gap-16 { gap: calc(var(--grid-base) * 2); }
+  .gap-24 { gap: calc(var(--grid-base) * 3); }
+  .gap-48 { gap: var(--grid-gap); }
+
+  /* Golden Ratio Proportions */
+  .golden-ratio-width {
+    width: calc(var(--circuit-drive-size, 240px) / 1.618);
+  }
+
+  .golden-ratio-height {
+    height: calc(var(--circuit-drive-size, 240px) / 1.618);
+  }
+}
