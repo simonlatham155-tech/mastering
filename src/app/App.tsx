@@ -148,7 +148,79 @@ export default function App() {
     }
   }, [gearProfile]);
 
-  // REMOVED: Live parameter updates (2026-02-17) - reverted to AudioPlayer
+  // === LIVE PARAMETER UPDATES (PATCH 2026-05-25: Viktor) ===
+  // Wire profile adjustment sliders to real-time audio parameter updates.
+  // These fire instantly via AudioParam.setTargetAtTime (50ms ramp, no clicks).
+  
+  // EQ + Stereo Width + Saturation → live updateParameter calls
+  useEffect(() => {
+    const player = realtimePlayerRef.current;
+    if (!player) return;
+    
+    // EQ: direct dB values
+    player.updateParameter('lowShelfGain', profileAdjustments.lowShelfBoost);
+    player.updateParameter('midRangeGain', profileAdjustments.midRangeAdjust);
+    player.updateParameter('highShelfGain', profileAdjustments.highShelfBoost);
+    
+    // Stereo Width: 0-100% → 0-1.0
+    player.updateParameter('stereoWidth', profileAdjustments.stereoWidth / 100);
+    
+    // Saturation: drive both transformer and tape proportionally
+    // saturationAmount 0-100 → transformer drive 0-1, tape drive 0-0.5
+    const satNorm = profileAdjustments.saturationAmount / 100;
+    player.updateParameter('transformerDrive', satNorm);
+    player.updateParameter('tapeDrive', satNorm * 0.5);
+  }, [profileAdjustments]);
+  
+  // Logic Mode / Genre / Export Preset → full chain rebuild (changes DSP topology)
+  // Uses a ref to track previous values so we only rebuild on actual changes,
+  // not on initial mount.
+  const prevChainSettingsRef = useRef({ logicMode, gearProfile, exportPreset, circuitDrive });
+  
+  useEffect(() => {
+    const prev = prevChainSettingsRef.current;
+    const changed = (
+      prev.logicMode !== logicMode ||
+      prev.gearProfile !== gearProfile ||
+      prev.exportPreset !== exportPreset ||
+      prev.circuitDrive !== circuitDrive
+    );
+    prevChainSettingsRef.current = { logicMode, gearProfile, exportPreset, circuitDrive };
+    
+    if (!changed) return; // Skip initial mount
+    
+    const player = realtimePlayerRef.current;
+    if (!player || !analysis) return;
+    
+    // Build fresh settings + plan and rebuild the chain
+    const rebuildAsync = async () => {
+      const { getExportPreset } = await import('./data/export-presets');
+      const preset = getExportPreset(exportPreset);
+      const { resolveProcessingPlan } = await import('./data/preset-resolution');
+      const plan = resolveProcessingPlan({ genreId: gearProfile, exportPresetId: exportPreset });
+      
+      const settings = {
+        circuitDrive,
+        logicMode,
+        targetLUFS: preset.lufs,
+        exportPresetId: exportPreset,
+        genreId: gearProfile,
+        gearProfile,
+        userOverrides: {
+          width: profileAdjustments.stereoWidth / 100,
+          lowShelfBoost: profileAdjustments.lowShelfBoost,
+          midRangeAdjust: profileAdjustments.midRangeAdjust,
+          highShelfBoost: profileAdjustments.highShelfBoost,
+          saturationAmount: profileAdjustments.saturationAmount / 100,
+        },
+      };
+      
+      player.rebuildChain(settings, plan, bypassMode);
+      console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
+    };
+    
+    rebuildAsync();
+  }, [logicMode, gearProfile, exportPreset, circuitDrive, analysis]);
 
   const analyzeAudioFile = async () => {
     if (!selectedFile) return;
@@ -857,7 +929,7 @@ export default function App() {
                 isProcessing={isProcessing} 
                 circuitDrive={circuitDrive}
                 gearProfile={gearProfile}
-                hasProcessedAudio={processedBuffer !== null}
+                hasProcessedAudio={!!selectedFile && !!analysis}
               />
             </div>
 
@@ -905,7 +977,7 @@ export default function App() {
             {/* Export Panel */}
             <ExportPanel 
               onExport={handleExport} 
-              disabled={!processedBuffer || isProcessing}
+              disabled={!selectedFile || !analysis || isProcessing}
               currentTarget={exportPreset ? exportPreset : undefined}
             />
           </main>

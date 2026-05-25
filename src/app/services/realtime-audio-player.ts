@@ -14,6 +14,13 @@
  * IMPORTANT:
  * - Uses same chain builder as export (topology match guaranteed)
  * - Only quality flag differs (draft vs export)
+ * 
+ * PATCH 2026-05-25: Viktor
+ * - Fixed A/B toggle restart bug (onended race condition)
+ * - Added EQ params to updateParameter (lowShelfGain, midRangeGain, highShelfGain)
+ * - Fixed play() to rebuild chain when settings change
+ * - Fixed pause()/stop() onended race condition
+ * - Fixed toggleBypass when paused (chain wasn't disposed)
  */
 
 import { buildMasteringChain, type MasteringChain, type QualityMode } from './mastering-chain-builder';
@@ -59,6 +66,10 @@ export class RealtimeAudioPlayer {
   
   /**
    * Start or resume playback
+   * 
+   * PATCH: Always rebuild chain if settings/plan/bypass have changed since last build.
+   * Previously the chain was reused even when settings changed, meaning slider
+   * tweaks made while paused were silently ignored.
    */
   play(settings: ProcessingSettings, plan: ProcessingPlan, useMinimalMaster: boolean): void {
     if (!this.audioContext || !this.audioBuffer) {
@@ -75,13 +86,25 @@ export class RealtimeAudioPlayer {
       return;
     }
     
+    // Check if settings changed since chain was built — if so, rebuild
+    const settingsChanged = (
+      this.currentSettings !== settings ||
+      this.currentPlan !== plan ||
+      this.currentBypassMode !== useMinimalMaster
+    );
+    
     // Store current settings for seamless bypass toggling
     this.currentSettings = settings;
     this.currentPlan = plan;
     this.currentBypassMode = useMinimalMaster;
     
-    // Build mastering chain (draft quality)
-    if (!this.masteringChain) {
+    // Build or rebuild mastering chain
+    if (!this.masteringChain || settingsChanged) {
+      if (this.masteringChain) {
+        this.masteringChain.dispose();
+        this.masteringChain = null;
+      }
+      
       this.masteringChain = buildMasteringChain({
         context: this.audioContext,
         destination: this.audioContext.destination,
@@ -90,6 +113,10 @@ export class RealtimeAudioPlayer {
         quality: 'draft',
         useMinimalMaster,
       });
+      
+      if (settingsChanged) {
+        console.log('🔄 Chain rebuilt (settings changed since last play)');
+      }
     }
     
     // Create source node
@@ -98,8 +125,9 @@ export class RealtimeAudioPlayer {
     this.sourceNode.connect(this.masteringChain.input);
     
     // Handle end of playback
+    // PATCH: Check isSwitchingBypass to prevent race condition during A/B toggle
     this.sourceNode.onended = () => {
-      if (this.isPlaying) {
+      if (this.isPlaying && !this.isSwitchingBypass) {
         this.stop();
       }
     };
@@ -115,14 +143,20 @@ export class RealtimeAudioPlayer {
   
   /**
    * Pause playback
+   * 
+   * PATCH: Detach onended before stopping source to prevent race condition
+   * where onended fires and calls stop() which resets pauseTime to 0.
    */
   pause(): void {
     if (!this.isPlaying || !this.sourceNode || !this.audioContext) {
       return;
     }
     
-    // Save current position
+    // Save current position BEFORE touching the source
     this.pauseTime = this.audioContext.currentTime - this.startTime;
+    
+    // PATCH: Detach onended BEFORE stopping — prevents race condition
+    this.sourceNode.onended = null;
     
     // Stop source
     this.sourceNode.stop();
@@ -138,6 +172,8 @@ export class RealtimeAudioPlayer {
    */
   stop(): void {
     if (this.sourceNode) {
+      // PATCH: Detach onended to prevent recursive calls
+      this.sourceNode.onended = null;
       this.sourceNode.stop();
       this.sourceNode.disconnect();
       this.sourceNode = null;
@@ -197,10 +233,12 @@ export class RealtimeAudioPlayer {
   /**
    * Update a parameter in real-time (no graph rebuild)
    * Uses exponential smoothing to avoid clicks
+   * 
+   * PATCH: Added lowShelfGain, midRangeGain, highShelfGain support.
    */
   updateParameter(paramName: string, value: number, rampTimeSeconds: number = 0.05): void {
     if (!this.masteringChain || !this.audioContext) {
-      console.warn('Cannot update parameter: chain not initialized');
+      // Silently ignore if chain not built yet (slider moved before first play)
       return;
     }
     
@@ -208,40 +246,58 @@ export class RealtimeAudioPlayer {
     const currentTime = this.audioContext.currentTime;
     
     switch (paramName) {
+      // === EQ Parameters (user profile adjustments) ===
+      case 'lowShelfGain':
+        if (params.lowShelfGain) {
+          params.lowShelfGain.setTargetAtTime(value, currentTime, rampTimeSeconds);
+        }
+        break;
+      
+      case 'midRangeGain':
+        if (params.midRangeGain) {
+          params.midRangeGain.setTargetAtTime(value, currentTime, rampTimeSeconds);
+        }
+        break;
+      
+      case 'highShelfGain':
+        if (params.highShelfGain) {
+          params.highShelfGain.setTargetAtTime(value, currentTime, rampTimeSeconds);
+        }
+        break;
+      
+      // === Stereo Width ===
       case 'stereoWidth':
         if (params.stereoWidth) {
           params.stereoWidth.setTargetAtTime(value, currentTime, rampTimeSeconds);
-          console.log(`🎚️  Stereo width → ${value.toFixed(2)} (ramped over ${rampTimeSeconds * 1000}ms)`);
         }
         break;
       
-      case 'sslThreshold':
-        if (params.sslThreshold) {
-          params.sslThreshold.setTargetAtTime(value, currentTime, rampTimeSeconds);
-          console.log(`🎚️  SSL threshold → ${value.toFixed(1)} dB`);
-        }
-        break;
-      
+      // === Drive / Saturation ===
       case 'transformerDrive':
         if (params.transformerDrive) {
           params.transformerDrive.setTargetAtTime(value, currentTime, rampTimeSeconds);
-          console.log(`🎚️  Transformer drive → ${value.toFixed(2)}`);
         }
         break;
       
       case 'tapeDrive':
         if (params.tapeDrive) {
           params.tapeDrive.setTargetAtTime(value, currentTime, rampTimeSeconds);
-          console.log(`🎚️  Tape drive → ${value.toFixed(2)}`);
         }
         break;
       
+      // === SSL Compressor ===
+      case 'sslThreshold':
+        if (params.sslThreshold) {
+          params.sslThreshold.setTargetAtTime(value, currentTime, rampTimeSeconds);
+        }
+        break;
+      
+      // === Limiter ===
       case 'limiterMakeup':
         if (params.limiterMakeup) {
           // Convert dB to linear gain
           const linearGain = Math.pow(10, value / 20);
           params.limiterMakeup.setTargetAtTime(linearGain, currentTime, rampTimeSeconds);
-          console.log(`🎚️  Limiter makeup → ${value.toFixed(1)} dB`);
         }
         break;
       
@@ -269,6 +325,11 @@ export class RealtimeAudioPlayer {
       this.masteringChain = null;
     }
     
+    // Update stored settings
+    this.currentSettings = settings;
+    this.currentPlan = plan;
+    this.currentBypassMode = useMinimalMaster;
+    
     console.log('🔄 Rebuilding mastering chain...');
     
     // Build new chain
@@ -293,11 +354,20 @@ export class RealtimeAudioPlayer {
   /**
    * Toggle bypass mode seamlessly (A/B comparison)
    * Switches between processed and original audio without stopping playback
+   * 
+   * PATCH: Fixed onended race condition that reset pauseTime to 0.
+   * The old onended handler is now detached before stopping the source,
+   * and isPlaying is explicitly maintained through the switch.
    */
   toggleBypass(newBypassMode: boolean): void {
     if (!this.isPlaying || !this.currentSettings || !this.currentPlan || !this.audioContext || !this.audioBuffer) {
       // If not playing, just store the new bypass mode for next play
+      // PATCH: Also dispose chain so it's rebuilt on next play() with correct mode
       this.currentBypassMode = newBypassMode;
+      if (this.masteringChain) {
+        this.masteringChain.dispose();
+        this.masteringChain = null;
+      }
       console.log(`🔄 Bypass mode set to: ${newBypassMode ? 'ORIGINAL' : 'PROCESSED'} (will apply on next play)`);
       return;
     }
@@ -313,8 +383,10 @@ export class RealtimeAudioPlayer {
     
     console.log(`🔄 Seamless A/B switch: ${newBypassMode ? 'ORIGINAL' : 'PROCESSED'} at ${currentPosition.toFixed(1)}s`);
     
-    // Stop current source (but keep isPlaying = true)
+    // PATCH: Detach onended BEFORE stopping source to prevent race condition
+    // Previously, source.stop() fired onended → stop() → pauseTime = 0, isPlaying = false
     if (this.sourceNode) {
+      this.sourceNode.onended = null; // ← THE FIX
       try {
         this.sourceNode.stop();
         this.sourceNode.disconnect();
@@ -346,9 +418,9 @@ export class RealtimeAudioPlayer {
     this.sourceNode.buffer = this.audioBuffer;
     this.sourceNode.connect(this.masteringChain.input);
     
-    // Handle end of playback
+    // Handle end of playback (new handler, checks isSwitchingBypass)
     this.sourceNode.onended = () => {
-      if (this.isPlaying) {
+      if (this.isPlaying && !this.isSwitchingBypass) {
         this.stop();
       }
     };
@@ -356,7 +428,9 @@ export class RealtimeAudioPlayer {
     // Resume from saved position
     this.sourceNode.start(0, currentPosition);
     this.startTime = this.audioContext.currentTime - currentPosition;
-    // Keep isPlaying = true (no interruption to state)
+    
+    // PATCH: Explicitly ensure isPlaying stays true
+    this.isPlaying = true;
     
     // Clear the flag after a brief delay to ensure the position is stable
     // This allows several polling cycles to return the saved position

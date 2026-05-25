@@ -6,9 +6,10 @@
   --font-mono: 'JetBrains Mono', 'Roboto Mono', 'Courier New', monospace;
   
   /* Professional Type Scale (3 sizes only) */
-  --text-heading: 1rem;      /* 16px - Section titles */
-  --text-label: 0.75rem;     /* 12px - Control labels */
-  --text-body: 0.625rem;     /* 10px - Technical values */
+  /* PATCH 2026-05-25: Bumped all sizes — 10px body was unreadable */
+  --text-heading: 1.125rem;  /* 18px - Section titles */
+  --text-label: 0.875rem;    /* 14px - Control labels */
+  --text-body: 0.75rem;      /* 12px - Technical values */
   
   /* Baseline Grid */
   --grid-base: 8px;          /* 8px modular grid */
@@ -18,6 +19,9 @@
   --font-weight-semibold: 600;  /* Headings only */
   --font-weight-medium: 500;    /* Labels */
   --font-weight-normal: 400;    /* Body text */
+  
+  /* Minimum readable size — catches text-[9px], text-[10px] etc */
+  --min-text-size: 0.75rem;  /* 12px floor */
   
   /* Surgical Lighting System - Top-left light source (45°) */
   --light-highlight: rgba(255, 255, 255, 0.1);    /* Top edge reflection */
@@ -171,7 +175,7 @@
     font-family: var(--font-sans);
   }
 
-  /* Heading: 16px/1rem - Section titles */
+  /* Heading: 18px - Section titles */
   h1, h2, h3 {
     font-size: var(--text-heading);
     font-weight: var(--font-weight-semibold);
@@ -179,7 +183,7 @@
     letter-spacing: -0.01em; /* Tighter tracking for surgical feel */
   }
 
-  /* Label: 12px/0.75rem - Control labels */
+  /* Label: 14px - Control labels */
   h4, label {
     font-size: var(--text-label);
     font-weight: var(--font-weight-medium);
@@ -187,7 +191,7 @@
     letter-spacing: 0.02em; /* Wider tracking for legibility */
   }
 
-  /* Body: 10px/0.625rem - Technical values */
+  /* Buttons and inputs: 14px */
   button {
     font-size: var(--text-label);
     font-weight: var(--font-weight-medium);
@@ -199,6 +203,17 @@
     font-weight: var(--font-weight-normal);
     line-height: 1.4;
     font-family: var(--font-mono); /* Monospace for technical inputs */
+  }
+  
+  /* PATCH: Floor for all text — nothing smaller than 12px */
+  /* Catches inline Tailwind text-[9px], text-[10px], text-[11px] */
+  * {
+    min-font-size: var(--min-text-size); /* Firefox */
+  }
+  
+  /* For Webkit/Blink (Chrome, Safari, Edge) — override tiny classes */
+  .text-\[9px\], .text-\[10px\], .text-\[11px\] {
+    font-size: var(--min-text-size) !important;
   }
 
   /* Technical/Numeric values use monospace */
