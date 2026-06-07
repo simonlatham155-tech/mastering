@@ -30,7 +30,9 @@ export type GearProfileId =
   | 'breakbeat'
   // Legacy
   | 'rnb' 
-  | 'tape';
+  | 'tape'
+  // Demo
+  | 'generic';
 
 // UI-only interface (for backward compatibility with App.tsx)
 export interface GearProfile {

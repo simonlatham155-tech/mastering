@@ -681,6 +681,117 @@ export class RealtimeAudioPlayer {
     
     console.log(`🔄 Switch initiated, position locked for 150ms`);
   }
+
+  /**
+   * Seamlessly swap processing chain (e.g. generic vs genre-aware A/B demo).
+   */
+  async switchProcessing(
+    settings: ProcessingSettings,
+    plan: ProcessingPlan,
+    dryBypass: boolean = false,
+    inputTrimDB?: number,
+    useMinimalMaster: boolean = false,
+    limiterCeilingOverride?: number,
+    sslGlue?: 'auto' | 'gentle' | 'firm'
+  ): Promise<void> {
+    if (!this.currentSettings || !this.currentPlan || !this.audioContext || !this.audioBuffer) {
+      this.currentSettings = settings;
+      this.currentPlan = plan;
+      this.currentDryBypass = dryBypass;
+      this.currentUseMinimalMaster = useMinimalMaster;
+      this.currentInputTrimDB = inputTrimDB;
+      this.currentLimiterCeilingOverride = limiterCeilingOverride;
+      this.currentSslGlue = sslGlue ?? 'auto';
+      if (this.masteringChain) {
+        this.unwireLiveMeters();
+        this.masteringChain.dispose();
+        this.masteringChain = null;
+      }
+      return;
+    }
+
+    const settingsChanged =
+      this.currentSettings !== settings ||
+      this.currentPlan !== plan ||
+      this.currentDryBypass !== dryBypass ||
+      this.currentUseMinimalMaster !== useMinimalMaster ||
+      this.currentInputTrimDB !== inputTrimDB ||
+      this.currentLimiterCeilingOverride !== limiterCeilingOverride ||
+      this.currentSslGlue !== (sslGlue ?? 'auto');
+
+    if (!settingsChanged) return;
+
+    if (!this.isPlaying) {
+      this.currentSettings = settings;
+      this.currentPlan = plan;
+      this.currentDryBypass = dryBypass;
+      this.currentUseMinimalMaster = useMinimalMaster;
+      this.currentInputTrimDB = inputTrimDB;
+      this.currentLimiterCeilingOverride = limiterCeilingOverride;
+      this.currentSslGlue = sslGlue ?? 'auto';
+      if (this.masteringChain) {
+        this.unwireLiveMeters();
+        this.masteringChain.dispose();
+        this.masteringChain = null;
+      }
+      return;
+    }
+
+    this.isSwitchingBypass = true;
+    const currentPosition = this.audioContext.currentTime - this.startTime;
+    this.pauseTime = currentPosition;
+
+    if (this.sourceNode) {
+      this.sourceNode.onended = null;
+      try {
+        this.sourceNode.stop();
+        this.sourceNode.disconnect();
+      } catch {
+        // already stopped
+      }
+      this.sourceNode = null;
+    }
+
+    if (this.masteringChain) {
+      this.unwireLiveMeters();
+      this.masteringChain.dispose();
+      this.masteringChain = null;
+    }
+
+    this.currentSettings = settings;
+    this.currentPlan = plan;
+    this.currentDryBypass = dryBypass;
+    this.currentUseMinimalMaster = useMinimalMaster;
+    this.currentInputTrimDB = inputTrimDB;
+    this.currentLimiterCeilingOverride = limiterCeilingOverride;
+    this.currentSslGlue = sslGlue ?? 'auto';
+
+    this.masteringChain = await this.createMasteringChain(
+      settings,
+      plan,
+      dryBypass,
+      inputTrimDB,
+      useMinimalMaster,
+      limiterCeilingOverride,
+      sslGlue
+    );
+
+    this.sourceNode = this.audioContext.createBufferSource();
+    this.sourceNode.buffer = this.audioBuffer;
+    this.sourceNode.connect(this.masteringChain.input);
+    this.sourceNode.onended = () => {
+      if (this.isPlaying && !this.isSwitchingBypass) {
+        this.stop();
+      }
+    };
+    this.sourceNode.start(0, currentPosition);
+    this.startTime = this.audioContext.currentTime - currentPosition;
+    this.isPlaying = true;
+
+    setTimeout(() => {
+      this.isSwitchingBypass = false;
+    }, 150);
+  }
   
   /**
    * Clean up resources

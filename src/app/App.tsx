@@ -813,6 +813,13 @@ export default function App() {
                 </h1>
                 <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
                   Algorithmic Mastering Chain • Intelligent Signal Processing
+                  {' · '}
+                  <a
+                    href="#/demo"
+                    className="text-cyan-500/70 hover:text-cyan-400 normal-case tracking-normal"
+                  >
+                    Black box vs genre-aware demo →
+                  </a>
                 </p>
               </div>
             </header>

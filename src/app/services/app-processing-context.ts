@@ -3,7 +3,11 @@
  */
 
 import type { ProfileAdjustments } from '../components/profile-adjustments';
-import type { ProDynamicsSettings, SSLGlueMode } from '../components/pro-dynamics-panel';
+import {
+  DEFAULT_PRO_DYNAMICS,
+  type ProDynamicsSettings,
+  type SSLGlueMode,
+} from '../components/pro-dynamics-panel';
 import type { GearProfileId } from '../components/gear-selector';
 import type { ExportPresetId } from '../data/export-presets';
 import { getExportPreset } from '../data/export-presets';
@@ -15,7 +19,7 @@ import type { RealtimeAudioPlayer } from '../services/realtime-audio-player';
 
 export type LogicMode = 'brickwall' | 'dynamics';
 
-export { DEFAULT_PRO_DYNAMICS } from '../components/pro-dynamics-panel';
+export { DEFAULT_PRO_DYNAMICS };
 export type { ProDynamicsSettings, SSLGlueMode };
 
 const SSL_GLUE_PRESETS: Record<Exclude<SSLGlueMode, 'auto'>, { threshold: number; ratio: number }> = {
@@ -168,5 +172,43 @@ export function appliedRecommendationFromAI(
     logicMode: recommendation.logicMode,
     gearProfile: recommendation.gearProfile,
     exportPreset: targetLufsToExportPreset(recommendation.targetLUFS),
+  };
+}
+
+const NEUTRAL_PROFILE_ADJUSTMENTS: ProfileAdjustments = {
+  lowShelfBoost: 0,
+  midRangeAdjust: 0,
+  highShelfBoost: 0,
+  stereoWidth: 50,
+};
+
+/** Generic black-box chain for A/B demo (Spotify -14, brickwall). */
+export function buildGenericDemoContext(
+  proDynamics: ProDynamicsSettings = DEFAULT_PRO_DYNAMICS
+): AppProcessingContext {
+  return {
+    gearProfile: 'generic',
+    exportPreset: 'spotify',
+    logicMode: 'brickwall',
+    circuitDrive: 35,
+    profileAdjustments: NEUTRAL_PROFILE_ADJUSTMENTS,
+    proDynamics,
+  };
+}
+
+/** Genre-aware chain from AI recommendation for A/B demo. */
+export function buildAIDemoContext(
+  recommendation: AIMasteringRecommendation,
+  profileAdjustments: ProfileAdjustments,
+  proDynamics: ProDynamicsSettings = DEFAULT_PRO_DYNAMICS
+): AppProcessingContext {
+  const applied = appliedRecommendationFromAI(recommendation);
+  return {
+    gearProfile: applied.gearProfile,
+    exportPreset: applied.exportPreset,
+    logicMode: applied.logicMode,
+    circuitDrive: applied.circuitDrive,
+    profileAdjustments,
+    proDynamics,
   };
 }
