@@ -47,6 +47,7 @@ import { buildExportQualityReport } from './utils/measure-buffer-loudness';
 import { renderExportWithAutoStaging } from './services/export-auto-staging';
 import { computeStagingTrimStep } from './utils/auto-staging';
 import { PlaybackControls } from './components/playback-controls';
+import { CreatorAboutStrip } from './components/creator-about-strip';
 import { motion } from 'motion/react';
 
 type LogicMode = 'brickwall' | 'dynamics';
@@ -823,6 +824,8 @@ export default function App() {
                 </p>
               </div>
             </header>
+
+            <CreatorAboutStrip />
 
             {/* Heritage Alert */}
             <div className="mb-6">
