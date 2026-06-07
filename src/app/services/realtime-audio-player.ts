@@ -22,14 +22,14 @@
  * - Fixed pause()/stop() onended race condition
  * - Fixed toggleBypass when paused (chain wasn't disposed)
  * 
- * PATCH 2026-06-07: True-peak limiter worklet in DSP chain (not monitor tap)
+ * PATCH 2026-06-07: Monitor-only worklet for meters; Type2 waveshaper for audio
+ * (in-chain FIR worklet caused bass buzz/rattle in realtime blocks)
  */
 
-import { buildMasteringChainAsync, type MasteringChain } from './mastering-chain-builder';
+import { buildMasteringChain, type MasteringChain } from './mastering-chain-builder';
 import type { ProcessingSettings } from './audio-processor';
 import type { ProcessingPlan } from '../data/preset-resolution';
-import { applyTruePeakLimiterParams } from './limiter-worklet';
-import type { LimiterMeterData } from './oversampling-limiter-manager';
+import { OversamplingLimiterManager, type LimiterMeterData } from './oversampling-limiter-manager';
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -66,12 +66,12 @@ export class RealtimeAudioPlayer {
   private currentInputTrimDB: number | undefined = undefined;
   private currentInputLUFS: number = -16;
   private isSwitchingBypass: boolean = false;
-  private meterCallback: ((data: LimiterMeterData) => void) | null = null;
+  private limiterMeter = new OversamplingLimiterManager();
+  private hqModeEnabled = true;
   private sslMeterCallback: ((data: SSLMeterData) => void) | null = null;
   private meterPollId: number | null = null;
   private sslInputBuffer: Float32Array | null = null;
   private sslOutputBuffer: Float32Array | null = null;
-  private hqModeEnabled = true;
   
   constructor() {
     // AudioContext will be created on first play (user interaction required)
@@ -92,13 +92,10 @@ export class RealtimeAudioPlayer {
   }
   
   /**
-   * Subscribe to live true-peak / GR meter updates from the in-chain limiter worklet.
+   * Subscribe to live true-peak / GR meter updates from the monitor-only worklet tap.
    */
   setMeterCallback(callback: ((data: LimiterMeterData) => void) | null): void {
-    this.meterCallback = callback;
-    if (this.masteringChain) {
-      this.wireChainMeters(this.masteringChain);
-    }
+    this.limiterMeter.setMeterCallback(callback);
   }
 
   /**
@@ -107,70 +104,59 @@ export class RealtimeAudioPlayer {
   setSSLMeterCallback(callback: ((data: SSLMeterData) => void) | null): void {
     this.sslMeterCallback = callback;
     if (this.masteringChain) {
-      this.wireChainMeters(this.masteringChain);
+      this.wireSSLMeters(this.masteringChain);
     }
   }
 
   setHQMode(enabled: boolean): void {
     this.hqModeEnabled = enabled;
-    const node = this.masteringChain?.truePeakLimiterNode;
-    if (node) {
-      applyTruePeakLimiterParams(node, { hqMode: enabled });
-    }
+    this.limiterMeter.setParameters({ hqMode: enabled });
   }
 
-  private unwireChainMeters(): void {
+  private syncMeterParams(plan: ProcessingPlan): void {
+    this.limiterMeter.setParameters({
+      monitorOnly: true,
+      hqMode: this.hqModeEnabled,
+      ceiling: plan.deliveryTargets.ceiling,
+      threshold: plan.deliveryTargets.ceiling - 3,
+    });
+  }
+
+  private unwireSSLMeters(): void {
     if (this.meterPollId !== null) {
       cancelAnimationFrame(this.meterPollId);
       this.meterPollId = null;
     }
-
-    const node = this.masteringChain?.truePeakLimiterNode;
-    if (node) {
-      node.port.onmessage = null;
-    }
   }
 
-  private wireChainMeters(chain: MasteringChain): void {
-    this.unwireChainMeters();
-
-    const limiterNode = chain.truePeakLimiterNode;
-    if (limiterNode && this.meterCallback) {
-      limiterNode.port.onmessage = (event) => {
-        if (event.data?.type === 'meter-update') {
-          this.meterCallback!(event.data.data as LimiterMeterData);
-        }
-      };
-      applyTruePeakLimiterParams(limiterNode, {
-        hqMode: this.hqModeEnabled,
-        ceiling: chain.limiterCeilingDBTP,
-        monitorOnly: false,
-      });
-    }
+  private wireSSLMeters(chain: MasteringChain): void {
+    this.unwireSSLMeters();
 
     const inputAnalyser = chain.sslInputAnalyser;
     const outputAnalyser = chain.sslOutputAnalyser;
-    if (inputAnalyser && outputAnalyser && this.sslMeterCallback) {
-      this.sslInputBuffer = new Float32Array(inputAnalyser.fftSize);
-      this.sslOutputBuffer = new Float32Array(outputAnalyser.fftSize);
+    if (!inputAnalyser || !outputAnalyser || !this.sslMeterCallback) {
+      return;
+    }
 
-      const poll = () => {
-        if (!this.masteringChain?.sslInputAnalyser || !this.masteringChain.sslOutputAnalyser) {
-          return;
-        }
+    this.sslInputBuffer = new Float32Array(inputAnalyser.fftSize);
+    this.sslOutputBuffer = new Float32Array(outputAnalyser.fftSize);
 
-        const inputDb = analyserPeakDb(this.masteringChain.sslInputAnalyser, this.sslInputBuffer!);
-        const outputDb = analyserPeakDb(this.masteringChain.sslOutputAnalyser, this.sslOutputBuffer!);
-        this.sslMeterCallback!({
-          gainReductionDB: Math.max(0, inputDb - outputDb),
-          inputLevelDB: inputDb,
-        });
+    const poll = () => {
+      if (!this.masteringChain?.sslInputAnalyser || !this.masteringChain.sslOutputAnalyser) {
+        return;
+      }
 
-        this.meterPollId = requestAnimationFrame(poll);
-      };
+      const inputDb = analyserPeakDb(this.masteringChain.sslInputAnalyser, this.sslInputBuffer!);
+      const outputDb = analyserPeakDb(this.masteringChain.sslOutputAnalyser, this.sslOutputBuffer!);
+      this.sslMeterCallback!({
+        gainReductionDB: Math.max(0, inputDb - outputDb),
+        inputLevelDB: inputDb,
+      });
 
       this.meterPollId = requestAnimationFrame(poll);
-    }
+    };
+
+    this.meterPollId = requestAnimationFrame(poll);
   }
 
   private async createMasteringChain(
@@ -184,9 +170,13 @@ export class RealtimeAudioPlayer {
       throw new Error('No audio context');
     }
 
-    const chain = await buildMasteringChainAsync({
+    const meterNode = await this.limiterMeter.initialize(this.audioContext);
+    this.limiterMeter.connectToDestination(this.audioContext.destination);
+    this.syncMeterParams(plan);
+
+    const chain = buildMasteringChain({
       context: this.audioContext,
-      destination: this.audioContext.destination,
+      destination: meterNode,
       params: plan,
       settings,
       quality: 'preview',
@@ -194,10 +184,9 @@ export class RealtimeAudioPlayer {
       dryBypass,
       inputTrimDB,
       inputLUFS: this.currentInputLUFS,
-      useTruePeakWorklet: !dryBypass && !useMinimalMaster,
     });
 
-    this.wireChainMeters(chain);
+    this.wireSSLMeters(chain);
     return chain;
   }
 
@@ -249,7 +238,7 @@ export class RealtimeAudioPlayer {
     // Build or rebuild mastering chain
     if (!this.masteringChain || settingsChanged) {
       if (this.masteringChain) {
-        this.unwireChainMeters();
+        this.unwireSSLMeters();
         this.masteringChain.dispose();
         this.masteringChain = null;
       }
@@ -479,7 +468,7 @@ export class RealtimeAudioPlayer {
     
     // Dispose old chain
     if (this.masteringChain) {
-      this.unwireChainMeters();
+      this.unwireSSLMeters();
       this.masteringChain.dispose();
       this.masteringChain = null;
     }
@@ -521,7 +510,7 @@ export class RealtimeAudioPlayer {
     if (!this.isPlaying || !this.currentSettings || !this.currentPlan || !this.audioContext || !this.audioBuffer) {
       this.currentDryBypass = newDryBypass;
       if (this.masteringChain) {
-        this.unwireChainMeters();
+        this.unwireSSLMeters();
         this.masteringChain.dispose();
         this.masteringChain = null;
       }
@@ -555,7 +544,7 @@ export class RealtimeAudioPlayer {
     
     // Dispose old chain
     if (this.masteringChain) {
-      this.unwireChainMeters();
+      this.unwireSSLMeters();
       this.masteringChain.dispose();
       this.masteringChain = null;
     }
@@ -606,16 +595,18 @@ export class RealtimeAudioPlayer {
     this.stop();
     
     if (this.masteringChain) {
-      this.unwireChainMeters();
+      this.unwireSSLMeters();
       this.masteringChain.dispose();
       this.masteringChain = null;
     }
-    
+
+    this.limiterMeter.dispose();
+
     if (this.audioContext) {
       this.audioContext.close();
       this.audioContext = null;
     }
-    
+
     this.audioBuffer = null;
   }
   

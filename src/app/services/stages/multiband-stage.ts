@@ -131,19 +131,17 @@ export function buildMultibandStage(
     band4_HP2.Q.value = 0.707;
 
     const band1Compressor = context.createDynamicsCompressor();
-    band1Compressor.threshold.value = -12;
-    band1Compressor.knee.value = 6;
-    band1Compressor.ratio.value = 4;
-    band1Compressor.attack.value = 0.01;
-    band1Compressor.release.value = 0.1;
+    band1Compressor.threshold.value = -14;
+    band1Compressor.knee.value = 8;
+    band1Compressor.ratio.value = 2.5;
+    band1Compressor.attack.value = 0.015;
+    band1Compressor.release.value = 0.12;
 
     const band1Saturation = context.createWaveShaper();
     const band1Curve = new Float32Array(65536);
     for (let i = 0; i < 65536; i++) {
       const x = (i * 2 - 65536) / 65536;
-      const saturated = Math.tanh(x * 1.5);
-      const secondHarmonic = 0.05 * x * Math.abs(x);
-      band1Curve[i] = saturated + secondHarmonic;
+      band1Curve[i] = Math.tanh(x * 1.2);
     }
     normalizeCurve(band1Curve);
     band1Saturation.curve = band1Curve;

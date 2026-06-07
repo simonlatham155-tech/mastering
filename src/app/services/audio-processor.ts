@@ -3,7 +3,7 @@ import type { ExportPreset } from '../components/export-panel';
 import { getExportPreset } from '../data/export-presets';
 import { resolveProcessingPlan } from '../data/preset-resolution';
 import { QualityMode, getQualityProfile } from '../data/quality-profiles';
-import { buildMasteringChainAsync, type MasteringChain } from './mastering-chain-builder';
+import { buildMasteringChain, type MasteringChain } from './mastering-chain-builder';
 
 export interface AudioAnalysis {
   lufs: number;
@@ -307,7 +307,7 @@ export class AudioProcessor {
    * 
    * @returns PlaybackControls for pause/resume/seek
    */
-  async startPlayback(settings: ProcessingSettings): Promise<PlaybackControls> {
+  startPlayback(settings: ProcessingSettings): PlaybackControls {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
     }
@@ -341,7 +341,7 @@ export class AudioProcessor {
     // Build chain if not already built (or if settings changed)
     if (!this.realtimeChain) {
       console.log('🔧 Building real-time mastering chain (preview quality)');
-      this.realtimeChain = await buildMasteringChainAsync({
+      this.realtimeChain = buildMasteringChain({
         context: this.audioContext,
         destination: this.audioContext.destination,
         params: plan,
@@ -349,7 +349,6 @@ export class AudioProcessor {
         quality: 'preview',
         useMinimalMaster,
         inputLUFS: this.analysis?.lufs ?? -16,
-        useTruePeakWorklet: !useMinimalMaster,
       });
     }
 
@@ -506,7 +505,7 @@ export class AudioProcessor {
     );
 
     // Build mastering chain (export quality for download, preview for waveform viz)
-    const chain = await buildMasteringChainAsync({
+    const chain = buildMasteringChain({
       context: offlineContext,
       destination: offlineContext.destination,
       params: plan,
@@ -515,7 +514,6 @@ export class AudioProcessor {
       useMinimalMaster,
       inputTrimDB,
       inputLUFS: this.analysis?.lufs ?? -16,
-      useTruePeakWorklet: !useMinimalMaster,
     });
 
     // Create source
@@ -599,7 +597,7 @@ export class AudioProcessor {
     const offlineContext = new OfflineAudioContext(2, processLength, sampleRate);
 
     // Build mastering chain (preview quality)
-    const chain = await buildMasteringChainAsync({
+    const chain = buildMasteringChain({
       context: offlineContext,
       destination: offlineContext.destination,
       params: plan,
@@ -608,7 +606,6 @@ export class AudioProcessor {
       useMinimalMaster,
       inputTrimDB,
       inputLUFS: this.analysis?.lufs ?? -16,
-      useTruePeakWorklet: !useMinimalMaster,
     });
 
     // Extract chunk

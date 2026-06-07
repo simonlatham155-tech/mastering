@@ -417,7 +417,9 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   }
 
   // === STAGE 5b: CLIPPER (genre toggle — before limiter) ===
-  const useClipper = params.genreBehavior.useClipper && !useMinimalMaster;
+  // Clipper disabled for now — stacked waveshaping was rattling the low end in preview.
+  // Re-enable once limiter path is stable.
+  const useClipper = false && params.genreBehavior.useClipper && !useMinimalMaster;
   if (useClipper) {
     console.log('   [5b] Clipper: ACTIVE');
     const clipper = buildClipperStage(context, settings, params, quality);
@@ -847,16 +849,8 @@ function createLimiterStage(
   input.connect(makeupGain);
   makeupGain.connect(lookAheadDelay);
   lookAheadDelay.connect(limiter);
-
-  // When the true-peak worklet handles the ceiling, skip Type1 waveshaping —
-  // stacking both caused bass aliasing and rattling on heavy low end.
-  if (truePeakNode) {
-    limiter.connect(ceilingNode);
-  } else {
-    limiter.connect(type1Shaper);
-    type1Shaper.connect(ceilingNode);
-  }
-
+  limiter.connect(type1Shaper);
+  type1Shaper.connect(ceilingNode);
   ceilingNode.connect(output);
   
   console.log(`   Limiter: ceiling=${finalCeiling.toFixed(1)}dBTP, ratio=${limParams.ratio}:1, ` +
