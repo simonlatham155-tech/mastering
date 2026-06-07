@@ -187,7 +187,7 @@ export function FileUpload({ onFileSelect, onClear, selectedFile, isProcessing }
             Optimal Input
           </div>
           <div className="text-xs text-zinc-500 font-mono">
-            -8dB LUFS • 44.1-192kHz • 24-bit
+            -8dB LUFS • 44.1–192 kHz • import up to 24-bit
           </div>
         </div>
       )}
