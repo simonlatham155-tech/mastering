@@ -34,3 +34,13 @@ export function sliceBufferHead(
 
   return out;
 }
+
+/**
+ * Use the start of a long file for feature extraction / offline meters.
+ */
+export function analysisFeatureBuffer(
+  buffer: AudioBuffer,
+  maxSeconds = INPUT_ANALYSIS_MAX_SECONDS
+): AudioBuffer {
+  return sliceBufferHead(buffer, maxSeconds);
+}

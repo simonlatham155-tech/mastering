@@ -6,7 +6,7 @@ import {
   resolveIntegratedLUFS,
   INPUT_ANALYSIS_MAX_SECONDS,
 } from './measure-buffer-loudness';
-import { measureTruePeakLinearDBTP, measureSamplePeakDBFS } from './measure-buffer-true-peak';
+import { analysisFeatureBuffer } from './analysis-buffer-slice';
 import type { AudioAnalysis } from '../services/audio-processor';
 
 export interface AudioAnalysisResult {
@@ -37,7 +37,8 @@ interface AudioFeatures {
 
 /** Sync feature extraction (spectral, DR, genre) — no BS.1770 worklet. */
 function analyzeAudioFeatures(audioBuffer: AudioBuffer): AudioFeatures {
-  const channelData = audioBuffer.getChannelData(0);
+  const featureBuffer = analysisFeatureBuffer(audioBuffer);
+  const channelData = featureBuffer.getChannelData(0);
   const numSamples = channelData.length;
 
   let sumSquares = 0;
@@ -55,7 +56,7 @@ function analyzeAudioFeatures(audioBuffer: AudioBuffer): AudioFeatures {
   const rmsFallbackLUFS = -0.691 + 10 * Math.log10(rms * rms);
 
   const dynamicRange = calculateDynamicRange(channelData);
-  const spectralBalance = analyzeSpectralContent(audioBuffer);
+  const spectralBalance = analyzeSpectralContent(featureBuffer);
   const suggestedGenre = detectGenre(spectralBalance, dynamicRange);
   const isHeritage = dynamicRange > 12;
 
@@ -99,13 +100,18 @@ export async function analyzeAudioBufferAsync(
 
   const loudness = await measureBufferLoudness(audioBuffer, {
     maxDurationSec: INPUT_ANALYSIS_MAX_SECONDS,
+    renderTimeoutMs: 8_000,
+    moduleLoadTimeoutMs: 4_000,
   });
 
   const integratedLUFS = resolveIntegratedLUFS(loudness, features.rmsFallbackLUFS);
-  const digitalPeakDB = measureSamplePeakDBFS(audioBuffer);
-  const truePeakDBTP = measureTruePeakLinearDBTP(audioBuffer);
 
-  return featuresToResult(features, integratedLUFS, truePeakDBTP, digitalPeakDB);
+  return featuresToResult(
+    features,
+    integratedLUFS,
+    features.samplePeakDB + peaksApproxDB(features.samplePeakDB),
+    features.samplePeakDB
+  );
 }
 
 /** Mix-setup UI result from a single AudioProcessor analysis pass (no duplicate worklet renders). */
