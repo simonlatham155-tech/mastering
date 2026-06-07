@@ -1306,8 +1306,9 @@ export default function App() {
 
             {!isReady && !isAnalyzing && (
               <div className="mb-6 text-center py-8 px-6 rounded-lg border border-zinc-800 bg-zinc-950/50">
-                <p className="text-sm text-zinc-400 font-mono">
-                  Upload a mix to begin — we&apos;ll analyze it, pick a gear profile, and set your loudness target automatically.
+                <p className="text-sm text-zinc-400 font-mono leading-relaxed max-w-2xl mx-auto">
+                  Upload your mix and define your objective. We&apos;ll analyze the recording, recommend a
+                  mastering strategy, and apply only the processing required to reach release standard.
                 </p>
               </div>
             )}
