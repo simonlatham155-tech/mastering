@@ -98,7 +98,17 @@ export class RealtimeAudioPlayer {
 
   /** Reuse an already-decoded buffer (avoids a third full-file decode on upload). */
   loadBuffer(buffer: AudioBuffer): void {
-    this.setLoadedBuffer(buffer);
+    const ctx = this.ensureContext();
+    // Copy into this player's context — buffers decoded elsewhere may not play back.
+    const copy = ctx.createBuffer(
+      buffer.numberOfChannels,
+      buffer.length,
+      buffer.sampleRate
+    );
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      copy.copyToChannel(buffer.getChannelData(ch), ch);
+    }
+    this.setLoadedBuffer(copy);
   }
 
   private ensureContext(): AudioContext {
@@ -285,15 +295,17 @@ export class RealtimeAudioPlayer {
     limiterCeilingOverride?: number,
     sslGlue?: 'auto' | 'gentle' | 'firm'
   ): Promise<void> {
-    if (!this.audioContext || !this.audioBuffer) {
+    if (!this.audioBuffer) {
       throw new Error('No audio loaded');
     }
+
+    this.ensureContext();
 
     this.currentInputLUFS = inputLUFS ?? this.currentInputLUFS;
     
     // Resume AudioContext if suspended (browser autoplay policy)
-    if (this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
+    if (this.audioContext!.state === 'suspended') {
+      await this.audioContext!.resume();
     }
     
     if (this.isPlaying) {
@@ -594,7 +606,8 @@ export class RealtimeAudioPlayer {
     console.log('🔄 Rebuilding mastering chain...');
     
     // Build new chain
-    if (this.audioContext) {
+    if (this.audioBuffer) {
+      this.ensureContext();
       this.masteringChain = await this.createMasteringChain(
         settings,
         plan,
@@ -606,7 +619,7 @@ export class RealtimeAudioPlayer {
       );
     }
     
-    if (wasPlaying && this.audioContext) {
+    if (wasPlaying && this.audioBuffer) {
       this.pauseTime = currentPosition;
       await this.play(
         settings,

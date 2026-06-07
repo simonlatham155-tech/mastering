@@ -1012,32 +1012,37 @@ export default function App() {
   const handlePlay = async () => {
     if (!realtimePlayerRef.current || !analysis) return;
 
-    syncPlaybackGainOptions();
-    
-    const ctx = buildProcessingContext({
-      gearProfile,
-      exportPreset,
-      logicMode,
-      circuitDrive,
-      profileAdjustments,
-      proDynamics,
-    });
-    const plan = buildAppProcessingPlan(ctx);
-    const settings = buildAppProcessingSettings(ctx);
-    
-    await realtimePlayerRef.current.play(
-      settings,
-      plan,
-      bypassMode,
-      effectiveInputTrimDB,
-      false,
-      measuredInputLUFS,
-      limiterCeilingOverride,
-      proDynamics.sslGlue
-    );
-    applyProfileAdjustmentsToPlayer(realtimePlayerRef.current, gearProfile, profileAdjustments);
-    applyProDynamicsToPlayer(realtimePlayerRef.current, proDynamics, autoInputTrimDB);
-    syncPlaybackState();
+    try {
+      syncPlaybackGainOptions();
+
+      const ctx = buildProcessingContext({
+        gearProfile,
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments,
+        proDynamics,
+      });
+      const plan = buildAppProcessingPlan(ctx);
+      const settings = buildAppProcessingSettings(ctx);
+
+      await realtimePlayerRef.current.play(
+        settings,
+        plan,
+        bypassMode,
+        effectiveInputTrimDB,
+        false,
+        measuredInputLUFS,
+        limiterCeilingOverride,
+        proDynamics.sslGlue
+      );
+      applyProfileAdjustmentsToPlayer(realtimePlayerRef.current, gearProfile, profileAdjustments);
+      applyProDynamicsToPlayer(realtimePlayerRef.current, proDynamics, autoInputTrimDB);
+      syncPlaybackState();
+    } catch (error) {
+      console.error('Playback failed:', error);
+      toast.error('Preview playback failed — try clicking play again');
+    }
   };
   
   const handlePause = () => {
