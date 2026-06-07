@@ -1221,6 +1221,9 @@ export default function App() {
                     Black box vs genre-aware demo →
                   </a>
                 </p>
+                <p className="text-xs text-zinc-500 mt-1">
+                  Built on three decades of recording, mixing and mastering best practices.
+                </p>
               </div>
             </header>
 
