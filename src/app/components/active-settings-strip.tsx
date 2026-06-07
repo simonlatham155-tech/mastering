@@ -97,7 +97,11 @@ export function ActiveSettingsStrip({
         />
         <AppliedRow
           label="True-peak mode"
-          detail={hqMode ? 'HQ oversampling (reference-grade meters)' : 'Standard peak detect'}
+          detail={
+            hqMode
+              ? 'HQ meters (4× FIR) · export uses same FIR limiter + 24-bit WAV'
+              : 'Standard peak detect on meters · export still uses FIR limiter'
+          }
         />
       </div>
     </div>

@@ -10,11 +10,9 @@
  * 5. thdMode (pressure/flow) maps to logicMode behavior when user hasn't explicitly set it
  * 6. PREVIEW/EXPORT PARITY: Same DSP in both modes. Only oversampling changes (2x vs 4x).
  * 
- * PREVIEW/EXPORT RULE (v2):
- * What you hear in preview IS what you get in export. Period.
- * The ONLY difference is WaveShaper oversampling (2x preview, 4x export).
- * That's a ~0.1dB aliasing difference — inaudible on any monitor.
- * Everything else — multiband, SSL knee, limiter look-ahead, all params — IDENTICAL.
+ * 6. PREVIEW/EXPORT RULE (v3):
+ * Preview uses WaveShaper ceiling (2× OS) for low-latency live playback.
+ * Export + HQ waveform use the 4× FIR true-peak AudioWorklet on the ceiling stage.
  * 
  * PHILOSOPHY:
  * - loudnessStyle controls HOW HARD the dynamics processing works
@@ -210,6 +208,38 @@ const LOUDNESS_STYLE_PARAMS: Record<string, LoudnessStyleParams> = {
   },
 };
 
+export function shouldUseTruePeakWorkletOffline(
+  quality: QualityMode,
+  dryBypass = false,
+  explicit?: boolean
+): boolean {
+  if (dryBypass) return false;
+  if (explicit != null) return explicit;
+  return quality === 'export';
+}
+
+/**
+ * Build offline chain — export quality uses 4× FIR true-peak worklet for the ceiling stage.
+ */
+export async function buildOfflineMasteringChain(
+  config: MasteringChainConfig
+): Promise<MasteringChain> {
+  const useWorklet = shouldUseTruePeakWorkletOffline(
+    config.quality,
+    config.dryBypass,
+    config.useTruePeakWorklet
+  );
+
+  if (useWorklet) {
+    return buildMasteringChainAsync({
+      ...config,
+      useTruePeakWorklet: true,
+    });
+  }
+
+  return buildMasteringChain(config);
+}
+
 /**
  * Build mastering chain with optional async true-peak worklet creation.
  */
@@ -226,7 +256,7 @@ export async function buildMasteringChainAsync(
       ? LOUDNESS_STYLE_PARAMS.aggressive.limiter
       : styleParams.limiter;
     const finalCeiling = Math.min(
-      config.params.deliveryTargets.ceiling,
+      config.limiterCeilingOverride ?? config.params.deliveryTargets.ceiling,
       limParams.ceiling
     );
 
