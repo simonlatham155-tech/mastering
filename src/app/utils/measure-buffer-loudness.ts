@@ -3,6 +3,17 @@ import {
   ensureLufsMeterWorkletModule,
   preloadLufsMeterWorkletScript,
 } from '../services/lufs-meter-worklet';
+import {
+  measureBufferTruePeak,
+  measureSamplePeakDBFS,
+  type TruePeakMeasurement,
+} from './measure-buffer-true-peak';
+import { INPUT_ANALYSIS_MAX_SECONDS, sliceBufferHead } from './analysis-buffer-slice';
+
+export { measureSamplePeakDBFS, measureBufferTruePeak };
+export type { TruePeakMeasurement };
+export { INPUT_ANALYSIS_MAX_SECONDS, sliceBufferHead };
+export { preloadLufsMeterWorkletScript };
 
 export interface MeasureBufferLoudnessOptions {
   /** Cap offline render length (upload path). Default: full buffer. */
@@ -38,8 +49,6 @@ const EMPTY_BUFFER_LUFS: BufferLoudnessResult = {
   ...EMPTY_LUFS,
   maxMomentary: -Infinity,
 };
-
-export { preloadLufsMeterWorkletScript };
 
 /**
  * Measure integrated / momentary LUFS on a rendered AudioBuffer using the same
