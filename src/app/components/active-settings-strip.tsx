@@ -1,8 +1,9 @@
-import { CheckCircle2, Circle } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import type { GearProfileId } from './gear-selector';
 import type { ExportPresetId } from '../data/export-presets';
 import { getExportPreset } from '../data/export-presets';
 import { gearProfiles } from './gear-selector';
+import type { ProDynamicsSettings, SSLGlueMode } from './pro-dynamics-panel';
 
 type LogicMode = 'brickwall' | 'dynamics';
 
@@ -11,7 +12,9 @@ interface ActiveSettingsStripProps {
   exportPreset: ExportPresetId;
   circuitDrive: number;
   logicMode: LogicMode;
-  appliedTonalMatchStrength: number | null;
+  tonalMatchStrength: number;
+  proDynamics: ProDynamicsSettings;
+  hqMode: boolean;
   hasInputTrim: boolean;
   inputTrimDB?: number;
 }
@@ -28,16 +31,10 @@ function AppliedRow({ label, detail }: { label: string; detail: string }) {
   );
 }
 
-function PendingRow({ label, detail }: { label: string; detail: string }) {
-  return (
-    <div className="flex items-start gap-2 text-[10px] font-mono">
-      <Circle className="w-3.5 h-3.5 text-zinc-600 shrink-0 mt-0.5" />
-      <div>
-        <span className="text-zinc-500">{label}</span>
-        <span className="text-zinc-600"> — {detail}</span>
-      </div>
-    </div>
-  );
+function sslGlueLabel(mode: SSLGlueMode): string {
+  if (mode === 'gentle') return 'Gentle glue';
+  if (mode === 'firm') return 'Firm glue';
+  return 'Auto glue';
 }
 
 export function ActiveSettingsStrip({
@@ -45,7 +42,9 @@ export function ActiveSettingsStrip({
   exportPreset,
   circuitDrive,
   logicMode,
-  appliedTonalMatchStrength,
+  tonalMatchStrength,
+  proDynamics,
+  hqMode,
   hasInputTrim,
   inputTrimDB,
 }: ActiveSettingsStripProps) {
@@ -63,8 +62,8 @@ export function ActiveSettingsStrip({
         Active on your master
       </div>
       <p className="text-[10px] font-mono text-zinc-500 mb-3 leading-relaxed">
-        These settings are applied automatically when you upload. Preview uses them immediately —
-        no extra Apply step unless you use optional tonal match below (expert).
+        Full quality stack is applied on upload — genre chain, staging, tonal match, and delivery
+        prep. Open <span className="text-zinc-400">Pro controls</span> below to adjust anything.
       </p>
       <div className="space-y-1.5">
         <AppliedRow label="Gear profile" detail={`${gearName} (genre EQ + chain)`} />
@@ -77,14 +76,29 @@ export function ActiveSettingsStrip({
         {hasInputTrim && inputTrimDB != null && (
           <AppliedRow label="Input headroom" detail={`${inputTrimDB.toFixed(1)} dB trim (auto)`} />
         )}
-        {appliedTonalMatchStrength != null && appliedTonalMatchStrength > 0 ? (
+        <AppliedRow
+          label="Export staging"
+          detail={proDynamics.autoStageOnExport ? 'Auto-staging to target LUFS' : 'Manual output level'}
+        />
+        <AppliedRow label="Bus glue" detail={sslGlueLabel(proDynamics.sslGlue)} />
+        {proDynamics.forceMonoBass && (
           <AppliedRow
-            label="Tonal balance match"
-            detail={`${appliedTonalMatchStrength}% applied to profile EQ (expert)`}
+            label="Mono bass"
+            detail={`Below ${proDynamics.monoBassHz} Hz`}
           />
-        ) : (
-          <PendingRow label="Tonal balance match" detail="not applied — genre EQ only (optional in expert)" />
         )}
+        <AppliedRow
+          label="Tonal balance match"
+          detail={
+            tonalMatchStrength > 0
+              ? `${tonalMatchStrength}% on profile EQ`
+              : 'Off (genre EQ only)'
+          }
+        />
+        <AppliedRow
+          label="True-peak mode"
+          detail={hqMode ? 'HQ oversampling (reference-grade meters)' : 'Standard peak detect'}
+        />
       </div>
     </div>
   );

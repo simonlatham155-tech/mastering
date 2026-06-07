@@ -16,11 +16,15 @@ import { resolveProcessingPlan, type ProcessingPlan, type UserOverrides } from '
 import type { ProcessingSettings } from '../services/audio-processor';
 import type { AIMasteringRecommendation } from '../services/ai-mastering-engine';
 import type { RealtimeAudioPlayer } from '../services/realtime-audio-player';
+import { getSuggestedProDynamics } from '../utils/suggested-settings';
 
 export type LogicMode = 'brickwall' | 'dynamics';
 
 export { DEFAULT_PRO_DYNAMICS };
 export type { ProDynamicsSettings, SSLGlueMode };
+
+/** Default tonal balance match — applied automatically; pros adjust in expert rack. */
+export const DEFAULT_TONAL_MATCH_STRENGTH = 35;
 
 const SSL_GLUE_PRESETS: Record<Exclude<SSLGlueMode, 'auto'>, { threshold: number; ratio: number }> = {
   gentle: { threshold: -14, ratio: 2 },
@@ -58,6 +62,24 @@ export function profileAdjustmentsToUserOverrides(
   }
 
   return overrides;
+}
+
+/** Genre-aware pro dynamics defaults (staging, glue, mono bass) — applied on upload. */
+export function buildProDynamicsForGear(
+  gearProfile: GearProfileId,
+  exportPresetId: ExportPresetId,
+  autoInputTrimDB?: number
+): ProDynamicsSettings {
+  const ceiling = getExportPreset(exportPresetId).ceiling;
+  const suggested = getSuggestedProDynamics(gearProfile, ceiling, autoInputTrimDB);
+  return {
+    ...DEFAULT_PRO_DYNAMICS,
+    sslGlue: suggested.sslGlue,
+    forceMonoBass: suggested.forceMonoBass,
+    monoBassHz: suggested.monoBassHz,
+    autoStageOnExport: true,
+    autoStageLive: false,
+  };
 }
 
 export function resolveEffectiveInputTrimDB(

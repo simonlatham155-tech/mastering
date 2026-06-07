@@ -31,6 +31,8 @@ import {
   buildAppProcessingPlan,
   buildAppProcessingSettings,
   DEFAULT_PRO_DYNAMICS,
+  DEFAULT_TONAL_MATCH_STRENGTH,
+  buildProDynamicsForGear,
   NEUTRAL_PROFILE_ADJUSTMENTS,
   resolveEffectiveInputTrimDB,
   resolveLimiterCeilingOverride,
@@ -138,10 +140,10 @@ export default function App() {
   const [bypassGainMatchDB, setBypassGainMatchDB] = useState(0);
 
   const [spectralProfile, setSpectralProfile] = useState<SpectralProfile | null>(null);
-  const [matchStrength, setMatchStrength] = useState(0);
-  const [appliedTonalMatchStrength, setAppliedTonalMatchStrength] = useState<number | null>(null);
+  const [matchStrength, setMatchStrength] = useState(DEFAULT_TONAL_MATCH_STRENGTH);
   const [isSpectralAnalyzing, setIsSpectralAnalyzing] = useState(false);
   const referenceMatchControllerRef = useRef<ReferenceMatchingController | null>(null);
+  const referenceMatchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Audio Input Analysis
   const [inputAnalysis, setInputAnalysis] = useState<AudioAnalysisResult | null>(null);
@@ -334,28 +336,32 @@ export default function App() {
     ]
   );
 
-  const handleApplyReferenceMatch = () => {
-    if (!previewMatchingGains || matchStrength <= 0) return;
+  const handleApplyReferenceMatch = useCallback(
+    (strength: number) => {
+      if (!previewMatchingGains) return;
+      applyReferenceMatchFromGains(previewMatchingGains, strength);
+    },
+    [previewMatchingGains, applyReferenceMatchFromGains]
+  );
 
-    applyReferenceMatchFromGains(previewMatchingGains, matchStrength);
-    setAppliedTonalMatchStrength(matchStrength);
-    toast.success(`Tonal match applied at ${matchStrength}% — profile EQ updated`);
-  };
+  // Pro stack: tonal match applied by default when spectral analysis completes; slider adjusts live.
+  useEffect(() => {
+    if (!previewMatchingGains) return;
 
-  const handleResetReferenceMatch = () => {
-    setMatchStrength(0);
-    setAppliedTonalMatchStrength(null);
-    applyReferenceMatchFromGains(
-      previewMatchingGains ?? {
-        bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        autoGain: 0,
-        warnings: [],
-        deltaVisualization: { muddy: false, dark: false, boomy: false, harsh: false },
-      },
-      0
-    );
-    toast.info('Tonal match removed — genre EQ only');
-  };
+    if (referenceMatchDebounceRef.current) {
+      clearTimeout(referenceMatchDebounceRef.current);
+    }
+
+    referenceMatchDebounceRef.current = setTimeout(() => {
+      handleApplyReferenceMatch(matchStrength);
+    }, matchStrength === 0 ? 0 : 300);
+
+    return () => {
+      if (referenceMatchDebounceRef.current) {
+        clearTimeout(referenceMatchDebounceRef.current);
+      }
+    };
+  }, [previewMatchingGains, matchStrength, handleApplyReferenceMatch]);
   
   // Mix analysis summary (shown in unified setup panel after upload)
   const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
@@ -453,12 +459,35 @@ export default function App() {
     };
   }, [isReady]);
 
-  // Reset user EQ/width offsets when gear profile changes (genre defaults stay in the chain).
+  // Reset user EQ/width offsets when gear profile changes (genre defaults + pro stack re-applied).
+  const skipInitialGearResetRef = useRef(true);
   useEffect(() => {
+    if (skipInitialGearResetRef.current) {
+      skipInitialGearResetRef.current = false;
+      return;
+    }
+    if (!analysis) return;
+
     setProfileAdjustments({ ...NEUTRAL_PROFILE_ADJUSTMENTS });
-    setAppliedTonalMatchStrength(null);
-    setMatchStrength(0);
+    setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+    setProDynamics(buildProDynamicsForGear(gearProfile, exportPreset, autoInputTrimDB));
   }, [gearProfile]);
+
+  const prevExportPresetRef = useRef(exportPreset);
+  useEffect(() => {
+    if (prevExportPresetRef.current === exportPreset) return;
+    prevExportPresetRef.current = exportPreset;
+    if (!analysis) return;
+
+    setProDynamics((prev) => {
+      const next = buildProDynamicsForGear(gearProfile, exportPreset, autoInputTrimDB);
+      return {
+        ...next,
+        outputTrimDB: prev.outputTrimDB,
+        inputTrimDB: prev.inputTrimDB,
+      };
+    });
+  }, [exportPreset, gearProfile, autoInputTrimDB, analysis]);
 
   // === LIVE PARAMETER UPDATES (PATCH 2026-05-25: Viktor) ===
   // Wire profile adjustment sliders to real-time audio parameter updates.
@@ -732,6 +761,15 @@ export default function App() {
 
       const { applied } = applyRecommendationToState(recommendation);
 
+      const inputTrim = computeAutoInputTrimDB(analysisResult.peakLevel);
+      const proDefaults = buildProDynamicsForGear(
+        applied.gearProfile,
+        applied.exportPreset,
+        inputTrim
+      );
+      setProDynamics(proDefaults);
+      setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+
       toast.success(
         `Mix configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
       );
@@ -752,6 +790,7 @@ export default function App() {
           logicMode: applied.logicMode,
           circuitDrive: applied.circuitDrive,
           profileAdjustments: syncedProfile ?? profileAdjustments,
+          proDynamics: proDefaults,
         }
       );
 
@@ -844,8 +883,8 @@ export default function App() {
     setIsWaveformRendering(false);
     setOriginalBuffer(null);
     setSpectralProfile(null);
-    setMatchStrength(0);
-    setAppliedTonalMatchStrength(null);
+    setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+    setProDynamics(DEFAULT_PRO_DYNAMICS);
     setMeterValues({ peak: 0, lra: 0 });
   };
 
@@ -1273,7 +1312,9 @@ export default function App() {
               exportPreset={exportPreset}
               circuitDrive={circuitDrive}
               logicMode={logicMode}
-              appliedTonalMatchStrength={appliedTonalMatchStrength}
+              tonalMatchStrength={matchStrength}
+              proDynamics={proDynamics}
+              hqMode={hqMode}
               hasInputTrim={effectiveInputTrimDB != null && effectiveInputTrimDB < 0}
               inputTrimDB={effectiveInputTrimDB}
             />
@@ -1443,7 +1484,7 @@ export default function App() {
                 onClick={() => setExpertMode(prev => !prev)}
                 className="px-4 py-2 rounded-lg border border-zinc-700 bg-zinc-900 text-xs font-mono text-zinc-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
               >
-                {expertMode ? '▲ Hide expert rack' : '▼ Expert: meters, tonal match, album export, EQ…'}
+                {expertMode ? '▲ Hide pro controls' : '▼ Pro controls: meters, tonal match, album export, EQ…'}
               </button>
             </div>
 
@@ -1530,10 +1571,9 @@ export default function App() {
                 referenceCurve={referenceCurve}
                 matchingGains={previewMatchingGains}
                 matchStrength={matchStrength}
-                appliedStrength={appliedTonalMatchStrength}
+                defaultStrength={DEFAULT_TONAL_MATCH_STRENGTH}
                 onMatchStrengthChange={setMatchStrength}
-                onApplyMatching={handleApplyReferenceMatch}
-                onResetMatching={handleResetReferenceMatch}
+                onResetToDefault={() => setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH)}
                 isAnalyzing={isSpectralAnalyzing}
                 gearLabel={gearProfiles.find((p) => p.id === gearProfile)?.name}
               />
