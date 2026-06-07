@@ -283,15 +283,19 @@ export async function buildMasteringChainAsync(
     );
 
     if (config.useFaustLimiter) {
+      const isBrickwall = config.settings.logicMode === 'brickwall';
       truePeakLimiterNode = await createFaustLimiterNode(config.context, {
         thresholdDB: finalCeiling - 3,
-        ratio: limParams.ratio,
-        attackSec: limParams.attack,
-        releaseSec: limParams.release,
+        ratio: isBrickwall ? limParams.ratio : 2,
+        attackSec: isBrickwall ? limParams.attack : 0.010,
+        releaseSec: isBrickwall ? limParams.release : 0.20,
         ceilingDBTP: finalCeiling,
         mix: 1,
       });
-      console.log(`   TruePeak: FAUST WASM @ ${finalCeiling.toFixed(1)} dBTP ceiling`);
+      console.log(
+        `   TruePeak: FAUST WASM @ ${finalCeiling.toFixed(1)} dBTP` +
+          (isBrickwall ? ' (pressure)' : ' (flow transparent)')
+      );
     } else if (config.useTruePeakWorklet) {
       truePeakLimiterNode = await createTruePeakLimiterNode(config.context, {
         monitorOnly: false,
@@ -882,47 +886,80 @@ function createLimiterStage(
   const targetLUFS = finiteDB(params.deliveryTargets.targetLUFS, -14);
   const estimatedCurrentLUFS = finiteDB(inputLUFS ?? -16, -16);
   const requiredGainDB = targetLUFS - estimatedCurrentLUFS;
-  
-  // Clamp makeup by loudnessStyle's maxGR (prevents over-limiting)
-  // FLOW CEILING: In dynamics mode, cap maxGR to 1.5dB (Pressure allows 8dB).
-  // This is the single biggest lever — less makeup gain = less limiting = more dynamics.
-  // At 1.5dB max, the limiter barely engages. The waveform BREATHES.
-  // (Was 4dB — caused up to 6dB total GR even in Flow mode = sausage)
-  const flowMaxGR = Math.min(limParams.maxGR, 1.5); // Flow: max 1.5dB gain reduction
+
+  // Flow: minimal makeup — loudness staging handles the rest via output trim.
+  // Brickwall: allow more makeup for pressure/loudness targets.
+  const flowMaxGR = Math.min(limParams.maxGR, 1.0);
   const maxMakeupDB = isBrickwall ? 8 : flowMaxGR;
   const makeupGainDB = Math.max(-6, Math.min(requiredGainDB, maxMakeupDB));
   const makeupGainLinear = finiteLinearGainFromDB(makeupGainDB);
-  
+
   const makeupGain = context.createGain();
   makeupGain.gain.value = makeupGainLinear;
-  
+
   // === LOOK-AHEAD DELAY ===
-  // PARITY FIX: Look-ahead enabled in BOTH preview and export.
-  // Without look-ahead, the limiter responds differently to transients.
-  // 5-10ms delay is inaudible in real-time playback (well within acceptable latency).
   const lookAheadDelay = context.createDelay(0.015);
   lookAheadDelay.delayTime.value = limParams.lookAhead;
-  
-  // === DYNAMICS COMPRESSOR (primary limiter) ===
-  const limiter = context.createDynamicsCompressor();
-  limiter.threshold.value = finalCeiling - 3; // Start 3dB below ceiling
-  
-  // FLOW CEILING on limiter: soft safety net only, NOT a loudness tool.
-  // With only 1.5dB makeup, the limiter should barely engage anyway.
-  // These caps ensure it stays transparent if it does catch a transient.
-  const flowLimRatio = isBrickwall ? limParams.ratio : Math.min(limParams.ratio, 4);   // Was 8
-  const flowLimAttack = isBrickwall ? limParams.attack : Math.max(limParams.attack, 0.005); // Was 3ms
-  const flowLimRelease = isBrickwall ? limParams.release : Math.max(limParams.release, 0.15); // Was 100ms
-  const flowLimKnee = isBrickwall ? limParams.knee : Math.max(limParams.knee, 6);     // Was 4
-  
-  limiter.ratio.value = flowLimRatio;
-  limiter.attack.value = flowLimAttack;
-  limiter.release.value = flowLimRelease;
-  limiter.knee.value = flowLimKnee;
-  
+
+  const truePeakNode = truePeakLimiterNode ?? null;
+
+  // Flow (dynamics): true-peak ceiling ONLY — no bus compressor squash or Type1 clip.
+  // The annoying "limiter pumping" came from DynamicsCompressor + WaveShaper stacking.
   if (!isBrickwall) {
-    console.log(`   [6] Flow limiter caps applied: ratio=${flowLimRatio}:1, maxGR=${flowMaxGR}dB, attack=${(flowLimAttack*1000).toFixed(0)}ms`);
+    const flowType2Knee = Math.max(type2KneeStart, 0.995);
+    const type2Shaper = context.createWaveShaper();
+    const type2Curve = new Float32Array(65536);
+    for (let i = 0; i < 65536; i++) {
+      const x = (i * 2 - 65536) / 65536;
+      const absX = Math.abs(x);
+      const kneeThreshold = ceilingLinear * flowType2Knee;
+      if (absX < kneeThreshold) {
+        type2Curve[i] = x;
+      } else {
+        const excess = absX - kneeThreshold;
+        const kneeRange = ceilingLinear * (1 - flowType2Knee);
+        const limited =
+          kneeThreshold +
+          kneeRange * (2 / Math.PI) * Math.atan((excess / kneeRange) * 6);
+        type2Curve[i] =
+          x > 0 ? Math.min(limited, ceilingLinear) : -Math.min(limited, ceilingLinear);
+      }
+    }
+    type2Shaper.curve = type2Curve;
+    type2Shaper.oversample = quality === 'export' ? '4x' : '2x';
+
+    const ceilingNode = truePeakNode ?? type2Shaper;
+
+    input.connect(makeupGain);
+    makeupGain.connect(lookAheadDelay);
+    lookAheadDelay.connect(ceilingNode);
+    ceilingNode.connect(output);
+
+    console.log(
+      `   Limiter: FLOW transparent ceiling @ ${finalCeiling.toFixed(1)}dBTP, ` +
+        `makeup=${makeupGainDB.toFixed(1)}dB (from ${estimatedCurrentLUFS.toFixed(1)} → ${targetLUFS} LUFS), ` +
+        `TruePeak: ${truePeakNode ? 'FAUST/WORKLET' : 'WAVESHAPER'}`
+    );
+
+    return {
+      input,
+      output,
+      threshold: makeupGain.gain,
+      makeup: makeupGain.gain,
+      ceiling: makeupGain.gain,
+      truePeakNode,
+      ceilingDBTP: finalCeiling,
+    };
   }
+
+  // === DYNAMICS COMPRESSOR (Pressure / brickwall primary limiter) ===
+  const limiter = context.createDynamicsCompressor();
+  limiter.threshold.value = finalCeiling - 3;
+  
+  limiter.ratio.value = limParams.ratio;
+  limiter.attack.value = limParams.attack;
+  limiter.release.value = limParams.release;
+  limiter.knee.value = limParams.knee;
   
   // === TYPE 1 WAVESHAPER (Punchy Limiter) ===
   // Active in aggressive/brickwall mode, bypassed in balanced/clean
@@ -978,7 +1015,6 @@ function createLimiterStage(
   type2Shaper.curve = type2Curve;
   type2Shaper.oversample = quality === 'export' ? '4x' : '2x';
   
-  const truePeakNode = truePeakLimiterNode ?? null;
   const ceilingNode = truePeakNode ?? type2Shaper;
 
   input.connect(makeupGain);
