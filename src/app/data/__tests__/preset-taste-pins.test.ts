@@ -75,6 +75,7 @@ describe('Critical Preset Snapshots', () => {
         monoBassHz: 100
       },
       loudnessStyle: 'balanced',
+      thdMode: 'pressure',
       toggles: {
         useMultiband: false,
         useClipper: true,
@@ -100,6 +101,7 @@ describe('Critical Preset Snapshots', () => {
         monoBassHz: 100
       },
       loudnessStyle: 'balanced',
+      thdMode: 'pressure',
       toggles: {
         useMultiband: false,
         useClipper: false,
@@ -124,6 +126,7 @@ describe('Critical Preset Snapshots', () => {
         colorAmount: 0.8
       },
       loudnessStyle: 'clean',
+      thdMode: 'flow',
       toggles: {
         useMultiband: false,
         useClipper: false,

@@ -73,7 +73,16 @@ describe('delivery quality report', () => {
 });
 
 describe('genre × delivery matrix (plan resolution)', () => {
-  const genres = ['deephouse', 'dnb', 'techno', 'rnb'] as const;
+  /** Hero genres for listen QA — cover club, house, trance, bass */
+  const heroGenres = [
+    'dnb',
+    'techno',
+    'progressivehouse',
+    'deephouse',
+    'trance',
+    'techhouse',
+    'dubstep',
+  ] as const;
   const presets = Object.keys(EXPORT_PRESETS) as Array<keyof typeof EXPORT_PRESETS>;
 
   for (const presetId of presets) {
@@ -85,7 +94,7 @@ describe('genre × delivery matrix (plan resolution)', () => {
       expect(preset.ceiling).toBeGreaterThan(-3);
     });
 
-    for (const genreId of genres) {
+    for (const genreId of heroGenres) {
       test(`${genreId} + ${presetId} resolves delivery targets`, () => {
         const plan = resolveProcessingPlan({
           genreId,
@@ -97,6 +106,18 @@ describe('genre × delivery matrix (plan resolution)', () => {
         expect(plan.deliveryTargets.targetLUFS).toBe(preset.lufs);
         expect(plan.deliveryTargets.ceiling).toBe(preset.ceiling);
         expect(plan.genreBehavior.loudnessStyle).toMatch(/aggressive|balanced|clean/);
+      });
+
+      test(`${genreId} + ${presetId} width stays within engine bounds`, () => {
+        const plan = resolveProcessingPlan({
+          genreId,
+          exportPresetId: presetId,
+          performanceMode: 'studio',
+          logicMode: 'dynamics',
+        });
+
+        expect(plan.genreBehavior.width).toBeGreaterThanOrEqual(0.9);
+        expect(plan.genreBehavior.width).toBeLessThanOrEqual(1.15);
       });
     }
   }

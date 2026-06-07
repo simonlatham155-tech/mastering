@@ -127,7 +127,7 @@ export const GENERIC_BLACKBOX: GenrePreset = {
   toggles: {
     useMultiband: false,
     useClipper: true,
-    useMidSide: false,
+    useMidSide: true,
     forceMonoBass: true,
   },
 

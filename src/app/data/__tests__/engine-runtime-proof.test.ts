@@ -64,36 +64,32 @@ describe('Engine Runtime Proof (Resolver Behavior)', () => {
   });
   
   test('User override gets clamped by live mode guardrails', () => {
-    // User requests 1.20 width (outside live limit)
     const livePlan = resolveProcessingPlan({
       genreId: 'progressivehouse',
       exportPresetId: 'club',
       performanceMode: 'live',
       logicMode: 'dynamics',
       userOverrides: {
-        width: 1.20  // Exceeds live max (1.05)
-      }
+        width: 0.16, // 1.04 + 0.16 = 1.20, exceeds live max
+      },
     });
-    
+
     const studioPlan = resolveProcessingPlan({
       genreId: 'progressivehouse',
       exportPresetId: 'club',
       performanceMode: 'studio',
       logicMode: 'dynamics',
       userOverrides: {
-        width: 1.20  // Exceeds studio max (1.15), will be clamped
-      }
+        width: 0.16, // 1.04 + 0.16 = 1.20, exceeds studio max
+      },
     });
-    
-    // Live mode clamps to 1.05
+
     expect(livePlan.genreBehavior.width).toBe(1.05);
     expect(livePlan.source.widthClamped).toBe(true);
-    
-    // Studio mode clamps to 1.15 (1.20 exceeds max)
+
     expect(studioPlan.genreBehavior.width).toBe(1.15);
     expect(studioPlan.source.widthClamped).toBe(true);
-    
-    // Different behavior proves guardrails work
+
     expect(livePlan.genreBehavior.width).not.toBe(studioPlan.genreBehavior.width);
   });
   
@@ -161,55 +157,48 @@ describe('Engine Runtime Proof (Resolver Behavior)', () => {
       performanceMode: 'studio',
       logicMode: 'dynamics',
       userOverrides: {
-        width: 1.08,
-        useMultiband: false
-      }
+        width: 0.04,
+        useMultiband: false,
+      },
     });
-    
+
     const plan2 = resolveProcessingPlan({
       genreId: 'progressivehouse',
       exportPresetId: 'club',
       performanceMode: 'studio',
       logicMode: 'dynamics',
       userOverrides: {
-        width: 1.08,
-        useMultiband: false
-      }
+        width: 0.04,
+        useMultiband: false,
+      },
     });
-    
-    // Should produce identical results
+
     expect(plan1).toEqual(plan2);
-    expect(plan1.genreBehavior.width).toBe(plan2.genreBehavior.width);
-    expect(plan1.genreBehavior.useMultiband).toBe(plan2.genreBehavior.useMultiband);
+    expect(plan1.genreBehavior.width).toBe(1.08);
   });
   
   test('Engine defaults are sane (invariants)', () => {
-    // Verify engine defaults are correctly ordered
-    expect(ENGINE_DEFAULTS.minWidth).toBe(0.5);
+    expect(ENGINE_DEFAULTS.minWidth).toBe(0.9);
     expect(ENGINE_DEFAULTS.maxWidth_live).toBe(1.05);
-    expect(ENGINE_DEFAULTS.maxWidth_export).toBe(1.15);  // NOT 1.25 (real value)
-    
-    // Ordering check
+    expect(ENGINE_DEFAULTS.maxWidth_export).toBe(1.15);
+
     expect(ENGINE_DEFAULTS.minWidth).toBeLessThan(ENGINE_DEFAULTS.maxWidth_live);
     expect(ENGINE_DEFAULTS.maxWidth_live).toBeLessThan(ENGINE_DEFAULTS.maxWidth_export);
   });
-  
+
   test('Live mode disables multiband (latency/safety)', () => {
-    // DnB preset has multiband enabled (bass-heavy, needs protection)
-    // But live mode should force it off for lowest latency
-    
     const studioPlan = resolveProcessingPlan({
-      genreId: 'drumandbass',
+      genreId: 'dnb',
       exportPresetId: 'club',
       performanceMode: 'studio',
-      logicMode: 'dynamics'
+      logicMode: 'dynamics',
     });
-    
+
     const livePlan = resolveProcessingPlan({
-      genreId: 'drumandbass',
+      genreId: 'dnb',
       exportPresetId: 'club',
       performanceMode: 'live',
-      logicMode: 'dynamics'
+      logicMode: 'dynamics',
     });
     
     // Studio mode: multiband ON (preset default)
@@ -231,14 +220,15 @@ describe('Engine Runtime Proof (Edge Cases)', () => {
       performanceMode: 'studio',
       logicMode: 'dynamics',
       userOverrides: {
-        width: 0.3  // Below minWidth (0.5)
-      }
+        width: -0.62, // 0.92 - 0.62 = 0.30, below minWidth
+      },
     });
-    
+
     expect(plan.genreBehavior.width).toBe(ENGINE_DEFAULTS.minWidth);
+    expect(plan.source.requestedWidth).toBeCloseTo(0.3, 5);
     expect(plan.source.widthClamped).toBe(true);
   });
-  
+
   test('Width above maxWidth_export gets clamped', () => {
     const plan = resolveProcessingPlan({
       genreId: 'trance',
@@ -246,8 +236,8 @@ describe('Engine Runtime Proof (Edge Cases)', () => {
       performanceMode: 'studio',
       logicMode: 'dynamics',
       userOverrides: {
-        width: 2.0  // Way beyond maxWidth_export (1.15)
-      }
+        width: 0.88, // 1.12 + 0.88 = 2.00
+      },
     });
     
     expect(plan.genreBehavior.width).toBe(ENGINE_DEFAULTS.maxWidth_export);
@@ -264,7 +254,7 @@ describe('Engine Runtime Proof (Edge Cases)', () => {
     });
     
     // Should return Deep House defaults
-    expect(plan.genreBehavior.width).toBe(0.92);
+    expect(plan.genreBehavior.width).toBe(1.06);
     expect(plan.genreBehavior.useMultiband).toBe(false);
     expect(plan.genreBehavior.useClipper).toBe(false);
     expect(plan.source.widthClamped).toBe(false);
