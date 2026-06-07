@@ -331,7 +331,7 @@ export class AudioProcessor {
     const loudness = await measureBufferLoudness(this.audioBuffer, {
       maxDurationSec: INPUT_ANALYSIS_MAX_SECONDS,
       renderTimeoutMs: 8_000,
-      moduleLoadTimeoutMs: 4_000,
+      moduleLoadTimeoutMs: 15_000,
     });
 
     const integratedLUFS = resolveIntegratedLUFS(loudness, this.analysis.lufs);

@@ -40,7 +40,7 @@ import { buildInputAnalysisFromProcessor, AudioAnalysisResult } from './utils/au
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
-import { buildExportQualityReport } from './utils/measure-buffer-loudness';
+import { buildExportQualityReport, preloadLufsMeterWorkletScript } from './utils/measure-buffer-loudness';
 import {
   computeAutoInputTrimDB,
   masterExportFilename,
@@ -101,6 +101,10 @@ function syncProfileAdjustmentsForGear(
 }
 
 export default function App() {
+  useEffect(() => {
+    preloadLufsMeterWorkletScript();
+  }, []);
+
   const [circuitDrive, setCircuitDrive] = useState(50);
   const [recommendedCircuitDrive, setRecommendedCircuitDrive] = useState<number | null>(null);
   const [logicMode, setLogicMode] = useState<LogicMode>('dynamics');
