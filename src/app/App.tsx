@@ -137,9 +137,10 @@ export default function App() {
   const [bypassGainMatchDB, setBypassGainMatchDB] = useState(0);
 
   const [spectralProfile, setSpectralProfile] = useState<SpectralProfile | null>(null);
-  const [matchStrength, setMatchStrength] = useState(50);
+  const [matchStrength, setMatchStrength] = useState(0);
   const [isSpectralAnalyzing, setIsSpectralAnalyzing] = useState(false);
   const referenceMatchControllerRef = useRef<ReferenceMatchingController | null>(null);
+  const referenceMatchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Audio Input Analysis
   const [inputAnalysis, setInputAnalysis] = useState<AudioAnalysisResult | null>(null);
@@ -282,43 +283,79 @@ export default function App() {
     }
   }, []);
 
-  const handleApplyReferenceMatch = () => {
-    if (!previewMatchingGains) return;
+  const applyReferenceMatchFromGains = useCallback(
+    (matchingGains: NonNullable<typeof previewMatchingGains>, strength: number) => {
+      if (strength <= 0) {
+        setProfileAdjustments({ ...NEUTRAL_PROFILE_ADJUSTMENTS });
+        const player = realtimePlayerRef.current;
+        if (player) {
+          applyProfileAdjustmentsToPlayer(player, gearProfile, NEUTRAL_PROFILE_ADJUSTMENTS);
+        }
+        return;
+      }
 
-    const nextProfile = matchingGainsToProfileAdjustments(
-      previewMatchingGains,
-      profileAdjustments
-    );
-    setProfileAdjustments(nextProfile);
+      const nextProfile = matchingGainsToProfileAdjustments(
+        matchingGains,
+        NEUTRAL_PROFILE_ADJUSTMENTS
+      );
+      setProfileAdjustments(nextProfile);
 
-    const trimDelta = matchingAutoGainToOutputTrimDelta(previewMatchingGains.autoGain);
-    if (Math.abs(trimDelta) >= 0.05) {
-      setProDynamics((prev) => {
-        const nextTrim = Math.max(-6, Math.min(6, prev.outputTrimDB + trimDelta));
-        realtimePlayerRef.current?.updateParameter('outputTrim', nextTrim);
-        return { ...prev, outputTrimDB: nextTrim };
+      const trimDelta = matchingAutoGainToOutputTrimDelta(matchingGains.autoGain);
+      if (Math.abs(trimDelta) >= 0.05) {
+        setProDynamics((prev) => {
+          const nextTrim = Math.max(-6, Math.min(6, prev.outputTrimDB + trimDelta));
+          realtimePlayerRef.current?.updateParameter('outputTrim', nextTrim);
+          return { ...prev, outputTrimDB: nextTrim };
+        });
+      }
+
+      const player = realtimePlayerRef.current;
+      if (player) {
+        applyProfileAdjustmentsToPlayer(player, gearProfile, nextProfile);
+      }
+
+      const ctx = buildProcessingContext({
+        gearProfile,
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments: nextProfile,
+        proDynamics,
       });
-    }
-
-    const player = realtimePlayerRef.current;
-    if (player) {
-      applyProfileAdjustmentsToPlayer(player, gearProfile, nextProfile);
-    }
-
-    const ctx = buildProcessingContext({
+      startWaveformPreviewRender(buildAppProcessingSettings(ctx));
+    },
+    [
       gearProfile,
       exportPreset,
       logicMode,
       circuitDrive,
-      profileAdjustments: nextProfile,
       proDynamics,
-    });
-    startWaveformPreviewRender(buildAppProcessingSettings(ctx));
+    ]
+  );
 
-    toast.success(
-      `Reference match applied at ${matchStrength}% — profile EQ updated`
-    );
-  };
+  // Expert tonal match: live-apply from neutral offsets when strength changes (no Apply button).
+  useEffect(() => {
+    if (!previewMatchingGains || !expertMode) return;
+
+    if (referenceMatchDebounceRef.current) {
+      clearTimeout(referenceMatchDebounceRef.current);
+    }
+
+    referenceMatchDebounceRef.current = setTimeout(() => {
+      applyReferenceMatchFromGains(previewMatchingGains, matchStrength);
+    }, matchStrength === 0 ? 0 : 350);
+
+    return () => {
+      if (referenceMatchDebounceRef.current) {
+        clearTimeout(referenceMatchDebounceRef.current);
+      }
+    };
+  }, [
+    previewMatchingGains,
+    matchStrength,
+    expertMode,
+    applyReferenceMatchFromGains,
+  ]);
   
   // Mix analysis summary (shown in unified setup panel after upload)
   const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
@@ -805,6 +842,7 @@ export default function App() {
     setIsWaveformRendering(false);
     setOriginalBuffer(null);
     setSpectralProfile(null);
+    setMatchStrength(0);
     setMeterValues({ peak: 0, lra: 0 });
   };
 
@@ -1480,7 +1518,6 @@ export default function App() {
                 matchingGains={previewMatchingGains}
                 matchStrength={matchStrength}
                 onMatchStrengthChange={setMatchStrength}
-                onApplyMatching={handleApplyReferenceMatch}
                 isAnalyzing={isSpectralAnalyzing}
                 gearLabel={gearProfiles.find((p) => p.id === gearProfile)?.name}
               />

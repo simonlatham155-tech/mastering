@@ -1,5 +1,4 @@
-import { Wand2, Target } from 'lucide-react';
-import { Button } from './ui/button';
+import { Target } from 'lucide-react';
 import { Slider } from './ui/slider';
 import { DeltaVisualizer } from './delta-visualizer';
 import type { ReferenceCurve } from '../data/reference-curves';
@@ -12,7 +11,6 @@ interface ReferenceMatchPanelProps {
   matchingGains: MatchingGains | null;
   matchStrength: number;
   onMatchStrengthChange: (strength: number) => void;
-  onApplyMatching: () => void;
   isAnalyzing?: boolean;
   gearLabel?: string;
 }
@@ -23,7 +21,6 @@ export function ReferenceMatchPanel({
   matchingGains,
   matchStrength,
   onMatchStrengthChange,
-  onApplyMatching,
   isAnalyzing = false,
   gearLabel,
 }: ReferenceMatchPanelProps) {
@@ -38,8 +35,8 @@ export function ReferenceMatchPanel({
             Tonal balance match
           </div>
           <p className="text-[10px] font-mono text-zinc-500 mt-1 max-w-md">
-            Compares your upload to the genre reference curve, then folds corrections into the
-            3-band profile EQ. Does not replace export loudness staging.
+            Optional fine-tune on top of the genre preset. 0% = genre only. Move the slider to
+            apply corrections live — no separate Apply step.
           </p>
         </div>
         {referenceCurve && (
@@ -64,7 +61,9 @@ export function ReferenceMatchPanel({
           <div>
             <div className="flex justify-between text-[10px] font-mono text-zinc-500 mb-2">
               <span>Match strength</span>
-              <span className="text-violet-300">{matchStrength}%</span>
+              <span className="text-violet-300">
+                {matchStrength === 0 ? 'Off (genre only)' : `${matchStrength}%`}
+              </span>
             </div>
             <Slider
               value={[matchStrength]}
@@ -75,24 +74,21 @@ export function ReferenceMatchPanel({
               className="w-full"
             />
             <div className="flex justify-between text-[8px] font-mono text-zinc-600 mt-1">
-              <span>Subtle</span>
-              <span>Balanced</span>
+              <span>Off</span>
+              <span>Subtle (~30%)</span>
               <span>Full</span>
             </div>
           </div>
 
-          {matchingGains && (
+          {matchingGains && matchStrength > 0 && (
             <DeltaVisualizer matchingGains={matchingGains} matchStrength={matchStrength} />
           )}
 
-          <Button
-            onClick={onApplyMatching}
-            disabled={!matchingGains || matchStrength === 0}
-            className="w-full bg-violet-700 hover:bg-violet-600"
-          >
-            <Wand2 className="w-4 h-4 mr-2" />
-            Apply to profile EQ
-          </Button>
+          {matchStrength === 0 && (
+            <p className="text-[10px] font-mono text-zinc-600 text-center py-2">
+              Genre EQ is active. Raise strength only if you want extra tonal correction.
+            </p>
+          )}
         </>
       )}
     </div>
