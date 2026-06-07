@@ -18,6 +18,10 @@ export interface ProDynamicsSettings {
   sslGlue: SSLGlueMode;
   forceMonoBass: boolean | null;
   monoBassHz: number;
+  /** Iteratively trim output on export until integrated LUFS hits target */
+  autoStageOnExport: boolean;
+  /** Gently nudge output trim during playback toward target */
+  autoStageLive: boolean;
 }
 
 export const DEFAULT_PRO_DYNAMICS: ProDynamicsSettings = {
@@ -27,6 +31,8 @@ export const DEFAULT_PRO_DYNAMICS: ProDynamicsSettings = {
   sslGlue: 'auto',
   forceMonoBass: null,
   monoBassHz: 120,
+  autoStageOnExport: true,
+  autoStageLive: false,
 };
 
 interface ProDynamicsPanelProps {
@@ -155,6 +161,34 @@ export function ProDynamicsPanel({
             accentClassName="accent-cyan-500"
             onChange={(v) => onChange(update(settings, 'outputTrimDB', v))}
           />
+          <div className="mt-2 flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.autoStageOnExport}
+                onChange={(e) =>
+                  onChange(update(settings, 'autoStageOnExport', e.target.checked))
+                }
+                className="rounded border-zinc-700"
+              />
+              <span className="text-[10px] font-mono text-zinc-400">
+                Auto-stage on export
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.autoStageLive}
+                onChange={(e) =>
+                  onChange(update(settings, 'autoStageLive', e.target.checked))
+                }
+                className="rounded border-zinc-700"
+              />
+              <span className="text-[10px] font-mono text-zinc-400">
+                Auto-stage while playing
+              </span>
+            </label>
+          </div>
         </div>
 
         {/* Limiter ceiling */}

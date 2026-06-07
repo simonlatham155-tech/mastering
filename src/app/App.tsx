@@ -43,11 +43,9 @@ import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mast
 import { MasteringWorkflow } from './components/mastering-workflow';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
-import {
-  buildExportQualityReport,
-  measureBufferLoudness,
-  measureSamplePeakDBFS,
-} from './utils/measure-buffer-loudness';
+import { buildExportQualityReport } from './utils/measure-buffer-loudness';
+import { renderExportWithAutoStaging } from './services/export-auto-staging';
+import { computeStagingTrimStep } from './utils/auto-staging';
 import { PlaybackControls } from './components/playback-controls';
 import { motion } from 'motion/react';
 
@@ -178,6 +176,8 @@ export default function App() {
   const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
   const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
   const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
+  const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
+  const liveStageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
   const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
@@ -306,6 +306,57 @@ export default function App() {
     proDynamics.outputTrimDB,
     proDynamics.sslGlue,
     autoInputTrimDB,
+  ]);
+
+  // Live auto-staging — nudge output trim toward target during playback
+  useEffect(() => {
+    if (liveStageTimerRef.current) {
+      clearTimeout(liveStageTimerRef.current);
+      liveStageTimerRef.current = null;
+    }
+
+    if (!proDynamics.autoStageLive || !playbackState.isPlaying || !outputLufs) {
+      return;
+    }
+
+    const integrated = outputLufs.integrated;
+    if (!Number.isFinite(integrated) || integrated === -Infinity) {
+      return;
+    }
+
+    liveStageTimerRef.current = setTimeout(() => {
+      const target = getExportPreset(exportPreset).lufs;
+      const ceiling =
+        proDynamics.limiterCeilingDBTP ?? getExportPreset(exportPreset).ceiling;
+      const peakDB = Number.isFinite(truePeakDBTP) ? truePeakDBTP : -12;
+
+      const nextTrim = computeStagingTrimStep({
+        integratedLUFS: integrated,
+        targetLUFS: target,
+        currentOutputTrimDB: proDynamics.outputTrimDB,
+        peakDB,
+        ceilingDBTP: ceiling,
+      });
+
+      if (nextTrim != null && Math.abs(nextTrim - proDynamics.outputTrimDB) >= 0.05) {
+        setProDynamics((prev) => ({ ...prev, outputTrimDB: nextTrim }));
+      }
+    }, 2500);
+
+    return () => {
+      if (liveStageTimerRef.current) {
+        clearTimeout(liveStageTimerRef.current);
+        liveStageTimerRef.current = null;
+      }
+    };
+  }, [
+    outputLufs?.integrated,
+    playbackState.isPlaying,
+    proDynamics.autoStageLive,
+    proDynamics.outputTrimDB,
+    exportPreset,
+    proDynamics.limiterCeilingDBTP,
+    truePeakDBTP,
   ]);
   
   // Logic Mode / Genre / Export Preset → full chain rebuild (changes DSP topology)
@@ -560,7 +611,6 @@ export default function App() {
     }
 
     setIsProcessing(true);
-    toast.info(`Rendering ${presetId.toUpperCase()} optimized master...`);
 
     try {
       const ctx = buildProcessingContext({
@@ -573,11 +623,41 @@ export default function App() {
       });
       const settings = buildAppProcessingSettings({ ...ctx, exportPreset: presetId });
 
-      const finalBuffer = await audioProcessor.renderExport(
+      const preset = getExportPreset(presetId);
+
+      toast.info(
+        proDynamics.autoStageOnExport
+          ? `Rendering ${presetId.toUpperCase()} with auto-staging...`
+          : `Rendering ${presetId.toUpperCase()} optimized master...`
+      );
+
+      const exportResult = await renderExportWithAutoStaging(
         settings,
         effectiveInputTrimDB,
-        { limiterCeilingOverride, outputTrimDB: proDynamics.outputTrimDB, sslGlue: proDynamics.sslGlue }
+        {
+          limiterCeilingOverride,
+          sslGlue: proDynamics.sslGlue,
+          initialOutputTrimDB: proDynamics.outputTrimDB,
+          targetLUFS: preset.lufs,
+          ceilingDBTP: preset.ceiling,
+          autoStage: proDynamics.autoStageOnExport,
+        }
       );
+
+      const finalBuffer = exportResult.buffer;
+      const report = exportResult.report;
+      setLastExportReport(report);
+      setLastExportStaging({
+        iterations: exportResult.iterations,
+        outputTrimDB: exportResult.outputTrimDB,
+      });
+
+      if (exportResult.staged) {
+        setProDynamics((prev) => ({
+          ...prev,
+          outputTrimDB: exportResult.outputTrimDB,
+        }));
+      }
 
       // Export as WAV
       const blob = await audioProcessor.exportAsWAV(finalBuffer);
@@ -592,18 +672,9 @@ export default function App() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      const preset = getExportPreset(presetId);
-
-      toast.info('Measuring integrated loudness (BS.1770)...');
-      const lufs = await measureBufferLoudness(finalBuffer);
-      const samplePeak = measureSamplePeakDBFS(finalBuffer);
-      const report = buildExportQualityReport(
-        lufs,
-        samplePeak,
-        preset.lufs,
-        preset.ceiling
-      );
-      setLastExportReport(report);
+      const stageNote = exportResult.staged
+        ? ` · auto-staged ${exportResult.outputTrimDB >= 0 ? '+' : ''}${exportResult.outputTrimDB.toFixed(1)} dB (${exportResult.iterations} pass${exportResult.iterations > 1 ? 'es' : ''})`
+        : '';
 
       const lufsStr =
         report.integratedLUFS !== -Infinity
@@ -612,15 +683,15 @@ export default function App() {
 
       if (report.onTarget && report.peakOk) {
         toast.success(
-          `${presetId.toUpperCase()} master exported — ${lufsStr}, peak ${samplePeak.toFixed(1)} dBFS (on target)`
+          `${presetId.toUpperCase()} master exported — ${lufsStr}, peak ${report.samplePeakDBFS.toFixed(1)} dBFS (on target)${stageNote}`
         );
       } else if (!report.peakOk) {
         toast.warning(
-          `${presetId.toUpperCase()} exported — ${lufsStr}. Peak ${samplePeak.toFixed(1)} dBFS exceeds ceiling ${preset.ceiling} dBTP.`
+          `${presetId.toUpperCase()} exported — ${lufsStr}. Peak ${report.samplePeakDBFS.toFixed(1)} dBFS exceeds ceiling ${preset.ceiling} dBTP.${stageNote}`
         );
       } else {
         toast.success(
-          `${presetId.toUpperCase()} exported — ${lufsStr} (target ${preset.lufs}, Δ ${report.lufsDelta >= 0 ? '+' : ''}${report.lufsDelta.toFixed(1)} LU)`
+          `${presetId.toUpperCase()} exported — ${lufsStr} (target ${preset.lufs}, Δ ${report.lufsDelta >= 0 ? '+' : ''}${report.lufsDelta.toFixed(1)} LU)${stageNote}`
         );
       }
     } catch (error) {
@@ -1327,6 +1398,13 @@ export default function App() {
                 {lastExportReport.lufsDelta.toFixed(1)} LU)
                 {' · '}
                 peak {lastExportReport.samplePeakDBFS.toFixed(1)} dBFS
+                {lastExportStaging?.iterations != null && lastExportStaging.iterations > 1 && (
+                  <>
+                    {' · '}
+                    staged to {lastExportStaging.outputTrimDB >= 0 ? '+' : ''}
+                    {lastExportStaging.outputTrimDB.toFixed(1)} dB
+                  </>
+                )}
                 {lastExportReport.onTarget && lastExportReport.peakOk
                   ? ' — passes quality gate'
                   : ' — review levels before delivery'}
