@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { CircuitDriveKnob } from './components/circuit-drive-knob';
 import { LogicToggle } from './components/logic-toggle';
 import { GearProfileId, gearProfiles } from './components/gear-selector';
-import { MeterDisplay } from './components/meter-display';
+import { ProRackSection } from './components/pro-rack-section';
+import { ProOutputMeters } from './components/pro-output-meters';
 import { GainStageVisualizer } from './components/gain-stage-visualizer';
 import { WaveformVisualizer } from './components/waveform-visualizer';
 import { SpectralAnalyzer } from './components/spectral-analyzer';
@@ -15,12 +16,6 @@ import { PerformanceClipMeter } from './components/performance-clip-meter';
 import { ChunkSelector } from './components/chunk-selector';
 import { SignalChainVisualizer } from './components/signal-chain-visualizer';
 import { GenreProfileInfo } from './components/genre-profile-info';
-import { GainReductionMeter, GainReductionMeterCompact } from './components/gain-reduction-meter';
-import { TruePeakIndicator } from './components/true-peak-indicator';
-import { DamageReportPanel } from './components/damage-report-panel';
-import { HQModeToggle } from './components/hq-mode-toggle';
-import { InterSamplePeakMeter } from './components/inter-sample-peak-meter';
-import { CompactLufsMeter } from './components/compact-lufs-meter';
 import { ProfileAdjustmentsPanel, ProfileAdjustments } from './components/profile-adjustments';
 import { ProDynamicsPanel } from './components/pro-dynamics-panel';
 import { getExportPreset } from './data/export-presets';
@@ -31,6 +26,9 @@ import {
   buildAppProcessingPlan,
   buildAppProcessingSettings,
   DEFAULT_PRO_DYNAMICS,
+  DEFAULT_TONAL_MATCH_STRENGTH,
+  buildProDynamicsForGear,
+  NEUTRAL_PROFILE_ADJUSTMENTS,
   resolveEffectiveInputTrimDB,
   resolveLimiterCeilingOverride,
   type AppProcessingContext,
@@ -38,15 +36,36 @@ import {
 } from './services/app-processing-context';
 import { toast, Toaster } from 'sonner';
 import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio-processor';
-import { analyzeAudioFile as analyzeInputAudio, AudioAnalysisResult } from './utils/audio-analyzer';
+import { analyzeAudioBuffer, AudioAnalysisResult } from './utils/audio-analyzer';
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
-import { MasteringWorkflow } from './components/mastering-workflow';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
 import { buildExportQualityReport } from './utils/measure-buffer-loudness';
-import { renderExportWithAutoStaging } from './services/export-auto-staging';
+import {
+  computeAutoInputTrimDB,
+  masterExportFilename,
+  runMasterExport,
+} from './services/master-export-pipeline';
+import {
+  batchResultsToZip,
+  runBatchAlbumExport,
+} from './services/batch-export';
+import { batchZipFilename } from './utils/master-export-utils';
+import { renderWaveformPreviewWithAutoStaging } from './services/waveform-preview-staging';
+import { computeBypassGainMatchDB } from './utils/gain-match';
 import { computeStagingTrimStep } from './utils/auto-staging';
 import { PlaybackControls } from './components/playback-controls';
+import { ReferenceMatchPanel } from './components/reference-match-panel';
+import { ActiveSettingsStrip } from './components/active-settings-strip';
+import { ReferenceMatchingController } from './services/reference-matching-controller';
+import type { SpectralProfile } from './services/spectral-analyzer';
+import { getReferenceCurveForGear } from './utils/gear-reference-map';
+import {
+  matchingAutoGainToOutputTrimDelta,
+  matchingGainsToProfileAdjustments,
+} from './utils/matching-gains-to-eq';
+import { BatchExportPanel } from './components/batch-export-panel';
+import { ProductNav } from './components/product-nav';
 import { CreatorAboutStrip } from './components/creator-about-strip';
 import { motion } from 'motion/react';
 
@@ -75,17 +94,10 @@ function buildProcessingContext(
 }
 
 function syncProfileAdjustmentsForGear(
-  gearProfile: GearProfileId
-): ProfileAdjustments | null {
-  const profile = gearProfiles.find(p => p.id === gearProfile);
-  if (!profile) return null;
-
-  return {
-    lowShelfBoost: profile.lowShelfBoost,
-    midRangeAdjust: profile.midRangeAdjust,
-    highShelfBoost: profile.highShelfBoost,
-    stereoWidth: profile.stereoWidth,
-  };
+  _gearProfile: GearProfileId
+): ProfileAdjustments {
+  // Sliders are offsets from genre defaults — reset tweaks when gear changes.
+  return { ...NEUTRAL_PROFILE_ADJUSTMENTS };
 }
 
 export default function App() {
@@ -105,23 +117,27 @@ export default function App() {
   const [heritageProfile, setHeritageProfile] = useState<HeritageProfile>('none');
   
   // Auto Input Trim — if the mix peaks above -3dB, attenuate to give the chain headroom.
-  const autoInputTrimDB = (() => {
-    if (!analysis) return undefined;
-    const peakDB = analysis.peakLevel;
-    const TARGET_HEADROOM = -6;
-    const TRIM_THRESHOLD = -3;
-    if (peakDB > TRIM_THRESHOLD) {
-      return TARGET_HEADROOM - peakDB;
-    }
-    return undefined;
-  })();
+  const autoInputTrimDB = analysis
+    ? computeAutoInputTrimDB(analysis.peakLevel)
+    : undefined;
 
   // Real-time audio player (processes audio live during playback - NO pre-rendering!)
   const realtimePlayerRef = useRef<RealtimeAudioPlayer | null>(null);
   const waveformRenderGenRef = useRef(0);
+  const waveformSkipTrimRerenderRef = useRef(false);
+  const waveformDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
   const [bypassMode, setBypassMode] = useState(false); // A/B comparison: false = processed, true = original
   const [expertMode, setExpertMode] = useState(false);
+  /** Ozone-style level-matched A/B — boosts bypass to processed loudness (export unchanged). */
+  const [gainMatchEnabled, setGainMatchEnabled] = useState(false);
+  const [bypassGainMatchDB, setBypassGainMatchDB] = useState(0);
+
+  const [spectralProfile, setSpectralProfile] = useState<SpectralProfile | null>(null);
+  const [matchStrength, setMatchStrength] = useState(DEFAULT_TONAL_MATCH_STRENGTH);
+  const [isSpectralAnalyzing, setIsSpectralAnalyzing] = useState(false);
+  const referenceMatchControllerRef = useRef<ReferenceMatchingController | null>(null);
+  const referenceMatchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Audio Input Analysis
   const [inputAnalysis, setInputAnalysis] = useState<AudioAnalysisResult | null>(null);
@@ -130,22 +146,78 @@ export default function App() {
   const isReady = !!selectedFile && !!analysis;
   const measuredInputLUFS = analysis?.lufs ?? inputAnalysis?.lufs ?? -16;
 
-  const startWaveformPreviewRender = (settings: ReturnType<typeof buildAppProcessingSettings>) => {
+  const [profileAdjustments, setProfileAdjustments] = useState<ProfileAdjustments>(
+    NEUTRAL_PROFILE_ADJUSTMENTS
+  );
+
+  const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
+  const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
+  const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
+  const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
+  const [isBatchExporting, setIsBatchExporting] = useState(false);
+  const [batchExportProgress, setBatchExportProgress] = useState<{
+    index: number;
+    total: number;
+    name: string;
+  } | null>(null);
+  const liveStageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
+  const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
+
+  const startWaveformPreviewRender = (
+    settings: ReturnType<typeof buildAppProcessingSettings>,
+    options?: { hq?: boolean }
+  ) => {
     const generation = ++waveformRenderGenRef.current;
     setIsWaveformRendering(true);
+    const hq = options?.hq ?? false;
+
+    const preset = getExportPreset(exportPreset);
+    const ceilingDBTP = limiterCeilingOverride ?? preset.ceiling;
 
     (async () => {
       try {
-        const waveformBuffer = await audioProcessor.renderWaveformPreview(
+        const previewResult = await renderWaveformPreviewWithAutoStaging(
           settings,
           effectiveInputTrimDB,
-          45,
-          limiterCeilingOverride,
-          proDynamics.outputTrimDB,
-          proDynamics.sslGlue
+          {
+            limiterCeilingOverride,
+            sslGlue: proDynamics.sslGlue,
+            initialOutputTrimDB: proDynamics.outputTrimDB,
+            targetLUFS: preset.lufs,
+            ceilingDBTP,
+            autoStage: proDynamics.autoStageOnExport,
+            quality: hq ? 'export' : 'preview',
+            preserveMultiband: hq,
+          }
         );
         if (generation !== waveformRenderGenRef.current) return;
-        setProcessedBuffer(waveformBuffer);
+        setProcessedBuffer(previewResult.buffer);
+
+        const original = originalBuffer ?? audioProcessor.getOriginalBuffer();
+        if (original) {
+          setBypassGainMatchDB(
+            computeBypassGainMatchDB(original, previewResult.buffer)
+          );
+        }
+
+        // Input headroom trim lowers level pre-chain; sync compensating output trim to live + UI.
+        if (previewResult.staged && proDynamics.autoStageOnExport) {
+          waveformSkipTrimRerenderRef.current = true;
+          setProDynamics((prev) => ({
+            ...prev,
+            outputTrimDB: previewResult.outputTrimDB,
+          }));
+          realtimePlayerRef.current?.updateParameter(
+            'outputTrim',
+            previewResult.outputTrimDB
+          );
+        }
+
+        if (hq) {
+          toast.success('HQ waveform preview ready (export-quality first 45s)');
+        }
       } catch (err) {
         if (generation !== waveformRenderGenRef.current) return;
         console.warn('Waveform preview failed (non-critical):', err);
@@ -157,6 +229,133 @@ export default function App() {
       }
     })();
   };
+
+  const syncPlaybackGainOptions = useCallback(() => {
+    const player = realtimePlayerRef.current;
+    if (!player) return;
+    player.setPlaybackGainOptions(
+      proDynamics.outputTrimDB,
+      gainMatchEnabled ? bypassGainMatchDB : null
+    );
+  }, [proDynamics.outputTrimDB, gainMatchEnabled, bypassGainMatchDB]);
+
+  const referenceCurve = useMemo(
+    () => (isReady ? getReferenceCurveForGear(gearProfile) : null),
+    [isReady, gearProfile]
+  );
+
+  const previewMatchingGains = useMemo(() => {
+    if (!spectralProfile || !referenceCurve) return null;
+    if (!referenceMatchControllerRef.current) {
+      referenceMatchControllerRef.current = new ReferenceMatchingController(
+        new AudioContext()
+      );
+    }
+    return referenceMatchControllerRef.current.calculateMatchingGains(
+      spectralProfile,
+      referenceCurve,
+      matchStrength / 100
+    );
+  }, [spectralProfile, referenceCurve, matchStrength]);
+
+  const analyzeSpectralProfile = useCallback(async (buffer: AudioBuffer | null) => {
+    if (!buffer) {
+      setSpectralProfile(null);
+      return;
+    }
+    setIsSpectralAnalyzing(true);
+    try {
+      if (!referenceMatchControllerRef.current) {
+        referenceMatchControllerRef.current = new ReferenceMatchingController(
+          new AudioContext()
+        );
+      }
+      const profile = await referenceMatchControllerRef.current.analyzeTrack(buffer);
+      setSpectralProfile(profile);
+    } catch (err) {
+      console.warn('Spectral profile analysis failed:', err);
+      setSpectralProfile(null);
+    } finally {
+      setIsSpectralAnalyzing(false);
+    }
+  }, []);
+
+  const applyReferenceMatchFromGains = useCallback(
+    (matchingGains: NonNullable<typeof previewMatchingGains>, strength: number) => {
+      if (strength <= 0) {
+        setProfileAdjustments({ ...NEUTRAL_PROFILE_ADJUSTMENTS });
+        const player = realtimePlayerRef.current;
+        if (player) {
+          applyProfileAdjustmentsToPlayer(player, gearProfile, NEUTRAL_PROFILE_ADJUSTMENTS);
+        }
+        return;
+      }
+
+      const nextProfile = matchingGainsToProfileAdjustments(
+        matchingGains,
+        NEUTRAL_PROFILE_ADJUSTMENTS
+      );
+      setProfileAdjustments(nextProfile);
+
+      const trimDelta = matchingAutoGainToOutputTrimDelta(matchingGains.autoGain);
+      if (Math.abs(trimDelta) >= 0.05) {
+        setProDynamics((prev) => {
+          const nextTrim = Math.max(-6, Math.min(6, prev.outputTrimDB + trimDelta));
+          realtimePlayerRef.current?.updateParameter('outputTrim', nextTrim);
+          return { ...prev, outputTrimDB: nextTrim };
+        });
+      }
+
+      const player = realtimePlayerRef.current;
+      if (player) {
+        applyProfileAdjustmentsToPlayer(player, gearProfile, nextProfile);
+      }
+
+      const ctx = buildProcessingContext({
+        gearProfile,
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments: nextProfile,
+        proDynamics,
+      });
+      startWaveformPreviewRender(buildAppProcessingSettings(ctx));
+    },
+    [
+      gearProfile,
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      proDynamics,
+    ]
+  );
+
+  const handleApplyReferenceMatch = useCallback(
+    (strength: number) => {
+      if (!previewMatchingGains) return;
+      applyReferenceMatchFromGains(previewMatchingGains, strength);
+    },
+    [previewMatchingGains, applyReferenceMatchFromGains]
+  );
+
+  // Pro stack: tonal match applied by default when spectral analysis completes; slider adjusts live.
+  useEffect(() => {
+    if (!previewMatchingGains) return;
+
+    if (referenceMatchDebounceRef.current) {
+      clearTimeout(referenceMatchDebounceRef.current);
+    }
+
+    referenceMatchDebounceRef.current = setTimeout(() => {
+      handleApplyReferenceMatch(matchStrength);
+    }, matchStrength === 0 ? 0 : 300);
+
+    return () => {
+      if (referenceMatchDebounceRef.current) {
+        clearTimeout(referenceMatchDebounceRef.current);
+      }
+    };
+  }, [previewMatchingGains, matchStrength, handleApplyReferenceMatch]);
   
   // Mix analysis summary (shown in unified setup panel after upload)
   const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
@@ -165,23 +364,6 @@ export default function App() {
   const [zeroLatencyMode, setZeroLatencyMode] = useState(false);
   const [autoMonoBass, setAutoMonoBass] = useState(false);
   const [clipIndicator, setClipIndicator] = useState(false);
-  
-  // Profile Adjustments
-  const [profileAdjustments, setProfileAdjustments] = useState<ProfileAdjustments>({
-    lowShelfBoost: 2.5,
-    midRangeAdjust: -0.5,
-    highShelfBoost: 1.0,
-    stereoWidth: 85,
-  });
-
-  const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
-  const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
-  const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
-  const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
-  const liveStageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
-  const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
   
   // Reference-Grade DSP State
   const [hqMode, setHQMode] = useState(true);
@@ -215,6 +397,12 @@ export default function App() {
       setMeterValues({ peak: 0, lra: 0 });
     }
   }, [selectedFile]);
+
+  // Reference tonal balance — run after core analysis so it never blocks upload.
+  useEffect(() => {
+    if (!originalBuffer || !analysis) return;
+    void analyzeSpectralProfile(originalBuffer);
+  }, [originalBuffer, analysis, analyzeSpectralProfile]);
 
   // Auto-process when performance mode is selected after analysis
   // REMOVED: Performance Mode is a separate tool, not required for main processing
@@ -265,18 +453,35 @@ export default function App() {
     };
   }, [isReady]);
 
-  // Sync profile adjustments when gear profile changes
+  // Reset user EQ/width offsets when gear profile changes (genre defaults + pro stack re-applied).
+  const skipInitialGearResetRef = useRef(true);
   useEffect(() => {
-    const profile = gearProfiles.find(p => p.id === gearProfile);
-    if (profile) {
-      setProfileAdjustments({
-        lowShelfBoost: profile.lowShelfBoost,
-        midRangeAdjust: profile.midRangeAdjust,
-        highShelfBoost: profile.highShelfBoost,
-        stereoWidth: profile.stereoWidth,
-      });
+    if (skipInitialGearResetRef.current) {
+      skipInitialGearResetRef.current = false;
+      return;
     }
+    if (!analysis) return;
+
+    setProfileAdjustments({ ...NEUTRAL_PROFILE_ADJUSTMENTS });
+    setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+    setProDynamics(buildProDynamicsForGear(gearProfile, exportPreset, autoInputTrimDB));
   }, [gearProfile]);
+
+  const prevExportPresetRef = useRef(exportPreset);
+  useEffect(() => {
+    if (prevExportPresetRef.current === exportPreset) return;
+    prevExportPresetRef.current = exportPreset;
+    if (!analysis) return;
+
+    setProDynamics((prev) => {
+      const next = buildProDynamicsForGear(gearProfile, exportPreset, autoInputTrimDB);
+      return {
+        ...next,
+        outputTrimDB: prev.outputTrimDB,
+        inputTrimDB: prev.inputTrimDB,
+      };
+    });
+  }, [exportPreset, gearProfile, autoInputTrimDB, analysis]);
 
   // === LIVE PARAMETER UPDATES (PATCH 2026-05-25: Viktor) ===
   // Wire profile adjustment sliders to real-time audio parameter updates.
@@ -444,6 +649,54 @@ export default function App() {
     analysis,
   ]);
 
+  // Re-render waveform when EQ / trim sliders move (live audio updates instantly; viz needs a pass).
+  useEffect(() => {
+    if (!analysis || !realtimePlayerRef.current) return;
+
+    if (waveformSkipTrimRerenderRef.current) {
+      waveformSkipTrimRerenderRef.current = false;
+      return;
+    }
+
+    if (waveformDebounceRef.current) {
+      clearTimeout(waveformDebounceRef.current);
+    }
+
+    waveformDebounceRef.current = setTimeout(() => {
+      const ctx = buildProcessingContext({
+        gearProfile,
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments,
+        proDynamics,
+      });
+      startWaveformPreviewRender(buildAppProcessingSettings(ctx));
+    }, 400);
+
+    return () => {
+      if (waveformDebounceRef.current) {
+        clearTimeout(waveformDebounceRef.current);
+      }
+    };
+  }, [
+    analysis,
+    gearProfile,
+    exportPreset,
+    logicMode,
+    circuitDrive,
+    profileAdjustments.lowShelfBoost,
+    profileAdjustments.midRangeAdjust,
+    profileAdjustments.highShelfBoost,
+    profileAdjustments.stereoWidth,
+    effectiveInputTrimDB,
+    proDynamics.outputTrimDB,
+    proDynamics.inputTrimDB,
+    proDynamics.autoStageOnExport,
+    proDynamics.sslGlue,
+    proDynamics.limiterCeilingDBTP,
+  ]);
+
   const applyRecommendationToState = (recommendation: AIMasteringRecommendation) => {
     const applied = appliedRecommendationFromAI(recommendation);
     const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile);
@@ -469,18 +722,27 @@ export default function App() {
 
     try {
       await audioProcessor.loadAudioFile(selectedFile);
-      
+
       const original = audioProcessor.getOriginalBuffer();
+      if (!original) {
+        throw new Error('Failed to decode audio file');
+      }
       setOriginalBuffer(original);
-      
+
       console.log('📊 Original buffer stored:', {
-        channels: original?.numberOfChannels,
-        duration: original?.duration.toFixed(2),
-        sampleRate: original?.sampleRate
+        channels: original.numberOfChannels,
+        duration: original.duration.toFixed(2),
+        sampleRate: original.sampleRate,
       });
 
-      const inputResult = await analyzeInputAudio(selectedFile);
+      const [inputResult, analysisResult] = await Promise.all([
+        Promise.resolve(analyzeAudioBuffer(original)),
+        audioProcessor.analyzeAudio(),
+      ]);
+
       setInputAnalysis(inputResult);
+      setAnalysis(analysisResult);
+      setIsAnalyzing(false);
 
       const recommendation = AIMasteringEngine.recommend(inputResult);
 
@@ -493,12 +755,18 @@ export default function App() {
 
       const { applied } = applyRecommendationToState(recommendation);
 
+      const inputTrim = computeAutoInputTrimDB(analysisResult.peakLevel);
+      const proDefaults = buildProDynamicsForGear(
+        applied.gearProfile,
+        applied.exportPreset,
+        inputTrim
+      );
+      setProDynamics(proDefaults);
+      setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+
       toast.success(
         `Mix configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
       );
-      
-      const analysisResult = await audioProcessor.analyzeAudio();
-      setAnalysis(analysisResult);
 
       const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile);
       const processingContext = buildProcessingContext(
@@ -516,6 +784,7 @@ export default function App() {
           logicMode: applied.logicMode,
           circuitDrive: applied.circuitDrive,
           profileAdjustments: syncedProfile ?? profileAdjustments,
+          proDynamics: proDefaults,
         }
       );
 
@@ -535,11 +804,16 @@ export default function App() {
     processingContext?: AppProcessingContext
   ) => {
     console.log('⚡ Initializing real-time preview player (NO pre-rendering!)');
-    
+
     const currentAnalysis = analysisData || analysis;
-    
-    if (!selectedFile || !currentAnalysis) {
-      console.log('❌ Early return - missing requirements:', { hasFile: !!selectedFile, hasAnalysis: !!currentAnalysis });
+    const buffer = sourceBuffer ?? originalBuffer ?? audioProcessor.getOriginalBuffer();
+
+    if (!selectedFile || !currentAnalysis || !buffer) {
+      console.log('❌ Early return - missing requirements:', {
+        hasFile: !!selectedFile,
+        hasAnalysis: !!currentAnalysis,
+        hasBuffer: !!buffer,
+      });
       return;
     }
 
@@ -557,8 +831,8 @@ export default function App() {
       if (!realtimePlayerRef.current) {
         realtimePlayerRef.current = new RealtimeAudioPlayer();
       }
-      
-      await realtimePlayerRef.current.loadAudio(selectedFile);
+
+      realtimePlayerRef.current.loadBuffer(buffer);
       
       console.log('✅ Real-time player ready! Audio will be processed live during playback');
       console.log('   No pre-rendering! Instant start! 🚀');
@@ -602,6 +876,9 @@ export default function App() {
     setProcessedBuffer(null);
     setIsWaveformRendering(false);
     setOriginalBuffer(null);
+    setSpectralProfile(null);
+    setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+    setProDynamics(DEFAULT_PRO_DYNAMICS);
     setMeterValues({ peak: 0, lra: 0 });
   };
 
@@ -623,7 +900,6 @@ export default function App() {
         proDynamics,
       });
       const settings = buildAppProcessingSettings({ ...ctx, exportPreset: presetId });
-
       const preset = getExportPreset(presetId);
 
       toast.info(
@@ -632,20 +908,13 @@ export default function App() {
           : `Rendering ${presetId.toUpperCase()} optimized master...`
       );
 
-      const exportResult = await renderExportWithAutoStaging(
+      const exportResult = await runMasterExport({
         settings,
-        effectiveInputTrimDB,
-        {
-          limiterCeilingOverride,
-          sslGlue: proDynamics.sslGlue,
-          initialOutputTrimDB: proDynamics.outputTrimDB,
-          targetLUFS: preset.lufs,
-          ceilingDBTP: preset.ceiling,
-          autoStage: proDynamics.autoStageOnExport,
-        }
-      );
+        exportPresetId: presetId,
+        proDynamics,
+        autoInputTrimDB,
+      });
 
-      const finalBuffer = exportResult.buffer;
       const report = exportResult.report;
       setLastExportReport(report);
       setLastExportStaging({
@@ -660,14 +929,10 @@ export default function App() {
         }));
       }
 
-      // Export as WAV
-      const blob = await audioProcessor.exportAsWAV(finalBuffer);
-      
-      // Download
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(exportResult.wavBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${selectedFile.name.replace(/\.[^/.]+$/, '')}_${presetId}_master.wav`;
+      a.download = masterExportFilename(selectedFile.name, presetId);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -703,6 +968,87 @@ export default function App() {
     }
   };
 
+  const handleBatchExport = async (files: File[]) => {
+    if (files.length === 0) return;
+
+    const ctx = buildProcessingContext({
+      gearProfile,
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      profileAdjustments,
+      proDynamics,
+    });
+
+    const restoreFile = selectedFile;
+    setIsBatchExporting(true);
+    setBatchExportProgress({ index: 0, total: files.length, name: files[0].name });
+
+    toast.info(
+      `Album export: ${files.length} track${files.length > 1 ? 's' : ''} · ${exportPreset.toUpperCase()} · full pipeline`
+    );
+
+    try {
+      const summary = await runBatchAlbumExport(
+        files,
+        exportPreset,
+        ctx,
+        (p) =>
+          setBatchExportProgress({
+            index: p.index,
+            total: p.total,
+            name: p.currentName,
+          })
+      );
+
+      const ok = summary.rows.filter((r) => r.ok);
+      const failed = summary.rows.filter((r) => !r.ok);
+
+      if (ok.length === 0) {
+        toast.error('Batch export failed — no tracks rendered');
+        return;
+      }
+
+      const zipBlob = await batchResultsToZip(summary.rows, batchZipFilename(exportPreset));
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = batchZipFilename(exportPreset);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      if (failed.length > 0) {
+        toast.warning(
+          `ZIP ready: ${ok.length}/${files.length} tracks · ${failed.length} failed (see manifest.json in ZIP)`
+        );
+      } else {
+        toast.success(
+          `Album ZIP exported — ${ok.length} track${ok.length > 1 ? 's' : ''} at ${getExportPreset(exportPreset).lufs} LUFS target`
+        );
+      }
+    } catch (error) {
+      console.error('Batch export failed:', error);
+      toast.error('Album batch export failed');
+    } finally {
+      setBatchExportProgress(null);
+      setIsBatchExporting(false);
+
+      if (restoreFile) {
+        try {
+          await audioProcessor.loadAudioFile(restoreFile);
+          const refreshed = await audioProcessor.analyzeAudio();
+          setAnalysis(refreshed);
+          setOriginalBuffer(audioProcessor.getOriginalBuffer());
+          void analyzeSpectralProfile(audioProcessor.getOriginalBuffer());
+        } catch (err) {
+          console.warn('Could not restore session after batch export:', err);
+        }
+      }
+    }
+  };
+
   const handleSwitchToDynamics = () => {
     setLogicMode('dynamics');
     setShowHeritageAlert(false);
@@ -722,31 +1068,38 @@ export default function App() {
 
   const handlePlay = async () => {
     if (!realtimePlayerRef.current || !analysis) return;
-    
-    const ctx = buildProcessingContext({
-      gearProfile,
-      exportPreset,
-      logicMode,
-      circuitDrive,
-      profileAdjustments,
-      proDynamics,
-    });
-    const plan = buildAppProcessingPlan(ctx);
-    const settings = buildAppProcessingSettings(ctx);
-    
-    await realtimePlayerRef.current.play(
-      settings,
-      plan,
-      bypassMode,
-      effectiveInputTrimDB,
-      false,
-      measuredInputLUFS,
-      limiterCeilingOverride,
-      proDynamics.sslGlue
-    );
-    applyProfileAdjustmentsToPlayer(realtimePlayerRef.current, gearProfile, profileAdjustments);
-    applyProDynamicsToPlayer(realtimePlayerRef.current, proDynamics, autoInputTrimDB);
-    syncPlaybackState();
+
+    try {
+      syncPlaybackGainOptions();
+
+      const ctx = buildProcessingContext({
+        gearProfile,
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments,
+        proDynamics,
+      });
+      const plan = buildAppProcessingPlan(ctx);
+      const settings = buildAppProcessingSettings(ctx);
+
+      await realtimePlayerRef.current.play(
+        settings,
+        plan,
+        bypassMode,
+        effectiveInputTrimDB,
+        false,
+        measuredInputLUFS,
+        limiterCeilingOverride,
+        proDynamics.sslGlue
+      );
+      applyProfileAdjustmentsToPlayer(realtimePlayerRef.current, gearProfile, profileAdjustments);
+      applyProDynamicsToPlayer(realtimePlayerRef.current, proDynamics, autoInputTrimDB);
+      syncPlaybackState();
+    } catch (error) {
+      console.error('Playback failed:', error);
+      toast.error('Preview playback failed — try clicking play again');
+    }
   };
   
   const handlePause = () => {
@@ -773,13 +1126,42 @@ export default function App() {
   const handleBypassToggle = async () => {
     const newBypassMode = !bypassMode;
     setBypassMode(newBypassMode);
+
+    syncPlaybackGainOptions();
     
     // Seamlessly switch bypass mode without stopping playback
     if (realtimePlayerRef.current) {
-      realtimePlayerRef.current.toggleBypass(newBypassMode);
-      toast.info(newBypassMode ? '🎵 Original (Bypass)' : '✨ Processed');
+      await realtimePlayerRef.current.toggleBypass(newBypassMode);
+      toast.info(
+        newBypassMode
+          ? gainMatchEnabled
+            ? `🎵 Original (gain-matched +${bypassGainMatchDB.toFixed(1)} dB)`
+            : '🎵 Original (unity)'
+          : '✨ Processed (delivery level)'
+      );
     }
   };
+
+  const handleHqWaveformPreview = () => {
+    if (!analysis) return;
+    const ctx = buildProcessingContext({
+      gearProfile,
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      profileAdjustments,
+      proDynamics,
+    });
+    toast.info('Rendering HQ waveform preview (export quality, ~45s)…');
+    startWaveformPreviewRender(buildAppProcessingSettings(ctx), { hq: true });
+  };
+
+  // Rebuild bypass path when Gain Match toggles during playback
+  useEffect(() => {
+    syncPlaybackGainOptions();
+    if (!playbackState.isPlaying || !realtimePlayerRef.current) return;
+    void realtimePlayerRef.current.toggleBypass(bypassMode);
+  }, [gainMatchEnabled]);
 
   return (
     <div className="min-h-screen bg-zinc-900 text-white">
@@ -787,7 +1169,7 @@ export default function App() {
       
       {/* Professional VST Rack Housing - Brushed Aluminum */}
       <div 
-        className="min-h-screen p-8"
+        className="min-h-screen p-4 md:p-6"
         style={{
           background: `
             linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%),
@@ -803,9 +1185,9 @@ export default function App() {
       >
         <div className="max-w-7xl mx-auto">
           {/* Main Content - rack panel */}
-          <main className="max-w-7xl mx-auto px-12 py-8">
+          <main className="max-w-7xl mx-auto px-4 md:px-8 py-6">
             {/* Header - VST Professional Typography */}
-            <header className="text-left mb-12">
+            <header className="text-left mb-8">
               <div>
                 <h1 className="text-2xl mb-2 tracking-tight font-sans uppercase leading-none">
                   <span className="text-cyan-400 font-light">LATHAM</span>
@@ -825,7 +1207,7 @@ export default function App() {
               </div>
             </header>
 
-            <CreatorAboutStrip />
+            <ProductNav />
 
             {/* Heritage Alert */}
             <div className="mb-6">
@@ -919,46 +1301,68 @@ export default function App() {
               onExportPresetChange={setExportPreset}
             />
 
-            {/* Mastering Workflow: INPUT → GEAR → OUTPUT */}
-            {inputAnalysis && (
-              <div 
-                className="relative border-2 rounded-lg p-6 mb-6"
-                style={{
-                  borderColor: '#2a2a2a',
-                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                  boxShadow: `
-                    inset 0 2px 4px rgba(0,0,0,0.6),
-                    inset 0 -1px 2px rgba(255,255,255,0.05),
-                    0 8px 16px rgba(0,0,0,0.5)
-                  `
-                }}
-              >
-                {/* Rack screws */}
-                {[0, 1, 2, 3].map((i) => (
-                  <div 
-                    key={i}
-                    className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                    style={{
-                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                    }}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-2 h-0.5 bg-zinc-900"></div>
-                    </div>
+            <ActiveSettingsStrip
+              gearProfile={gearProfile}
+              exportPreset={exportPreset}
+              circuitDrive={circuitDrive}
+              logicMode={logicMode}
+              tonalMatchStrength={matchStrength}
+              proDynamics={proDynamics}
+              hqMode={hqMode}
+              hasInputTrim={effectiveInputTrimDB != null && effectiveInputTrimDB < 0}
+              inputTrimDB={effectiveInputTrimDB}
+            />
+
+            {/* Playback — primary beginner action (listen before tweaking) */}
+            <div 
+              className="relative border-2 rounded-lg p-6 mb-6"
+              style={{
+                borderColor: '#2a2a2a',
+                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
+                boxShadow: `
+                  inset 0 2px 4px rgba(0,0,0,0.6),
+                  inset 0 -1px 2px rgba(255,255,255,0.05),
+                  0 8px 16px rgba(0,0,0,0.5)
+                `
+              }}
+            >
+              {[0, 1, 2, 3].map((i) => (
+                <div 
+                  key={i}
+                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
+                  style={{
+                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
+                  }}
+                >
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-2 h-0.5 bg-zinc-900"></div>
                   </div>
-                ))}
+                </div>
+              ))}
 
-                <MasteringWorkflow
-                  inputAnalysis={inputAnalysis}
-                  circuitDrive={circuitDrive}
-                  logicMode={logicMode}
-                  gearProfile={gearProfile}
-                  targetLUFS={getExportPreset(exportPreset).lufs}
-                />
-              </div>
-            )}
+              <PlaybackControls
+                playbackState={playbackState}
+                onPlay={handlePlay}
+                onPause={handlePause}
+                onSeek={handleSeek}
+                onJumpTo={handleJumpTo}
+                bypassMode={bypassMode}
+                onBypassToggle={handleBypassToggle}
+                gainMatchEnabled={gainMatchEnabled}
+                onGainMatchToggle={() => setGainMatchEnabled((v) => !v)}
+                bypassGainMatchDB={bypassGainMatchDB}
+                onHqWaveformPreview={expertMode ? handleHqWaveformPreview : undefined}
+                originalBuffer={originalBuffer}
+                processedBuffer={processedBuffer}
+                isWaveformRendering={isWaveformRendering}
+                showGainTrace={!bypassMode}
+                gainReductionDB={gainReductionDB}
+                outputTrimDB={proDynamics.outputTrimDB}
+                getPlaybackTime={getPlaybackTime}
+              />
+            </div>
 
-            {/* Main Control Panel - single rack unit */}
+            {/* Core controls — warmth + dynamics mode */}
             <div 
               className="relative border-2 rounded-lg p-8 mb-6"
               style={{
@@ -1003,411 +1407,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Live output meters (compact) */}
-            <div
-              className="relative border-2 rounded-lg px-6 py-4 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-              }}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
-                  Live Output
-                </div>
-                <div className="flex flex-wrap items-center gap-6">
-                  <GainReductionMeterCompact gainReductionDB={gainReductionDB} />
-                  {gainReduction > 0.1 && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[8px] font-mono text-zinc-500">SSL:</span>
-                      <span className="text-xs font-mono font-bold text-amber-400">
-                        {gainReduction.toFixed(1)} dB
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <span className="text-[8px] font-mono text-zinc-500">TP:</span>
-                    <span className={`text-xs font-mono font-bold ${
-                      truePeakDBTP > -1 ? 'text-red-400' : truePeakDBTP > -3 ? 'text-yellow-400' : 'text-green-400'
-                    }`}>
-                      {Number.isFinite(truePeakDBTP) ? truePeakDBTP.toFixed(1) : '—'} dBTP
-                    </span>
-                  </div>
-                  {hqMode && ispDifference > 0.3 && (
-                    <span className="text-[9px] font-mono text-purple-400">
-                      ISP +{ispDifference.toFixed(1)} dB
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Expert controls toggle */}
-            <div className="mb-6 flex justify-center">
-              <button
-                type="button"
-                onClick={() => setExpertMode(prev => !prev)}
-                className="px-4 py-2 rounded-lg border border-zinc-700 bg-zinc-900 text-xs font-mono text-zinc-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
-              >
-                {expertMode ? '▲ Hide expert rack' : '▼ Show expert rack (EQ, chain, meters…)'}
-              </button>
-            </div>
-
-            {expertMode && (
-              <>
-            {/* Meter Display - separate panel */}
-            <div 
-              className="relative border-2 rounded-lg p-8 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-4' : 'bottom-4'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <MeterDisplay 
-                mode={logicMode === 'brickwall' ? 'peak' : 'lra'} 
-                isProcessing={isProcessing}
-                value={logicMode === 'brickwall' ? meterValues.peak : meterValues.lra}
-              />
-            </div>
-
-            {/* Reference-Grade DSP Section - NEW! */}
-            {selectedFile && (
-              <div 
-                className="relative border-2 rounded-lg p-6 mb-6"
-                style={{
-                  borderColor: '#2a2a2a',
-                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                  boxShadow: `
-                    inset 0 2px 4px rgba(0,0,0,0.6),
-                    inset 0 -1px 2px rgba(255,255,255,0.05),
-                    0 8px 16px rgba(0,0,0,0.5)
-                  `
-                }}
-              >
-                {/* Rack screws */}
-                {[0, 1, 2, 3].map((i) => (
-                  <div 
-                    key={i}
-                    className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                    style={{
-                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                    }}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-2 h-0.5 bg-zinc-900"></div>
-                    </div>
-                  </div>
-                ))}
-
-                <div className="space-y-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
-                    <h2 className="text-xs font-mono text-purple-400 uppercase tracking-wider">
-                      Reference-Grade DSP
-                    </h2>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* HQ Mode Toggle */}
-                    <HQModeToggle
-                      enabled={hqMode}
-                      onToggle={setHQMode}
-                      cpuUsage={cpuUsage}
-                    />
-
-                    {/* True Peak Indicator */}
-                    <TruePeakIndicator
-                      truePeakDBTP={truePeakDBTP}
-                      ceiling={getExportPreset(exportPreset).ceiling}
-                      enabled={hqMode}
-                    />
-
-                    {/* Gain Reduction Meter */}
-                    <GainReductionMeter
-                      gainReductionDB={gainReductionDB}
-                      lookaheadMS={5}
-                      showGhost={hqMode}
-                    />
-                  </div>
-
-                  {/* Inter-Sample Peak Meter (full width when ISP detected) */}
-                  {hqMode && (
-                    <InterSamplePeakMeter
-                      digitalPeakDB={digitalPeakDB}
-                      truePeakDBTP={truePeakDBTP}
-                      ispDifference={ispDifference}
-                      hqMode={hqMode}
-                    />
-                  )}
-                  
-                  {/* Damage Report Panel - Quality Guardrails (2026-02-16) */}
-                  {analysis?.damageReport && (
-                    <div className="mt-6">
-                      <DamageReportPanel damageReport={analysis.damageReport} />
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Pro Dynamics — level staging + bus glue */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <ProDynamicsPanel
-                settings={proDynamics}
-                onChange={setProDynamics}
-                gearProfile={gearProfile}
-                autoInputTrimDB={autoInputTrimDB}
-                presetCeilingDBTP={getExportPreset(exportPreset).ceiling}
-                outputMomentaryLUFS={
-                  outputLufs?.momentary != null && Number.isFinite(outputLufs.momentary)
-                    ? outputLufs.momentary
-                    : null
-                }
-                outputIntegratedLUFS={
-                  outputLufs?.integrated != null && Number.isFinite(outputLufs.integrated)
-                    ? outputLufs.integrated
-                    : null
-                }
-                targetLUFS={getExportPreset(exportPreset).lufs}
-                isPlaying={playbackState.isPlaying}
-              />
-            </div>
-
-            {/* BS.1770 loudness meter (live) */}
-            <div className="mb-6">
-              <CompactLufsMeter
-                lufs={outputLufs}
-                targetLUFS={getExportPreset(exportPreset).lufs}
-                isPlaying={playbackState.isPlaying}
-              />
-            </div>
-
-            {/* Profile Adjustments Panel - separate rack unit */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <ProfileAdjustmentsPanel
-                adjustments={profileAdjustments}
-                onChange={setProfileAdjustments}
-                gearProfile={gearProfile}
-              />
-            </div>
-
-            {/* Signal Chain Visualizer - separate rack unit */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <SignalChainVisualizer
-                isProcessing={isProcessing}
-                gearProfile={gearProfile}
-              />
-            </div>
-
-            {/* Genre Profile Info - separate rack unit */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <GenreProfileInfo gearProfile={gearProfile} />
-            </div>
-
-            {/* Gain Stage Visualizer - expert only */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <GainStageVisualizer 
-                isProcessing={isProcessing} 
-                circuitDrive={circuitDrive}
-                gearProfile={gearProfile}
-                hasProcessedAudio={!!selectedFile && !!analysis}
-              />
-            </div>
-              </>
-            )}
-
-            {/* Audio Player with Real-Time Processing */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <PlaybackControls
-                playbackState={playbackState}
-                onPlay={handlePlay}
-                onPause={handlePause}
-                onSeek={handleSeek}
-                onJumpTo={handleJumpTo}
-                bypassMode={bypassMode}
-                onBypassToggle={handleBypassToggle}
-                originalBuffer={originalBuffer}
-                processedBuffer={processedBuffer}
-                isWaveformRendering={isWaveformRendering}
-                getPlaybackTime={getPlaybackTime}
-              />
-            </div>
-            
-            {/* Last export quality report (BS.1770 verified) */}
             {lastExportReport && lastExportReport.integratedLUFS !== -Infinity && (
               <div
                 className={`mb-4 px-4 py-3 rounded-lg border text-sm font-mono ${
@@ -1441,15 +1440,152 @@ export default function App() {
               </div>
             )}
 
-            {/* Export Panel */}
-            <ExportPanel 
-              onExport={handleExport} 
-              disabled={!selectedFile || !analysis || isProcessing}
-              currentTarget={getExportPreset(exportPreset).lufs}
-              selectedPreset={exportPreset}
-            />
+            {!expertMode && (
+              <div
+                className="relative border-2 rounded-lg p-6 mb-6"
+                style={{
+                  borderColor: '#2a2a2a',
+                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
+                }}
+              >
+                <div className="text-xs font-mono text-zinc-500 tracking-[0.3em] uppercase mb-2">
+                  Export
+                </div>
+                <p className="text-[10px] font-mono text-zinc-600 mb-4 max-w-xl">
+                  Uses your delivery target from Mix Setup ({getExportPreset(exportPreset).name},{' '}
+                  {getExportPreset(exportPreset).lufs} LUFS). Listen first, then download.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleExport(exportPreset)}
+                  disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
+                  className="w-full sm:w-auto px-6 py-3 rounded-lg font-mono text-sm uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: 'linear-gradient(180deg, #10b981, #059669)',
+                    color: '#fff',
+                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                  }}
+                >
+                  Download mastered WAV
+                </button>
+              </div>
+            )}
+
+            {/* Expert controls toggle */}
+            <div className="mb-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setExpertMode(prev => !prev)}
+                className="px-4 py-2 rounded-lg border border-zinc-700 bg-zinc-900 text-xs font-mono text-zinc-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
+              >
+                {expertMode ? '▲ Hide pro controls' : '▼ Pro controls: meters, tonal match, album export, EQ…'}
+              </button>
+            </div>
+
+            {expertMode && (
+              <>
+            <ProRackSection
+              title="Output meters"
+              subtitle="Live loudness, peaks, and limiter gain reduction — play to measure."
+            >
+              <ProOutputMeters
+                hqMode={hqMode}
+                onHqToggle={setHQMode}
+                cpuUsage={cpuUsage}
+                truePeakDBTP={truePeakDBTP}
+                digitalPeakDB={digitalPeakDB}
+                limiterGainReductionDB={gainReductionDB}
+                sslGainReductionDB={gainReduction}
+                ispDifference={ispDifference}
+                ceilingDBTP={getExportPreset(exportPreset).ceiling}
+                lufs={outputLufs}
+                targetLUFS={getExportPreset(exportPreset).lufs}
+                isPlaying={playbackState.isPlaying}
+                logicMode={logicMode}
+                isProcessing={isProcessing}
+                meterValue={logicMode === 'brickwall' ? meterValues.peak : meterValues.lra}
+                damageReport={analysis?.damageReport}
+              />
+            </ProRackSection>
+
+            <ProRackSection
+              title="Tonal shaping"
+              subtitle="Match strength adjusts profile EQ live — manual EQ sliders below edit the same bands."
+            >
+              <ReferenceMatchPanel
+                userProfile={spectralProfile}
+                referenceCurve={referenceCurve}
+                matchingGains={previewMatchingGains}
+                matchStrength={matchStrength}
+                defaultStrength={DEFAULT_TONAL_MATCH_STRENGTH}
+                onMatchStrengthChange={setMatchStrength}
+                onResetToDefault={() => setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH)}
+                isAnalyzing={isSpectralAnalyzing}
+                gearLabel={gearProfiles.find((p) => p.id === gearProfile)?.name}
+              />
+              <ProfileAdjustmentsPanel
+                adjustments={profileAdjustments}
+                onChange={setProfileAdjustments}
+                gearProfile={gearProfile}
+              />
+            </ProRackSection>
+
+            <ProRackSection
+              title="Level & dynamics"
+              subtitle="Staging, bus glue, and ceiling — independent of Mix Setup delivery target until you override."
+            >
+              <ProDynamicsPanel
+                settings={proDynamics}
+                onChange={setProDynamics}
+                gearProfile={gearProfile}
+                autoInputTrimDB={autoInputTrimDB}
+                presetCeilingDBTP={getExportPreset(exportPreset).ceiling}
+              />
+            </ProRackSection>
+
+            <ProRackSection
+              title="Chain reference"
+              subtitle="Signal path and genre characteristics for the active gear profile."
+            >
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <SignalChainVisualizer
+                  isProcessing={isProcessing}
+                  gearProfile={gearProfile}
+                />
+                <GenreProfileInfo gearProfile={gearProfile} />
+              </div>
+              <GainStageVisualizer
+                isProcessing={isProcessing}
+                circuitDrive={circuitDrive}
+                gearProfile={gearProfile}
+                hasProcessedAudio={!!selectedFile && !!analysis}
+              />
+            </ProRackSection>
+
+            <ProRackSection
+              title="Export"
+              subtitle="Single tracks or album batch — each preset renders independently."
+            >
+              <ExportPanel
+                onExport={handleExport}
+                disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
+                currentTarget={getExportPreset(exportPreset).lufs}
+                selectedPreset={exportPreset}
+              />
+              <BatchExportPanel
+                disabled={isProcessing}
+                isExporting={isBatchExporting}
+                progress={batchExportProgress}
+                selectedPreset={exportPreset}
+                onBatchExport={handleBatchExport}
+              />
+            </ProRackSection>
               </>
             )}
+              </>
+            )}
+
+            <CreatorAboutStrip variant="compact" />
           </main>
         </div>
       </div>

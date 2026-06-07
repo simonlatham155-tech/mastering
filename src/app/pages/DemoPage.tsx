@@ -9,7 +9,6 @@ import { ArrowLeft, Sparkles, Zap } from 'lucide-react';
 import { AudioInputSection } from '../components/audio-input-section';
 import { PlaybackControls } from '../components/playback-controls';
 import { CompactLufsMeter } from '../components/compact-lufs-meter';
-import { gearProfiles } from '../components/gear-selector';
 import type { ProfileAdjustments } from '../components/profile-adjustments';
 import { audioProcessor } from '../services/audio-processor';
 import { analyzeAudioFile as analyzeInputAudio } from '../utils/audio-analyzer';
@@ -24,6 +23,7 @@ import {
   buildAppProcessingSettings,
   buildGenericDemoContext,
   DEFAULT_PRO_DYNAMICS,
+  NEUTRAL_PROFILE_ADJUSTMENTS,
 } from '../services/app-processing-context';
 import type { ProcessingPlan } from '../data/preset-resolution';
 import type { ProcessingSettings } from '../services/audio-processor';
@@ -32,17 +32,8 @@ import { CreatorAboutStrip } from '../components/creator-about-strip';
 
 type CompareMode = 'generic' | 'latham';
 
-function syncProfileForGear(gearProfile: string): ProfileAdjustments {
-  const profile = gearProfiles.find((p) => p.id === gearProfile);
-  if (!profile) {
-    return { lowShelfBoost: 0, midRangeAdjust: 0, highShelfBoost: 0, stereoWidth: 50 };
-  }
-  return {
-    lowShelfBoost: profile.lowShelfBoost,
-    midRangeAdjust: profile.midRangeAdjust,
-    highShelfBoost: profile.highShelfBoost,
-    stereoWidth: profile.stereoWidth,
-  };
+function syncProfileForGear(_gearProfile: string): ProfileAdjustments {
+  return { ...NEUTRAL_PROFILE_ADJUSTMENTS };
 }
 
 export default function DemoPage() {

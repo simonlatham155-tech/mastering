@@ -16,19 +16,32 @@ import { resolveProcessingPlan, type ProcessingPlan, type UserOverrides } from '
 import type { ProcessingSettings } from '../services/audio-processor';
 import type { AIMasteringRecommendation } from '../services/ai-mastering-engine';
 import type { RealtimeAudioPlayer } from '../services/realtime-audio-player';
+import { getSuggestedProDynamics } from '../utils/suggested-settings';
 
 export type LogicMode = 'brickwall' | 'dynamics';
 
 export { DEFAULT_PRO_DYNAMICS };
 export type { ProDynamicsSettings, SSLGlueMode };
 
+/** Default tonal balance match — applied automatically; pros adjust in expert rack. */
+export const DEFAULT_TONAL_MATCH_STRENGTH = 35;
+
 const SSL_GLUE_PRESETS: Record<Exclude<SSLGlueMode, 'auto'>, { threshold: number; ratio: number }> = {
   gentle: { threshold: -14, ratio: 2 },
   firm: { threshold: -6, ratio: 4 },
 };
 
+const NEUTRAL_PROFILE_ADJUSTMENTS: ProfileAdjustments = {
+  lowShelfBoost: 0,
+  midRangeAdjust: 0,
+  highShelfBoost: 0,
+  stereoWidth: 50,
+};
+
+export { NEUTRAL_PROFILE_ADJUSTMENTS };
+
 /**
- * Sliders store absolute EQ dB targets; preset resolution expects offsets from genre defaults.
+ * Sliders store user offsets from the active genre preset (0 = genre default).
  * Harmonic color comes from the THD knob — not duplicated here.
  */
 export function profileAdjustmentsToUserOverrides(
@@ -36,20 +49,11 @@ export function profileAdjustmentsToUserOverrides(
   gearProfile: GearProfileId,
   proDynamics?: ProDynamicsSettings
 ): UserOverrides {
-  const genre = getGenrePreset(gearProfile);
-  const base = genre?.biases ?? {
-    bassTilt: 0,
-    mudCut: 0,
-    airTilt: 0,
-    width: 1,
-    colorAmount: 0.5,
-  };
-
   const overrides: UserOverrides = {
     width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6,
-    bassTilt: profileAdjustments.lowShelfBoost - base.bassTilt,
-    mudCut: profileAdjustments.midRangeAdjust - base.mudCut,
-    airTilt: profileAdjustments.highShelfBoost - base.airTilt,
+    bassTilt: profileAdjustments.lowShelfBoost,
+    mudCut: profileAdjustments.midRangeAdjust,
+    airTilt: profileAdjustments.highShelfBoost,
   };
 
   if (proDynamics?.forceMonoBass != null) {
@@ -58,6 +62,24 @@ export function profileAdjustmentsToUserOverrides(
   }
 
   return overrides;
+}
+
+/** Genre-aware pro dynamics defaults (staging, glue, mono bass) — applied on upload. */
+export function buildProDynamicsForGear(
+  gearProfile: GearProfileId,
+  exportPresetId: ExportPresetId,
+  autoInputTrimDB?: number
+): ProDynamicsSettings {
+  const ceiling = getExportPreset(exportPresetId).ceiling;
+  const suggested = getSuggestedProDynamics(gearProfile, ceiling, autoInputTrimDB);
+  return {
+    ...DEFAULT_PRO_DYNAMICS,
+    sslGlue: suggested.sslGlue,
+    forceMonoBass: suggested.forceMonoBass,
+    monoBassHz: suggested.monoBassHz,
+    autoStageOnExport: true,
+    autoStageLive: false,
+  };
 }
 
 export function resolveEffectiveInputTrimDB(
@@ -84,9 +106,18 @@ export function applyProfileAdjustmentsToPlayer(
   const genre = getGenrePreset(gearProfile);
   if (!genre) return;
 
-  player.updateParameter('lowShelfGain', profileAdjustments.lowShelfBoost);
-  player.updateParameter('midRangeGain', profileAdjustments.midRangeAdjust);
-  player.updateParameter('highShelfGain', profileAdjustments.highShelfBoost);
+  player.updateParameter(
+    'lowShelfGain',
+    genre.biases.bassTilt + profileAdjustments.lowShelfBoost
+  );
+  player.updateParameter(
+    'midRangeGain',
+    genre.biases.mudCut + profileAdjustments.midRangeAdjust
+  );
+  player.updateParameter(
+    'highShelfGain',
+    genre.biases.airTilt + profileAdjustments.highShelfBoost
+  );
 
   const widthOffset = (profileAdjustments.stereoWidth - 50) / 100 * 0.6;
   player.updateParameter('stereoWidth', genre.biases.width + widthOffset);
@@ -174,13 +205,6 @@ export function appliedRecommendationFromAI(
     exportPreset: targetLufsToExportPreset(recommendation.targetLUFS),
   };
 }
-
-const NEUTRAL_PROFILE_ADJUSTMENTS: ProfileAdjustments = {
-  lowShelfBoost: 0,
-  midRangeAdjust: 0,
-  highShelfBoost: 0,
-  stereoWidth: 50,
-};
 
 /** Generic black-box chain for A/B demo (Spotify -14, brickwall). */
 export function buildGenericDemoContext(

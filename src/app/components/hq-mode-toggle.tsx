@@ -36,7 +36,7 @@ export function HQModeToggle({
       {/* Header */}
       <div className="flex items-center gap-2">
         <span className="text-xs font-mono text-zinc-400 uppercase tracking-wider">
-          Processing Quality
+          Meter quality
         </span>
         <div className="group relative">
           <Info className="w-3 h-3 text-zinc-600 cursor-help" />
@@ -156,30 +156,22 @@ export function HQModeToggle({
             <div className="flex items-center gap-2 mb-3">
               <Sparkles className="w-4 h-4 text-purple-400" />
               <div className="text-xs font-mono text-purple-400 font-semibold">
-                Reference-Grade Processing
+                Reference-grade meters
               </div>
             </div>
             
             <div className="space-y-2 text-[9px] font-mono text-zinc-400 leading-relaxed">
               <div className="flex items-start gap-2">
-                <span className="text-purple-400">✓</span>
-                <span>4x oversampling (44.1kHz → 176.4kHz)</span>
+                <span className="text-purple-400 shrink-0">Live preview:</span>
+                <span>4× FIR true-peak metering on the output tap (passthrough audio).</span>
               </div>
               <div className="flex items-start gap-2">
-                <span className="text-purple-400">✓</span>
-                <span>31-tap polyphase FIR filter (96dB stopband)</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-purple-400">✓</span>
-                <span>True peak detection (catches inter-sample peaks)</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-purple-400">✓</span>
-                <span>Zero aliasing (clean high-frequency limiting)</span>
+                <span className="text-emerald-400 shrink-0">Export file:</span>
+                <span>Faust WASM limiter on export files + 24-bit WAV.</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-orange-400">⚠</span>
-                <span>Higher CPU usage (~15-20%)</span>
+                <span>Slightly higher CPU on the meter tap (~15–20%).</span>
               </div>
             </div>
             

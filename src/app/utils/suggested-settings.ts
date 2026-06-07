@@ -13,16 +13,14 @@ export interface SuggestedProDynamics {
 }
 
 export function getSuggestedProfileAdjustments(
-  gearProfileId: GearProfileId
-): ProfileAdjustments | null {
-  const genre = getGenrePreset(gearProfileId);
-  if (!genre) return null;
-
+  _gearProfileId: GearProfileId
+): ProfileAdjustments {
+  // Sliders are offsets from the active genre preset; 0 / 50% = no extra tweak.
   return {
-    lowShelfBoost: genre.biases.bassTilt,
-    midRangeAdjust: genre.biases.mudCut,
-    highShelfBoost: genre.biases.airTilt,
-    stereoWidth: Math.round(genre.biases.width * 100),
+    lowShelfBoost: 0,
+    midRangeAdjust: 0,
+    highShelfBoost: 0,
+    stereoWidth: 50,
   };
 }
 

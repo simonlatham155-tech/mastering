@@ -100,13 +100,21 @@ export class SpectralAnalyzer {
    * (In production, use a proper FFT library like fft.js or WASM implementation)
    */
   private analyzeBufferManually(buffer: AudioBuffer): SpectralProfile {
-    // Convert to mono
-    const monoData = this.getMonoData(buffer);
-    
-    // Split into windows for averaging
+    // Long tracks: analyze only the first ~90s and cap windows so upload stays responsive.
+    const maxAnalysisSeconds = 90;
+    const maxSamples = Math.min(
+      buffer.length,
+      Math.floor(buffer.sampleRate * maxAnalysisSeconds)
+    );
+    const monoData = buffer.getChannelData(0).subarray(0, maxSamples);
+
     const windowSize = 8192;
-    const hopSize = windowSize / 2; // 50% overlap
-    const numWindows = Math.floor((monoData.length - windowSize) / hopSize);
+    const hopSize = windowSize / 2;
+    const maxWindows = 40;
+    const numWindows = Math.min(
+      Math.max(0, Math.floor((monoData.length - windowSize) / hopSize)),
+      maxWindows
+    );
     
     // Frequency bins (simplified, assumes 48kHz sample rate)
     const sampleRate = buffer.sampleRate;
@@ -126,7 +134,25 @@ export class SpectralAnalyzer {
       top: 0
     };
     
-    // Analyze each window
+    if (numWindows === 0) {
+      return {
+        bands: {
+          sub: -40,
+          low: -40,
+          lowMid: -40,
+          mid: -40,
+          upperMid: -40,
+          presence: -40,
+          brilliance: -40,
+          air: -40,
+          ultraHigh: -40,
+          top: -40,
+        },
+        rmsLevel: -60,
+        peakLevel: -60,
+      };
+    }
+
     for (let w = 0; w < numWindows; w++) {
       const offset = w * hopSize;
       const window = monoData.slice(offset, offset + windowSize);

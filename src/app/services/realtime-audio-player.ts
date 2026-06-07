@@ -79,6 +79,9 @@ export class RealtimeAudioPlayer {
   private sslOutputBuffer: Float32Array | null = null;
   private currentLimiterCeilingOverride: number | undefined = undefined;
   private currentSslGlue: 'auto' | 'gentle' | 'firm' = 'auto';
+  private currentOutputTrimDB = 0;
+  /** When set, dry bypass boosts original to processed level (Gain Match). */
+  private currentBypassGainMatchDB: number | null = null;
   
   constructor() {
     // AudioContext will be created on first play (user interaction required)
@@ -88,14 +91,38 @@ export class RealtimeAudioPlayer {
    * Load audio file for playback
    */
   async loadAudio(file: File): Promise<void> {
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = await this.ensureContext().decodeAudioData(arrayBuffer);
+    this.setLoadedBuffer(buffer);
+  }
+
+  /** Reuse an already-decoded buffer (avoids a third full-file decode on upload). */
+  loadBuffer(buffer: AudioBuffer): void {
+    const ctx = this.ensureContext();
+    // Copy into this player's context — buffers decoded elsewhere may not play back.
+    const copy = ctx.createBuffer(
+      buffer.numberOfChannels,
+      buffer.length,
+      buffer.sampleRate
+    );
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      copy.copyToChannel(buffer.getChannelData(ch), ch);
+    }
+    this.setLoadedBuffer(copy);
+  }
+
+  private ensureContext(): AudioContext {
     if (!this.audioContext) {
       this.audioContext = new AudioContext();
     }
-    
-    const arrayBuffer = await file.arrayBuffer();
-    this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-    
-    console.log(`🎵 Loaded audio: ${this.audioBuffer.duration.toFixed(1)}s, ${this.audioBuffer.numberOfChannels}ch`);
+    return this.audioContext;
+  }
+
+  private setLoadedBuffer(buffer: AudioBuffer): void {
+    this.audioBuffer = buffer;
+    console.log(
+      `🎵 Loaded audio: ${buffer.duration.toFixed(1)}s, ${buffer.numberOfChannels}ch`
+    );
   }
   
   /**
@@ -134,6 +161,15 @@ export class RealtimeAudioPlayer {
   setHQMode(enabled: boolean): void {
     this.hqModeEnabled = enabled;
     this.limiterMeter.setParameters({ hqMode: enabled });
+  }
+
+  /** Delivery output trim + optional bypass gain match (evaluation A/B). */
+  setPlaybackGainOptions(
+    outputTrimDB: number,
+    bypassGainMatchDB: number | null
+  ): void {
+    this.currentOutputTrimDB = outputTrimDB;
+    this.currentBypassGainMatchDB = bypassGainMatchDB;
   }
 
   private syncMeterParams(plan: ProcessingPlan, limiterCeilingOverride?: number): void {
@@ -230,6 +266,11 @@ export class RealtimeAudioPlayer {
       inputTrimDB,
       inputLUFS: this.currentInputLUFS,
       limiterCeilingOverride,
+      outputTrimDB: dryBypass ? undefined : this.currentOutputTrimDB,
+      bypassGainMatchDB:
+        dryBypass && this.currentBypassGainMatchDB != null
+          ? this.currentBypassGainMatchDB
+          : undefined,
       sslGlue,
     });
 
@@ -254,15 +295,17 @@ export class RealtimeAudioPlayer {
     limiterCeilingOverride?: number,
     sslGlue?: 'auto' | 'gentle' | 'firm'
   ): Promise<void> {
-    if (!this.audioContext || !this.audioBuffer) {
+    if (!this.audioBuffer) {
       throw new Error('No audio loaded');
     }
+
+    this.ensureContext();
 
     this.currentInputLUFS = inputLUFS ?? this.currentInputLUFS;
     
     // Resume AudioContext if suspended (browser autoplay policy)
-    if (this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
+    if (this.audioContext!.state === 'suspended') {
+      await this.audioContext!.resume();
     }
     
     if (this.isPlaying) {
@@ -563,7 +606,8 @@ export class RealtimeAudioPlayer {
     console.log('🔄 Rebuilding mastering chain...');
     
     // Build new chain
-    if (this.audioContext) {
+    if (this.audioBuffer) {
+      this.ensureContext();
       this.masteringChain = await this.createMasteringChain(
         settings,
         plan,
@@ -575,7 +619,7 @@ export class RealtimeAudioPlayer {
       );
     }
     
-    if (wasPlaying && this.audioContext) {
+    if (wasPlaying && this.audioBuffer) {
       this.pauseTime = currentPosition;
       await this.play(
         settings,

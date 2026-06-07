@@ -33,14 +33,7 @@ export function ProfileAdjustmentsPanel({
   };
 
   return (
-    <div 
-      className="border rounded-lg p-4"
-      style={{
-        background: 'linear-gradient(180deg, #0f0f0f, #0a0a0a)',
-        borderColor: '#2a2a2a',
-        boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.5)'
-      }}
-    >
+    <div className="space-y-4 pt-5 border-t border-zinc-800/80">
       <div className="flex items-center gap-2 mb-4">
         <Sliders className="w-4 h-4 text-amber-500" />
         <div className="text-sm font-mono text-zinc-500 uppercase tracking-[0.2em]">
@@ -153,7 +146,8 @@ export function ProfileAdjustmentsPanel({
 
       <p className="text-[10px] font-mono text-zinc-600 mt-3 leading-relaxed">
         <span className="inline-block w-0.5 h-2.5 bg-cyan-400 rounded-full align-middle mr-1.5" />
-        Cyan tick = genre default · Harmonic color is on the <span className="text-amber-400">THD knob</span>
+        Tonal match writes here — manual tweaks stack on top · 0 dB = genre default · Harmonic
+        color is on the <span className="text-amber-400">THD knob</span>
       </p>
 
       <style>{`

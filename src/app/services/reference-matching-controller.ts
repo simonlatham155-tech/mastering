@@ -12,6 +12,7 @@
 
 import { SpectralAnalyzer, SpectralProfile, MatchingDelta } from './spectral-analyzer';
 import { ReferenceCurve } from '../data/reference-curves';
+import { isoBandsToArray, profileToIsoBands, profileToRelativeIsoShape, referenceCurveToRelativeShape } from '../utils/spectral-profile-iso';
 
 /**
  * Safety limits for matching
@@ -101,33 +102,9 @@ export class ReferenceMatchingController {
       harsh: false
     };
     
-    // Reference profile (dB values at each ISO frequency)
-    const referenceProfile = [
-      referenceCurve.bands.hz31,
-      referenceCurve.bands.hz63,
-      referenceCurve.bands.hz125,
-      referenceCurve.bands.hz250,
-      referenceCurve.bands.hz500,
-      referenceCurve.bands.hz1k,
-      referenceCurve.bands.hz2k,
-      referenceCurve.bands.hz4k,
-      referenceCurve.bands.hz8k,
-      referenceCurve.bands.hz16k
-    ];
-    
-    // User profile (dB values from FFT analysis)
-    const userProfileArray = [
-      userProfile.bands.hz31,
-      userProfile.bands.hz63,
-      userProfile.bands.hz125,
-      userProfile.bands.hz250,
-      userProfile.bands.hz500,
-      userProfile.bands.hz1k,
-      userProfile.bands.hz2k,
-      userProfile.bands.hz4k,
-      userProfile.bands.hz8k,
-      userProfile.bands.hz16k
-    ];
+    // Compare spectral shape (tilt), not absolute log-energy vs relative genre offsets.
+    const referenceProfile = referenceCurveToRelativeShape(referenceCurve.bands);
+    const userProfileArray = profileToRelativeIsoShape(userProfile);
     
     // Calculate gain for each band
     ISO_BANDS.forEach((band, index) => {
@@ -286,18 +263,7 @@ export class ReferenceMatchingController {
    * (This is what the pseudo-code calls "getAverageBands")
    */
   getAverageBands(profile: SpectralProfile): number[] {
-    return [
-      profile.bands.hz31,
-      profile.bands.hz63,
-      profile.bands.hz125,
-      profile.bands.hz250,
-      profile.bands.hz500,
-      profile.bands.hz1k,
-      profile.bands.hz2k,
-      profile.bands.hz4k,
-      profile.bands.hz8k,
-      profile.bands.hz16k
-    ];
+    return isoBandsToArray(profileToIsoBands(profile));
   }
   
   /**
@@ -326,8 +292,8 @@ export class ReferenceMatchingController {
     referenceCurve: ReferenceCurve
   ): MatchingDelta {
     
-    const userArray = this.getAverageBands(userProfile);
-    const refArray = this.getReferenceProfile(referenceCurve);
+    const userArray = profileToRelativeIsoShape(userProfile);
+    const refArray = referenceCurveToRelativeShape(referenceCurve.bands);
     
     const deltas = refArray.map((ref, i) => ref - userArray[i]);
     

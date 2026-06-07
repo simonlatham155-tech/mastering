@@ -1,18 +1,8 @@
 import type { ProcessingSettings } from './audio-processor';
 import { audioProcessor } from './audio-processor';
-import {
-  clampOutputTrimDB,
-  computeStagingTrimStep,
-  DEFAULT_MAX_STAGING_ITERATIONS,
-  DEFAULT_STAGING_TOLERANCE_LU,
-  isOnLufsTarget,
-} from '../utils/auto-staging';
-import {
-  buildExportQualityReport,
-  measureBufferLoudness,
-  type ExportQualityReport,
-} from '../utils/measure-buffer-loudness';
-import { measureBufferTruePeak } from '../utils/measure-buffer-true-peak';
+import { isOnLufsTarget } from '../utils/auto-staging';
+import type { ExportQualityReport } from '../utils/measure-buffer-loudness';
+import { runOutputTrimStagingLoop } from './output-trim-staging-loop';
 
 export interface AutoStageExportOptions {
   limiterCeilingOverride?: number;
@@ -50,69 +40,32 @@ export async function renderExportWithAutoStaging(
     targetLUFS,
     ceilingDBTP,
     autoStage = true,
-    toleranceLU = DEFAULT_STAGING_TOLERANCE_LU,
-    maxIterations = DEFAULT_MAX_STAGING_ITERATIONS,
+    toleranceLU,
+    maxIterations,
   } = options;
 
-  let outputTrimDB = clampOutputTrimDB(initialOutputTrimDB);
-  let buffer: AudioBuffer | null = null;
-  let report: ExportQualityReport | null = null;
-  let iterations = 0;
-
-  const maxPasses = autoStage ? maxIterations : 1;
-
-  for (let pass = 0; pass < maxPasses; pass++) {
-    iterations = pass + 1;
-
-    buffer = await audioProcessor.renderExport(settings, inputTrimDB, {
-      limiterCeilingOverride,
-      outputTrimDB,
-      sslGlue,
-    });
-
-    const lufs = await measureBufferLoudness(buffer);
-    const peaks = await measureBufferTruePeak(buffer, ceilingDBTP);
-    report = buildExportQualityReport(
-      lufs,
-      peaks,
-      targetLUFS,
-      ceilingDBTP,
-      toleranceLU
-    );
-
-    if (!autoStage || report.onTarget) {
-      break;
-    }
-
-    const nextTrim = computeStagingTrimStep({
-      integratedLUFS: report.integratedLUFS,
-      targetLUFS,
-      currentOutputTrimDB: outputTrimDB,
-      peakDB: report.truePeakDBTP,
-      ceilingDBTP,
-      toleranceLU,
-    });
-
-    if (nextTrim == null || nextTrim === outputTrimDB) {
-      break;
-    }
-
-    console.log(
-      `🎚️ Auto-stage pass ${pass + 1}: ${report.integratedLUFS.toFixed(1)} → target ${targetLUFS} LUFS, trim ${outputTrimDB.toFixed(1)} → ${nextTrim.toFixed(1)} dB`
-    );
-    outputTrimDB = nextTrim;
-  }
-
-  if (!buffer || !report) {
-    throw new Error('Export auto-staging failed to produce a buffer');
-  }
+  const result = await runOutputTrimStagingLoop({
+    initialOutputTrimDB,
+    targetLUFS,
+    ceilingDBTP,
+    autoStage,
+    toleranceLU,
+    maxIterations,
+    logPrefix: 'Auto-stage',
+    renderWithTrim: (outputTrimDB) =>
+      audioProcessor.renderExport(settings, inputTrimDB, {
+        limiterCeilingOverride,
+        outputTrimDB,
+        sslGlue,
+      }),
+  });
 
   return {
-    buffer,
-    outputTrimDB,
-    report,
-    iterations,
-    staged: Math.abs(outputTrimDB - initialOutputTrimDB) >= 0.05,
+    buffer: result.buffer,
+    outputTrimDB: result.outputTrimDB,
+    report: result.report,
+    iterations: result.iterations,
+    staged: result.staged,
   };
 }
 

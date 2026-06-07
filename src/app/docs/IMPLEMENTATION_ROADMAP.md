@@ -11,7 +11,7 @@
 - `loudnessStyle` wired in `mastering-chain-builder.ts` (SSL + limiter)
 - BS.1770 live/export metering, auto-staging, export true-peak
 - Pro Dynamics, Mix Setup, suggested markers, `#/demo` A/B page
-- **117 automated tests passing** (`npm test`)
+- **150+ automated tests** (`npm test`)
 
 ---
 
@@ -33,11 +33,12 @@ Manual checklist: [`LISTEN_QA.md`](./LISTEN_QA.md)
 
 ## Next (after listen QA sign-off)
 
-1. Reference track matching in main UI (`reference-matching-controller.ts` exists)
-2. Album / batch export
-3. Product nav (Mastering Suite · plugins · apps)
-4. Bundle cleanup (TensorFlow dead chunk, unused Radix)
-5. Faust WASM PR #1 — evaluate separately
+1. ~~Reference track matching in main UI~~ — **shipped**
+2. ~~Album / batch export~~ — **shipped** (shared `runMasterExport` pipeline + ZIP)
+3. ~~Product nav~~ — **shipped** (Mastering Suite · Demo · Plugins soon)
+4. Bundle cleanup (TensorFlow dead chunk, unused Radix) — **partial** (removed TF chunk; TF dep still in package for ML stub)
+5. **Faust WASM limiter** — `npm run build:faust` compiles `src/dsp/limiter.dsp` → `public/faust/compiled/limiter/`; export prefers Faust, falls back to FIR worklet. Look-ahead spec: `limiter-lookahead.dsp` (not built yet).
+6. Export delivery: **24-bit WAV** + premium ceiling limiter on offline render
 
 ---
 

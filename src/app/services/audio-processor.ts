@@ -3,7 +3,8 @@ import type { ExportPreset } from '../components/export-panel';
 import { getExportPreset } from '../data/export-presets';
 import { resolveProcessingPlan } from '../data/preset-resolution';
 import { QualityMode, getQualityProfile } from '../data/quality-profiles';
-import { buildMasteringChain, type MasteringChain } from './mastering-chain-builder';
+import { buildMasteringChain, buildOfflineMasteringChain, type MasteringChain } from './mastering-chain-builder';
+import { encodeWavBlob } from '../utils/wav-encode';
 
 export interface AudioAnalysis {
   lufs: number;
@@ -473,7 +474,7 @@ export class AudioProcessor {
     const forVisualization = options?.forVisualization ?? false;
     console.log(forVisualization
       ? '🎨 WAVEFORM PREVIEW: Full chain render (matches live preview)'
-      : '💎 EXPORT MODE: Full quality offline render');
+      : '💎 EXPORT MODE: Offline render with Faust WASM limiter (FIR worklet fallback)');
 
     // Build processing plan
     const plan = resolveProcessingPlan({
@@ -509,8 +510,8 @@ export class AudioProcessor {
       sampleRate
     );
 
-    // Build mastering chain (export quality for download, preview for waveform viz)
-    const chain = buildMasteringChain({
+    // Build mastering chain (export quality uses 4× FIR true-peak worklet on ceiling)
+    const chain = await buildOfflineMasteringChain({
       context: offlineContext,
       destination: offlineContext.destination,
       params: plan,
@@ -576,7 +577,8 @@ export class AudioProcessor {
     inputTrimDB?: number,
     limiterCeilingOverride?: number,
     outputTrimDB?: number,
-    sslGlue?: 'auto' | 'gentle' | 'firm'
+    sslGlue?: 'auto' | 'gentle' | 'firm',
+    quality: QualityMode = 'preview'
   ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
@@ -607,13 +609,13 @@ export class AudioProcessor {
     // Create OfflineAudioContext for chunk
     const offlineContext = new OfflineAudioContext(2, processLength, sampleRate);
 
-    // Build mastering chain (preview quality)
-    const chain = buildMasteringChain({
+    // Build mastering chain (export quality uses true-peak worklet on ceiling)
+    const chain = await buildOfflineMasteringChain({
       context: offlineContext,
       destination: offlineContext.destination,
       params: plan,
       settings,
-      quality: 'preview',
+      quality,
       useMinimalMaster,
       inputTrimDB,
       inputLUFS: this.analysis?.lufs ?? -16,
@@ -664,25 +666,38 @@ export class AudioProcessor {
     maxSeconds: number = 45,
     limiterCeilingOverride?: number,
     outputTrimDB?: number,
-    sslGlue?: 'auto' | 'gentle' | 'firm'
+    sslGlue?: 'auto' | 'gentle' | 'firm',
+    options?: {
+      quality?: QualityMode;
+      /** Keep genre multiband (slower, closer to export) */
+      preserveMultiband?: boolean;
+    }
   ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
     }
 
+    const quality = options?.quality ?? 'preview';
+    const preserveMultiband = options?.preserveMultiband ?? false;
     const chunkSeconds = Math.min(maxSeconds, this.audioBuffer.duration);
     const previewSettings: ProcessingSettings = {
       ...settings,
       userOverrides: {
         ...settings.userOverrides,
-        // Multiband offline render is very slow on long files — skip for waveform viz
-        useMultiband: false,
+        ...(preserveMultiband
+          ? {}
+          : {
+              // Multiband offline render is very slow on long files — skip for fast viz
+              useMultiband: false,
+            }),
       },
     };
 
-    console.log(`🎨 Waveform preview: rendering first ${chunkSeconds.toFixed(1)}s (fast path)`);
+    console.log(
+      `🎨 Waveform preview: first ${chunkSeconds.toFixed(1)}s (${quality}${preserveMultiband ? ', multiband' : ''})`
+    );
 
-    const timeoutMs = 25000;
+    const timeoutMs = quality === 'export' ? 90000 : 25000;
     const renderPromise = this.renderPreviewChunk(
       previewSettings,
       0,
@@ -690,7 +705,8 @@ export class AudioProcessor {
       inputTrimDB,
       limiterCeilingOverride,
       outputTrimDB,
-      sslGlue
+      sslGlue,
+      quality
     );
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error('Waveform preview timed out')), timeoutMs);
@@ -3541,7 +3557,6 @@ export class AudioProcessor {
     
     // NO SAFETY SCALING - export must be neutral
     // If DSP produces >1.0, we WANT to know (fail loudly)
-    const scaleFactor = 1.0;
     
     if (maxPeak > 1.0) {
       console.error(`🔥 HARD CLIPPING IN DSP CHAIN! Peak ${maxPeak.toFixed(6)} exceeds 1.0`);
@@ -3552,45 +3567,9 @@ export class AudioProcessor {
       console.log(`✅ Clean headroom: ${(-20*Math.log10(maxPeak)).toFixed(2)} dB below 0dBFS`);
     }
     
-    // === STEP 2: WRITE WAV FILE ===
-    const numberOfChannels = buffer.numberOfChannels;
-    const length = buffer.length * numberOfChannels * 2;
-    const arrayBuffer = new ArrayBuffer(44 + length);
-    const view = new DataView(arrayBuffer);
-
-    // WAV header
-    const writeString = (offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + length, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, numberOfChannels, true);
-    view.setUint32(24, buffer.sampleRate, true);
-    view.setUint32(28, buffer.sampleRate * numberOfChannels * 2, true);
-    view.setUint16(32, numberOfChannels * 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, length, true);
-
-    // Write audio data with safety scaling
-    let offset = 44;
-    for (let i = 0; i < buffer.length; i++) {
-      for (let channel = 0; channel < numberOfChannels; channel++) {
-        const sample = buffer.getChannelData(channel)[i] * scaleFactor;
-        const int16 = Math.max(-1, Math.min(1, sample)) * 0x7fff;
-        view.setInt16(offset, int16, true);
-        offset += 2;
-      }
-    }
-
-    return new Blob([arrayBuffer], { type: 'audio/wav' });
+    // === STEP 2: WRITE 24-BIT WAV ===
+    console.log('📦 Encoding 24-bit PCM WAV');
+    return encodeWavBlob(buffer, { bitDepth: 24 });
   }
 
   /**

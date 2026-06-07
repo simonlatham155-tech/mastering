@@ -10,11 +10,9 @@
  * 5. thdMode (pressure/flow) maps to logicMode behavior when user hasn't explicitly set it
  * 6. PREVIEW/EXPORT PARITY: Same DSP in both modes. Only oversampling changes (2x vs 4x).
  * 
- * PREVIEW/EXPORT RULE (v2):
- * What you hear in preview IS what you get in export. Period.
- * The ONLY difference is WaveShaper oversampling (2x preview, 4x export).
- * That's a ~0.1dB aliasing difference — inaudible on any monitor.
- * Everything else — multiband, SSL knee, limiter look-ahead, all params — IDENTICAL.
+ * 6. PREVIEW/EXPORT RULE (v3):
+ * Preview uses WaveShaper ceiling (2× OS) for low-latency live playback.
+ * Export + HQ waveform use the 4× FIR true-peak AudioWorklet on the ceiling stage.
  * 
  * PHILOSOPHY:
  * - loudnessStyle controls HOW HARD the dynamics processing works
@@ -32,6 +30,7 @@ import { buildTransformerStage, getTransformerConfig } from './stages/transforme
 import { buildTapeStage, getTapeConfig } from './stages/tape-stage';
 import { buildMultibandStage } from './stages/multiband-stage';
 import { createTruePeakLimiterNode, disposeTruePeakLimiterNode } from './limiter-worklet';
+import { createFaustLimiterNode, disposeFaustLimiterNode } from './faust-limiter';
 import { buildClipperStage } from './stages/clipper-stage';
 import { smoothParam } from './stages/stage-utils';
 
@@ -48,12 +47,16 @@ export interface MasteringChainConfig {
   dryBypass?: boolean;
   inputTrimDB?: number;
   inputLUFS?: number;
-  /** Post-chain output trim in dB */
+  /** Post-chain output trim in dB (processed path / delivery) */
   outputTrimDB?: number;
-  /** Pre-created true-peak limiter worklet (replaces Type2 waveshaper) */
-  truePeakLimiterNode?: AudioWorkletNode | null;
-  /** Create and wire true-peak limiter worklet automatically (async build only) */
+  /** Boost applied on dry bypass when Gain Match is on (dB, does not affect export) */
+  bypassGainMatchDB?: number;
+  /** Create Faust WASM limiter (preferred for export when compiled assets exist) */
+  useFaustLimiter?: boolean;
+  /** Create hand-written FIR true-peak worklet (fallback) */
   useTruePeakWorklet?: boolean;
+  /** Pre-created ceiling limiter node (Faust WASM or FIR worklet) */
+  truePeakLimiterNode?: AudioWorkletNode | null;
   /** Optional user override for limiter ceiling (dBTP) */
   limiterCeilingOverride?: number;
   /** SSL bus glue macro — gentle/firm override genre auto */
@@ -208,6 +211,56 @@ const LOUDNESS_STYLE_PARAMS: Record<string, LoudnessStyleParams> = {
   },
 };
 
+export function shouldUseTruePeakWorkletOffline(
+  quality: QualityMode,
+  dryBypass = false,
+  explicit?: boolean
+): boolean {
+  if (dryBypass) return false;
+  if (explicit != null) return explicit;
+  return quality === 'export';
+}
+
+/**
+ * Build offline chain — export uses Faust WASM limiter, with FIR worklet fallback.
+ */
+export async function buildOfflineMasteringChain(
+  config: MasteringChainConfig
+): Promise<MasteringChain> {
+  const usePremium = shouldUseTruePeakWorkletOffline(
+    config.quality,
+    config.dryBypass,
+    config.useTruePeakWorklet ?? config.useFaustLimiter
+  );
+
+  if (!usePremium) {
+    return buildMasteringChain(config);
+  }
+
+  if (config.useTruePeakWorklet && !config.useFaustLimiter) {
+    return buildMasteringChainAsync({
+      ...config,
+      useTruePeakWorklet: true,
+      useFaustLimiter: false,
+    });
+  }
+
+  try {
+    return await buildMasteringChainAsync({
+      ...config,
+      useFaustLimiter: true,
+      useTruePeakWorklet: false,
+    });
+  } catch (err) {
+    console.warn('Faust WASM limiter unavailable — using FIR worklet fallback', err);
+    return buildMasteringChainAsync({
+      ...config,
+      useFaustLimiter: false,
+      useTruePeakWorklet: true,
+    });
+  }
+}
+
 /**
  * Build mastering chain with optional async true-peak worklet creation.
  */
@@ -216,7 +269,7 @@ export async function buildMasteringChainAsync(
 ): Promise<MasteringChain> {
   let truePeakLimiterNode = config.truePeakLimiterNode ?? null;
 
-  if (config.useTruePeakWorklet && !truePeakLimiterNode && !config.dryBypass) {
+  if (!truePeakLimiterNode && !config.dryBypass) {
     const loudnessStyle = config.params.genreBehavior.loudnessStyle;
     const styleParams = LOUDNESS_STYLE_PARAMS[loudnessStyle] || LOUDNESS_STYLE_PARAMS.balanced;
     const isBrickwall = config.settings.logicMode === 'brickwall';
@@ -224,18 +277,30 @@ export async function buildMasteringChainAsync(
       ? LOUDNESS_STYLE_PARAMS.aggressive.limiter
       : styleParams.limiter;
     const finalCeiling = Math.min(
-      config.params.deliveryTargets.ceiling,
+      config.limiterCeilingOverride ?? config.params.deliveryTargets.ceiling,
       limParams.ceiling
     );
 
-    truePeakLimiterNode = await createTruePeakLimiterNode(config.context, {
-      monitorOnly: false,
-      hqMode: true,
-      ceiling: finalCeiling,
-      threshold: finalCeiling - 3,
-      attack: limParams.attack,
-      release: limParams.release,
-    });
+    if (config.useFaustLimiter) {
+      truePeakLimiterNode = await createFaustLimiterNode(config.context, {
+        thresholdDB: finalCeiling - 3,
+        ratio: limParams.ratio,
+        attackSec: limParams.attack,
+        releaseSec: limParams.release,
+        ceilingDBTP: finalCeiling,
+        mix: 1,
+      });
+      console.log(`   TruePeak: FAUST WASM @ ${finalCeiling.toFixed(1)} dBTP ceiling`);
+    } else if (config.useTruePeakWorklet) {
+      truePeakLimiterNode = await createTruePeakLimiterNode(config.context, {
+        monitorOnly: false,
+        hqMode: true,
+        ceiling: finalCeiling,
+        threshold: finalCeiling - 3,
+        attack: limParams.attack,
+        release: limParams.release,
+      });
+    }
   }
 
   return buildMasteringChain({
@@ -270,6 +335,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     truePeakLimiterNode = null,
     limiterCeilingOverride,
     outputTrimDB,
+    bypassGainMatchDB,
     sslGlue,
   } = config;
   
@@ -286,10 +352,8 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   const chainOutput = context.createGain();
   chainOutput.channelCountMode = 'max';
   chainOutput.channelInterpretation = 'speakers';
-  chainOutput.gain.value =
-    outputTrimDB != null && outputTrimDB !== 0
-      ? Math.pow(10, outputTrimDB / 20)
-      : 1.0;
+  // Output gain set below after dryBypass branch is known.
+  chainOutput.gain.value = 1.0;
   
   // Track current node in chain
   let currentNode: AudioNode = chainInput;
@@ -334,8 +398,17 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   // === DRY BYPASS (A/B original) ===
   if (dryBypass) {
     chainInput.connect(chainOutput);
+    const bypassOutDB =
+      bypassGainMatchDB != null && Number.isFinite(bypassGainMatchDB)
+        ? bypassGainMatchDB
+        : 0;
+    chainOutput.gain.value = Math.pow(10, bypassOutDB / 20);
     chainOutput.connect(destination);
-    console.log('✅ Mastering chain: DRY BYPASS (original audio)');
+    console.log(
+      bypassGainMatchDB != null
+        ? `✅ Mastering chain: DRY BYPASS + gain match (${bypassOutDB.toFixed(1)} dB)`
+        : '✅ Mastering chain: DRY BYPASS (original audio, unity gain)'
+    );
 
     return {
       input: chainInput,
@@ -353,6 +426,11 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
       },
     };
   }
+
+  chainOutput.gain.value =
+    outputTrimDB != null && outputTrimDB !== 0
+      ? Math.pow(10, outputTrimDB / 20)
+      : 1.0;
 
   // PREVIEW/EXPORT PARITY: No quality-dependent DSP behavior.
   // Only oversampling factor changes (handled inside each stage).
@@ -504,7 +582,12 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     limiterCeilingDBTP,
     outputAnalyser,
     dispose: () => {
-      disposeTruePeakLimiterNode(limiter.truePeakNode);
+      const tp = limiter.truePeakNode;
+      if (tp && 'destroy' in tp && typeof (tp as { destroy?: () => void }).destroy === 'function') {
+        disposeFaustLimiterNode(tp as import('@grame/faustwasm').IFaustMonoWebAudioNode);
+      } else {
+        disposeTruePeakLimiterNode(tp);
+      }
       nodesToDispose.forEach(node => {
         try { node.disconnect(); } catch (e) { /* ignore */ }
       });
