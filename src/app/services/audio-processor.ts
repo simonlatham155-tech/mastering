@@ -576,7 +576,8 @@ export class AudioProcessor {
     inputTrimDB?: number,
     limiterCeilingOverride?: number,
     outputTrimDB?: number,
-    sslGlue?: 'auto' | 'gentle' | 'firm'
+    sslGlue?: 'auto' | 'gentle' | 'firm',
+    quality: QualityMode = 'preview'
   ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
@@ -607,13 +608,13 @@ export class AudioProcessor {
     // Create OfflineAudioContext for chunk
     const offlineContext = new OfflineAudioContext(2, processLength, sampleRate);
 
-    // Build mastering chain (preview quality)
+    // Build mastering chain (preview or export quality)
     const chain = buildMasteringChain({
       context: offlineContext,
       destination: offlineContext.destination,
       params: plan,
       settings,
-      quality: 'preview',
+      quality,
       useMinimalMaster,
       inputTrimDB,
       inputLUFS: this.analysis?.lufs ?? -16,
@@ -664,25 +665,38 @@ export class AudioProcessor {
     maxSeconds: number = 45,
     limiterCeilingOverride?: number,
     outputTrimDB?: number,
-    sslGlue?: 'auto' | 'gentle' | 'firm'
+    sslGlue?: 'auto' | 'gentle' | 'firm',
+    options?: {
+      quality?: QualityMode;
+      /** Keep genre multiband (slower, closer to export) */
+      preserveMultiband?: boolean;
+    }
   ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
     }
 
+    const quality = options?.quality ?? 'preview';
+    const preserveMultiband = options?.preserveMultiband ?? false;
     const chunkSeconds = Math.min(maxSeconds, this.audioBuffer.duration);
     const previewSettings: ProcessingSettings = {
       ...settings,
       userOverrides: {
         ...settings.userOverrides,
-        // Multiband offline render is very slow on long files — skip for waveform viz
-        useMultiband: false,
+        ...(preserveMultiband
+          ? {}
+          : {
+              // Multiband offline render is very slow on long files — skip for fast viz
+              useMultiband: false,
+            }),
       },
     };
 
-    console.log(`🎨 Waveform preview: rendering first ${chunkSeconds.toFixed(1)}s (fast path)`);
+    console.log(
+      `🎨 Waveform preview: first ${chunkSeconds.toFixed(1)}s (${quality}${preserveMultiband ? ', multiband' : ''})`
+    );
 
-    const timeoutMs = 25000;
+    const timeoutMs = quality === 'export' ? 90000 : 25000;
     const renderPromise = this.renderPreviewChunk(
       previewSettings,
       0,
@@ -690,7 +704,8 @@ export class AudioProcessor {
       inputTrimDB,
       limiterCeilingOverride,
       outputTrimDB,
-      sslGlue
+      sslGlue,
+      quality
     );
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error('Waveform preview timed out')), timeoutMs);

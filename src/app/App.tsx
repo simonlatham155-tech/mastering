@@ -46,6 +46,7 @@ import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-aud
 import { buildExportQualityReport } from './utils/measure-buffer-loudness';
 import { renderExportWithAutoStaging } from './services/export-auto-staging';
 import { renderWaveformPreviewWithAutoStaging } from './services/waveform-preview-staging';
+import { computeBypassGainMatchDB } from './utils/gain-match';
 import { computeStagingTrimStep } from './utils/auto-staging';
 import { PlaybackControls } from './components/playback-controls';
 import { CreatorAboutStrip } from './components/creator-about-strip';
@@ -125,6 +126,9 @@ export default function App() {
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
   const [bypassMode, setBypassMode] = useState(false); // A/B comparison: false = processed, true = original
   const [expertMode, setExpertMode] = useState(false);
+  /** Ozone-style level-matched A/B — boosts bypass to processed loudness (export unchanged). */
+  const [gainMatchEnabled, setGainMatchEnabled] = useState(false);
+  const [bypassGainMatchDB, setBypassGainMatchDB] = useState(0);
   
   // Audio Input Analysis
   const [inputAnalysis, setInputAnalysis] = useState<AudioAnalysisResult | null>(null);
@@ -133,9 +137,13 @@ export default function App() {
   const isReady = !!selectedFile && !!analysis;
   const measuredInputLUFS = analysis?.lufs ?? inputAnalysis?.lufs ?? -16;
 
-  const startWaveformPreviewRender = (settings: ReturnType<typeof buildAppProcessingSettings>) => {
+  const startWaveformPreviewRender = (
+    settings: ReturnType<typeof buildAppProcessingSettings>,
+    options?: { hq?: boolean }
+  ) => {
     const generation = ++waveformRenderGenRef.current;
     setIsWaveformRendering(true);
+    const hq = options?.hq ?? false;
 
     const preset = getExportPreset(exportPreset);
     const ceilingDBTP = limiterCeilingOverride ?? preset.ceiling;
@@ -152,10 +160,19 @@ export default function App() {
             targetLUFS: preset.lufs,
             ceilingDBTP,
             autoStage: proDynamics.autoStageOnExport,
+            quality: hq ? 'export' : 'preview',
+            preserveMultiband: hq,
           }
         );
         if (generation !== waveformRenderGenRef.current) return;
         setProcessedBuffer(previewResult.buffer);
+
+        const original = originalBuffer ?? audioProcessor.getOriginalBuffer();
+        if (original) {
+          setBypassGainMatchDB(
+            computeBypassGainMatchDB(original, previewResult.buffer)
+          );
+        }
 
         // Input headroom trim lowers level pre-chain; sync compensating output trim to live + UI.
         if (previewResult.staged && proDynamics.autoStageOnExport) {
@@ -169,6 +186,10 @@ export default function App() {
             previewResult.outputTrimDB
           );
         }
+
+        if (hq) {
+          toast.success('HQ waveform preview ready (export-quality first 45s)');
+        }
       } catch (err) {
         if (generation !== waveformRenderGenRef.current) return;
         console.warn('Waveform preview failed (non-critical):', err);
@@ -180,6 +201,15 @@ export default function App() {
       }
     })();
   };
+
+  const syncPlaybackGainOptions = useCallback(() => {
+    const player = realtimePlayerRef.current;
+    if (!player) return;
+    player.setPlaybackGainOptions(
+      proDynamics.outputTrimDB,
+      gainMatchEnabled ? bypassGainMatchDB : null
+    );
+  }, [proDynamics.outputTrimDB, gainMatchEnabled, bypassGainMatchDB]);
   
   // Mix analysis summary (shown in unified setup panel after upload)
   const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
@@ -793,6 +823,8 @@ export default function App() {
 
   const handlePlay = async () => {
     if (!realtimePlayerRef.current || !analysis) return;
+
+    syncPlaybackGainOptions();
     
     const ctx = buildProcessingContext({
       gearProfile,
@@ -844,13 +876,42 @@ export default function App() {
   const handleBypassToggle = async () => {
     const newBypassMode = !bypassMode;
     setBypassMode(newBypassMode);
+
+    syncPlaybackGainOptions();
     
     // Seamlessly switch bypass mode without stopping playback
     if (realtimePlayerRef.current) {
-      realtimePlayerRef.current.toggleBypass(newBypassMode);
-      toast.info(newBypassMode ? '🎵 Original (Bypass)' : '✨ Processed');
+      await realtimePlayerRef.current.toggleBypass(newBypassMode);
+      toast.info(
+        newBypassMode
+          ? gainMatchEnabled
+            ? `🎵 Original (gain-matched +${bypassGainMatchDB.toFixed(1)} dB)`
+            : '🎵 Original (unity)'
+          : '✨ Processed (delivery level)'
+      );
     }
   };
+
+  const handleHqWaveformPreview = () => {
+    if (!analysis) return;
+    const ctx = buildProcessingContext({
+      gearProfile,
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      profileAdjustments,
+      proDynamics,
+    });
+    toast.info('Rendering HQ waveform preview (export quality, ~45s)…');
+    startWaveformPreviewRender(buildAppProcessingSettings(ctx), { hq: true });
+  };
+
+  // Rebuild bypass path when Gain Match toggles during playback
+  useEffect(() => {
+    syncPlaybackGainOptions();
+    if (!playbackState.isPlaying || !realtimePlayerRef.current) return;
+    void realtimePlayerRef.current.toggleBypass(bypassMode);
+  }, [gainMatchEnabled]);
 
   return (
     <div className="min-h-screen bg-zinc-900 text-white">
@@ -1471,9 +1532,16 @@ export default function App() {
                 onJumpTo={handleJumpTo}
                 bypassMode={bypassMode}
                 onBypassToggle={handleBypassToggle}
+                gainMatchEnabled={gainMatchEnabled}
+                onGainMatchToggle={() => setGainMatchEnabled((v) => !v)}
+                bypassGainMatchDB={bypassGainMatchDB}
+                onHqWaveformPreview={expertMode ? handleHqWaveformPreview : undefined}
                 originalBuffer={originalBuffer}
                 processedBuffer={processedBuffer}
                 isWaveformRendering={isWaveformRendering}
+                showGainTrace={!bypassMode}
+                gainReductionDB={gainReductionDB}
+                outputTrimDB={proDynamics.outputTrimDB}
                 getPlaybackTime={getPlaybackTime}
               />
             </div>

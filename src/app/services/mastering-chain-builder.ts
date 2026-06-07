@@ -48,8 +48,10 @@ export interface MasteringChainConfig {
   dryBypass?: boolean;
   inputTrimDB?: number;
   inputLUFS?: number;
-  /** Post-chain output trim in dB */
+  /** Post-chain output trim in dB (processed path / delivery) */
   outputTrimDB?: number;
+  /** Boost applied on dry bypass when Gain Match is on (dB, does not affect export) */
+  bypassGainMatchDB?: number;
   /** Pre-created true-peak limiter worklet (replaces Type2 waveshaper) */
   truePeakLimiterNode?: AudioWorkletNode | null;
   /** Create and wire true-peak limiter worklet automatically (async build only) */
@@ -270,6 +272,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     truePeakLimiterNode = null,
     limiterCeilingOverride,
     outputTrimDB,
+    bypassGainMatchDB,
     sslGlue,
   } = config;
   
@@ -286,10 +289,8 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   const chainOutput = context.createGain();
   chainOutput.channelCountMode = 'max';
   chainOutput.channelInterpretation = 'speakers';
-  chainOutput.gain.value =
-    outputTrimDB != null && outputTrimDB !== 0
-      ? Math.pow(10, outputTrimDB / 20)
-      : 1.0;
+  // Output gain set below after dryBypass branch is known.
+  chainOutput.gain.value = 1.0;
   
   // Track current node in chain
   let currentNode: AudioNode = chainInput;
@@ -334,8 +335,17 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   // === DRY BYPASS (A/B original) ===
   if (dryBypass) {
     chainInput.connect(chainOutput);
+    const bypassOutDB =
+      bypassGainMatchDB != null && Number.isFinite(bypassGainMatchDB)
+        ? bypassGainMatchDB
+        : 0;
+    chainOutput.gain.value = Math.pow(10, bypassOutDB / 20);
     chainOutput.connect(destination);
-    console.log('✅ Mastering chain: DRY BYPASS (original audio)');
+    console.log(
+      bypassGainMatchDB != null
+        ? `✅ Mastering chain: DRY BYPASS + gain match (${bypassOutDB.toFixed(1)} dB)`
+        : '✅ Mastering chain: DRY BYPASS (original audio, unity gain)'
+    );
 
     return {
       input: chainInput,
@@ -353,6 +363,11 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
       },
     };
   }
+
+  chainOutput.gain.value =
+    outputTrimDB != null && outputTrimDB !== 0
+      ? Math.pow(10, outputTrimDB / 20)
+      : 1.0;
 
   // PREVIEW/EXPORT PARITY: No quality-dependent DSP behavior.
   // Only oversampling factor changes (handled inside each stage).

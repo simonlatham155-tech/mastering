@@ -1,9 +1,9 @@
 /**
  * PLAYBACK CONTROLS
  * =================
- * 
- * Simple transport controls for real-time playback.
- * Play, pause, seek, and time display.
+ *
+ * Transport + waveform: delivery preview (staged master) with optional
+ * gain-matched A/B and per-bar level-delta trace.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -20,10 +20,16 @@ interface PlaybackControlsProps {
   onJumpTo: (timeSeconds: number) => void;
   bypassMode?: boolean;
   onBypassToggle?: () => void;
+  gainMatchEnabled?: boolean;
+  onGainMatchToggle?: () => void;
+  bypassGainMatchDB?: number;
+  onHqWaveformPreview?: () => void;
   originalBuffer?: AudioBuffer | null;
   processedBuffer?: AudioBuffer | null;
   isWaveformRendering?: boolean;
-  /** Live audio clock for smooth waveform playhead (bypasses React poll lag) */
+  showGainTrace?: boolean;
+  gainReductionDB?: number;
+  outputTrimDB?: number;
   getPlaybackTime?: () => number;
 }
 
@@ -58,47 +64,53 @@ export function PlaybackControls({
   onJumpTo,
   bypassMode = false,
   onBypassToggle,
+  gainMatchEnabled = false,
+  onGainMatchToggle,
+  bypassGainMatchDB = 0,
+  onHqWaveformPreview,
   originalBuffer,
   processedBuffer,
   isWaveformRendering = false,
+  showGainTrace = false,
+  gainReductionDB = 0,
+  outputTrimDB = 0,
   getPlaybackTime,
 }: PlaybackControlsProps) {
   const { isPlaying, currentTime, duration } = playbackState;
-  
+
   const [isDragging, setIsDragging] = useState(false);
   const [dragTime, setDragTime] = useState(0);
-  
+
   const waveformCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  
-  // Full-track timeline always uses original; processed chunk overlays the start in processed mode
+
   const timelineBuffer = originalBuffer ?? processedBuffer ?? null;
-  
+
   const handleSliderChange = (value: number[]) => {
     setIsDragging(true);
     setDragTime(value[0]);
   };
-  
+
   const handleSliderCommit = (value: number[]) => {
     setIsDragging(false);
     onSeek(value[0]);
   };
-  
+
   const handleWaveformClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = waveformCanvasRef.current;
     if (!canvas || duration === 0) return;
-    
+
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const clickPosition = x / rect.width;
     const newTime = clickPosition * duration;
-    
+
     onSeek(newTime);
-    
+
     if (!isPlaying) {
       onPlay();
     }
   };
-  
+
   const displayTime = isDragging ? dragTime : currentTime;
   const interactionRef = useRef({ isPlaying, isDragging, dragTime });
   interactionRef.current = { isPlaying, isDragging, dragTime };
@@ -110,6 +122,9 @@ export function PlaybackControls({
     timelineBuffer,
     originalBuffer,
     processedBuffer,
+    showGainTrace,
+    gainReductionDB,
+    outputTrimDB,
   });
   playbackRef.current = {
     displayTime,
@@ -118,6 +133,9 @@ export function PlaybackControls({
     timelineBuffer,
     originalBuffer,
     processedBuffer,
+    showGainTrace,
+    gainReductionDB,
+    outputTrimDB,
   };
 
   const formatTime = (seconds: number): string => {
@@ -125,12 +143,12 @@ export function PlaybackControls({
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
-  
+
   const jumpMarkers: number[] = [];
   for (let t = 0; t < duration; t += 60) {
     jumpMarkers.push(t);
   }
-  
+
   useEffect(() => {
     const canvas = waveformCanvasRef.current;
     if (!canvas) return;
@@ -143,6 +161,9 @@ export function PlaybackControls({
         timelineBuffer: timeline,
         originalBuffer: original,
         processedBuffer: processed,
+        showGainTrace: drawTrace,
+        gainReductionDB: liveGr,
+        outputTrimDB: outTrim,
       } = playbackRef.current;
 
       const { isDragging: dragging, dragTime: drag } = interactionRef.current;
@@ -184,6 +205,7 @@ export function PlaybackControls({
 
         let amplitude = 0.02;
         let useProcessedShape = false;
+        let origAmp = 0.02;
         const inPreviewZone =
           !bypass && !!processed && !!original && timeStart < processedCover;
 
@@ -191,6 +213,11 @@ export function PlaybackControls({
           amplitude = barAmplitude(original, timeStart, timeEnd);
         } else if (original) {
           if (processed && timeStart < processedCover) {
+            origAmp = barAmplitude(
+              original,
+              timeStart,
+              Math.min(timeEnd, processedCover)
+            );
             amplitude = barAmplitude(processed, timeStart, Math.min(timeEnd, processedCover));
             useProcessedShape = true;
           } else {
@@ -206,11 +233,6 @@ export function PlaybackControls({
         const isPlayed = timeStart < t;
 
         if (inPreviewZone) {
-          const origAmp = barAmplitude(
-            original!,
-            timeStart,
-            Math.min(timeEnd, processedCover)
-          );
           const origHeight = Math.max(3, origAmp * (height / 2));
           const origY = height / 2 - origHeight / 2;
           ctx.fillStyle = isPlayed ? 'rgba(63, 63, 70, 0.85)' : 'rgba(39, 39, 42, 0.9)';
@@ -218,13 +240,38 @@ export function PlaybackControls({
         }
 
         if (isPlayed) {
-          // Playhead highlight follows playback across the full track
           ctx.fillStyle = bypass ? '#d97706' : '#0891b2';
         } else {
           ctx.fillStyle = bypass ? '#3f3f46' : useProcessedShape ? '#164e63' : '#27272a';
         }
 
         ctx.fillRect(x, y, barWidth, barHeight);
+
+        if (drawTrace && inPreviewZone && origAmp > 1e-6) {
+          const ratio = amplitude / origAmp;
+          const deltaDB = Math.max(-12, Math.min(12, 20 * Math.log10(ratio)));
+          const traceH = Math.abs(deltaDB) / 12 * (height * 0.22);
+          const traceY =
+            deltaDB >= 0 ? height / 2 - barHeight / 2 - traceH - 1 : height / 2 + barHeight / 2 + 1;
+          ctx.fillStyle =
+            deltaDB >= 0 ? 'rgba(52, 211, 153, 0.55)' : 'rgba(244, 114, 182, 0.5)';
+          ctx.fillRect(x, traceY, barWidth, Math.max(1, traceH));
+        }
+      }
+
+      if (drawTrace && !bypass && processedCover > 0) {
+        const playBar = Math.floor((t / dur) * numBars);
+        const px = playBar * totalBarWidth;
+        const grH = Math.min(height * 0.35, (liveGr / 12) * (height / 2));
+        if (grH > 1) {
+          ctx.fillStyle = 'rgba(250, 204, 21, 0.65)';
+          ctx.fillRect(px, 2, barWidth, grH);
+        }
+        const boostH = Math.min(height * 0.25, (Math.max(0, outTrim) / 6) * (height / 4));
+        if (boostH > 1) {
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.45)';
+          ctx.fillRect(px, height - boostH - 2, barWidth, boostH);
+        }
       }
 
       const playheadX = (t / dur) * width;
@@ -261,6 +308,9 @@ export function PlaybackControls({
     displayTime,
     duration,
     bypassMode,
+    showGainTrace,
+    gainReductionDB,
+    outputTrimDB,
     getPlaybackTime,
   ]);
 
@@ -279,7 +329,7 @@ export function PlaybackControls({
             <Play className="h-5 w-5" />
           )}
         </Button>
-        
+
         <div className="flex-1 relative">
           <canvas
             ref={waveformCanvasRef}
@@ -298,12 +348,12 @@ export function PlaybackControls({
             </div>
           )}
         </div>
-        
+
         <div className="text-sm font-mono text-white/60 w-24 text-right">
           {formatTime(displayTime)} / {formatTime(duration)}
         </div>
       </div>
-      
+
       {jumpMarkers.length > 1 && (
         <div className="flex gap-2 flex-wrap">
           <div className="text-xs text-white/40 flex items-center mr-2">
@@ -323,29 +373,65 @@ export function PlaybackControls({
           ))}
         </div>
       )}
-      
-      {onBypassToggle && (
-        <div className="flex items-center gap-2">
+
+      <div className="flex flex-wrap items-center gap-2">
+        {onBypassToggle && (
           <Button
             onClick={onBypassToggle}
-            variant={bypassMode ? "outline" : "default"}
+            variant={bypassMode ? 'outline' : 'default'}
             size="sm"
             className={
-              bypassMode 
-                ? "border-amber-500/50 text-amber-400 hover:bg-amber-500/10" 
-                : "bg-cyan-600 hover:bg-cyan-700"
+              bypassMode
+                ? 'border-amber-500/50 text-amber-400 hover:bg-amber-500/10'
+                : 'bg-cyan-600 hover:bg-cyan-700'
             }
           >
             {bypassMode ? '🎵 Original' : '✨ Processed'}
           </Button>
-          {!bypassMode && processedBuffer && processedBuffer.duration < duration && (
-            <span className="text-[9px] font-mono text-zinc-500">
-              Cyan = staged master · zinc ghost = original (first {Math.round(processedBuffer.duration)}s)
-            </span>
-          )}
-        </div>
-      )}
-      
+        )}
+
+        {onGainMatchToggle && (
+          <Button
+            onClick={onGainMatchToggle}
+            variant={gainMatchEnabled ? 'default' : 'outline'}
+            size="sm"
+            className={
+              gainMatchEnabled
+                ? 'bg-violet-700 hover:bg-violet-600'
+                : 'border-violet-500/40 text-violet-300'
+            }
+            title="Level-match original to processed for fair A/B (does not affect export)"
+          >
+            {gainMatchEnabled ? 'Gain Match on' : 'Gain Match'}
+          </Button>
+        )}
+
+        {onHqWaveformPreview && (
+          <Button
+            onClick={onHqWaveformPreview}
+            variant="outline"
+            size="sm"
+            disabled={isWaveformRendering}
+            className="border-emerald-500/40 text-emerald-300 text-xs"
+          >
+            HQ preview render
+          </Button>
+        )}
+
+        {!bypassMode && processedBuffer && processedBuffer.duration < duration && (
+          <span className="text-[9px] font-mono text-zinc-500">
+            Cyan = staged master · zinc = original · green/pink ticks = level delta (first{' '}
+            {Math.round(processedBuffer.duration)}s)
+          </span>
+        )}
+
+        {gainMatchEnabled && bypassMode && (
+          <span className="text-[9px] font-mono text-violet-400">
+            Bypass +{bypassGainMatchDB.toFixed(1)} dB to match processed
+          </span>
+        )}
+      </div>
+
       <Slider
         value={[displayTime]}
         max={duration || 100}

@@ -14,6 +14,8 @@ export interface WaveformPreviewStagingOptions {
   ceilingDBTP: number;
   autoStage?: boolean;
   maxSeconds?: number;
+  quality?: 'preview' | 'export';
+  preserveMultiband?: boolean;
 }
 
 export interface WaveformPreviewStagingResult {
@@ -41,6 +43,8 @@ export async function renderWaveformPreviewWithAutoStaging(
     ceilingDBTP,
     autoStage = true,
     maxSeconds = WAVEFORM_PREVIEW_SECONDS,
+    quality = 'preview',
+    preserveMultiband = false,
   } = options;
 
   const result = await runOutputTrimStagingLoop({
@@ -49,7 +53,7 @@ export async function renderWaveformPreviewWithAutoStaging(
     ceilingDBTP,
     autoStage,
     maxIterations: WAVEFORM_PREVIEW_MAX_STAGING_ITERATIONS,
-    logPrefix: 'Waveform preview stage',
+    logPrefix: quality === 'export' ? 'HQ waveform stage' : 'Waveform preview stage',
     renderWithTrim: (outputTrimDB) =>
       audioProcessor.renderWaveformPreview(
         settings,
@@ -57,7 +61,8 @@ export async function renderWaveformPreviewWithAutoStaging(
         maxSeconds,
         limiterCeilingOverride,
         outputTrimDB,
-        sslGlue
+        sslGlue,
+        { quality, preserveMultiband }
       ),
   });
 

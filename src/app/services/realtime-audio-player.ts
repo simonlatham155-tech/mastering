@@ -79,6 +79,9 @@ export class RealtimeAudioPlayer {
   private sslOutputBuffer: Float32Array | null = null;
   private currentLimiterCeilingOverride: number | undefined = undefined;
   private currentSslGlue: 'auto' | 'gentle' | 'firm' = 'auto';
+  private currentOutputTrimDB = 0;
+  /** When set, dry bypass boosts original to processed level (Gain Match). */
+  private currentBypassGainMatchDB: number | null = null;
   
   constructor() {
     // AudioContext will be created on first play (user interaction required)
@@ -134,6 +137,15 @@ export class RealtimeAudioPlayer {
   setHQMode(enabled: boolean): void {
     this.hqModeEnabled = enabled;
     this.limiterMeter.setParameters({ hqMode: enabled });
+  }
+
+  /** Delivery output trim + optional bypass gain match (evaluation A/B). */
+  setPlaybackGainOptions(
+    outputTrimDB: number,
+    bypassGainMatchDB: number | null
+  ): void {
+    this.currentOutputTrimDB = outputTrimDB;
+    this.currentBypassGainMatchDB = bypassGainMatchDB;
   }
 
   private syncMeterParams(plan: ProcessingPlan, limiterCeilingOverride?: number): void {
@@ -230,6 +242,11 @@ export class RealtimeAudioPlayer {
       inputTrimDB,
       inputLUFS: this.currentInputLUFS,
       limiterCeilingOverride,
+      outputTrimDB: dryBypass ? undefined : this.currentOutputTrimDB,
+      bypassGainMatchDB:
+        dryBypass && this.currentBypassGainMatchDB != null
+          ? this.currentBypassGainMatchDB
+          : undefined,
       sslGlue,
     });
 
