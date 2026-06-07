@@ -1,4 +1,7 @@
 import { Sliders } from 'lucide-react';
+import { RangeSliderWithSuggested } from './range-slider-with-suggested';
+import { getSuggestedProfileAdjustments } from '../utils/suggested-settings';
+import type { GearProfileId } from './gear-selector';
 
 export interface ProfileAdjustments {
   lowShelfBoost: number;      // -6 to +6 dB
@@ -10,9 +13,21 @@ export interface ProfileAdjustments {
 interface ProfileAdjustmentsProps {
   adjustments: ProfileAdjustments;
   onChange: (adjustments: ProfileAdjustments) => void;
+  gearProfile: GearProfileId;
 }
 
-export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjustmentsProps) {
+function eqTrackGradient(value: number, color: string): string {
+  const pct = ((value + 6) / 12) * 100;
+  return `linear-gradient(to right, #0a0a0a 0%, ${color} ${pct}%, #27272a ${pct}%, #27272a 100%)`;
+}
+
+export function ProfileAdjustmentsPanel({
+  adjustments,
+  onChange,
+  gearProfile,
+}: ProfileAdjustmentsProps) {
+  const suggested = getSuggestedProfileAdjustments(gearProfile);
+
   const updateValue = (key: keyof ProfileAdjustments, value: number) => {
     onChange({ ...adjustments, [key]: value });
   };
@@ -26,7 +41,6 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
         boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.5)'
       }}
     >
-      {/* Header */}
       <div className="flex items-center gap-2 mb-4">
         <Sliders className="w-4 h-4 text-amber-500" />
         <div className="text-sm font-mono text-zinc-500 uppercase tracking-[0.2em]">
@@ -35,13 +49,11 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
       </div>
 
       <div className="space-y-4">
-        {/* EQ SHAPING */}
         <div>
           <div className="text-xs font-mono text-amber-500/60 uppercase tracking-wider mb-2">
             EQ Shaping
           </div>
           <div className="space-y-3">
-            {/* Low Shelf */}
             <div>
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-xs font-mono text-zinc-600">Low Shelf (80Hz) ±</span>
@@ -49,25 +61,22 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
                   {adjustments.lowShelfBoost > 0 ? '+' : ''}{adjustments.lowShelfBoost.toFixed(1)}dB
                 </span>
               </div>
-              <input
-                type="range"
-                min="-6"
-                max="6"
-                step="0.5"
+              <RangeSliderWithSuggested
+                min={-6}
+                max={6}
+                step={0.5}
                 value={adjustments.lowShelfBoost}
-                onChange={(e) => updateValue('lowShelfBoost', parseFloat(e.target.value))}
-                className="w-full h-2 rounded-full appearance-none cursor-pointer"
-                style={{
-                  background: `linear-gradient(to right, 
-                    #0a0a0a 0%, 
-                    #0ea5e9 ${((adjustments.lowShelfBoost + 6) / 12) * 100}%, 
-                    #27272a ${((adjustments.lowShelfBoost + 6) / 12) * 100}%, 
-                    #27272a 100%)`
-                }}
+                suggestedValue={suggested?.lowShelfBoost}
+                suggestedLabel={
+                  suggested != null
+                    ? `${suggested.lowShelfBoost > 0 ? '+' : ''}${suggested.lowShelfBoost.toFixed(1)} dB`
+                    : undefined
+                }
+                style={{ background: eqTrackGradient(adjustments.lowShelfBoost, '#0ea5e9') }}
+                onChange={(v) => updateValue('lowShelfBoost', v)}
               />
             </div>
 
-            {/* Mid Range */}
             <div>
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-xs font-mono text-zinc-600">Mud Cut (250Hz) ±</span>
@@ -75,25 +84,22 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
                   {adjustments.midRangeAdjust > 0 ? '+' : ''}{adjustments.midRangeAdjust.toFixed(1)}dB
                 </span>
               </div>
-              <input
-                type="range"
-                min="-6"
-                max="6"
-                step="0.5"
+              <RangeSliderWithSuggested
+                min={-6}
+                max={6}
+                step={0.5}
                 value={adjustments.midRangeAdjust}
-                onChange={(e) => updateValue('midRangeAdjust', parseFloat(e.target.value))}
-                className="w-full h-2 rounded-full appearance-none cursor-pointer"
-                style={{
-                  background: `linear-gradient(to right, 
-                    #0a0a0a 0%, 
-                    #10b981 ${((adjustments.midRangeAdjust + 6) / 12) * 100}%, 
-                    #27272a ${((adjustments.midRangeAdjust + 6) / 12) * 100}%, 
-                    #27272a 100%)`
-                }}
+                suggestedValue={suggested?.midRangeAdjust}
+                suggestedLabel={
+                  suggested != null
+                    ? `${suggested.midRangeAdjust > 0 ? '+' : ''}${suggested.midRangeAdjust.toFixed(1)} dB`
+                    : undefined
+                }
+                style={{ background: eqTrackGradient(adjustments.midRangeAdjust, '#10b981') }}
+                onChange={(v) => updateValue('midRangeAdjust', v)}
               />
             </div>
 
-            {/* High Shelf */}
             <div>
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-xs font-mono text-zinc-600">High Shelf (12kHz) ±</span>
@@ -101,27 +107,24 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
                   {adjustments.highShelfBoost > 0 ? '+' : ''}{adjustments.highShelfBoost.toFixed(1)}dB
                 </span>
               </div>
-              <input
-                type="range"
-                min="-6"
-                max="6"
-                step="0.5"
+              <RangeSliderWithSuggested
+                min={-6}
+                max={6}
+                step={0.5}
                 value={adjustments.highShelfBoost}
-                onChange={(e) => updateValue('highShelfBoost', parseFloat(e.target.value))}
-                className="w-full h-2 rounded-full appearance-none cursor-pointer"
-                style={{
-                  background: `linear-gradient(to right, 
-                    #0a0a0a 0%, 
-                    #3b82f6 ${((adjustments.highShelfBoost + 6) / 12) * 100}%, 
-                    #27272a ${((adjustments.highShelfBoost + 6) / 12) * 100}%, 
-                    #27272a 100%)`
-                }}
+                suggestedValue={suggested?.highShelfBoost}
+                suggestedLabel={
+                  suggested != null
+                    ? `${suggested.highShelfBoost > 0 ? '+' : ''}${suggested.highShelfBoost.toFixed(1)} dB`
+                    : undefined
+                }
+                style={{ background: eqTrackGradient(adjustments.highShelfBoost, '#3b82f6') }}
+                onChange={(v) => updateValue('highShelfBoost', v)}
               />
             </div>
           </div>
         </div>
 
-        {/* STEREO WIDTH */}
         <div>
           <div className="text-xs font-mono text-amber-500/60 uppercase tracking-wider mb-2">
             Stereo Width
@@ -131,29 +134,26 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
               <span className="text-sm font-mono text-purple-400">{adjustments.stereoWidth}%</span>
               <span className="text-xs font-mono text-zinc-600">0-100%</span>
             </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="5"
+            <RangeSliderWithSuggested
+              min={0}
+              max={100}
+              step={5}
               value={adjustments.stereoWidth}
-              onChange={(e) => updateValue('stereoWidth', parseFloat(e.target.value))}
-              className="w-full h-2 rounded-full appearance-none cursor-pointer"
+              suggestedValue={suggested?.stereoWidth}
+              suggestedLabel={suggested != null ? `${suggested.stereoWidth}%` : undefined}
+              accentClassName="accent-purple-500"
               style={{
-                background: `linear-gradient(to right, 
-                  #0a0a0a 0%, 
-                  #a855f7 ${adjustments.stereoWidth}%, 
-                  #27272a ${adjustments.stereoWidth}%, 
-                  #27272a 100%)`
+                background: `linear-gradient(to right, #0a0a0a 0%, #a855f7 ${adjustments.stereoWidth}%, #27272a ${adjustments.stereoWidth}%, #27272a 100%)`,
               }}
+              onChange={(v) => updateValue('stereoWidth', v)}
             />
           </div>
         </div>
       </div>
 
       <p className="text-[10px] font-mono text-zinc-600 mt-3 leading-relaxed">
-        Harmonic color is controlled by the <span className="text-amber-400">THD knob</span> on the main rack.
-        EQ and width update live during playback.
+        <span className="inline-block w-0.5 h-2.5 bg-cyan-400 rounded-full align-middle mr-1.5" />
+        Cyan tick = genre default · Harmonic color is on the <span className="text-amber-400">THD knob</span>
       </p>
 
       <style>{`

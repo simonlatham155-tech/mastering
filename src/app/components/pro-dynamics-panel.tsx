@@ -1,4 +1,10 @@
 import { Gauge, SlidersHorizontal } from 'lucide-react';
+import {
+  RangeSliderWithSuggested,
+  SuggestedButtonGroup,
+} from './range-slider-with-suggested';
+import { getSuggestedProDynamics } from '../utils/suggested-settings';
+import type { GearProfileId } from './gear-selector';
 
 export type SSLGlueMode = 'auto' | 'gentle' | 'firm';
 
@@ -26,6 +32,7 @@ export const DEFAULT_PRO_DYNAMICS: ProDynamicsSettings = {
 interface ProDynamicsPanelProps {
   settings: ProDynamicsSettings;
   onChange: (settings: ProDynamicsSettings) => void;
+  gearProfile: GearProfileId;
   autoInputTrimDB?: number;
   presetCeilingDBTP: number;
   outputMomentaryLUFS: number | null;
@@ -44,14 +51,17 @@ function update<K extends keyof ProDynamicsSettings>(
 export function ProDynamicsPanel({
   settings,
   onChange,
+  gearProfile,
   autoInputTrimDB,
   presetCeilingDBTP,
   outputMomentaryLUFS,
   targetLUFS,
   isPlaying,
 }: ProDynamicsPanelProps) {
+  const suggested = getSuggestedProDynamics(gearProfile, presetCeilingDBTP, autoInputTrimDB);
   const effectiveInputTrim = settings.inputTrimDB ?? autoInputTrimDB ?? 0;
   const effectiveCeiling = settings.limiterCeilingDBTP ?? presetCeilingDBTP;
+  const effectiveForceMonoBass = settings.forceMonoBass ?? suggested.forceMonoBass;
 
   return (
     <div
@@ -98,14 +108,15 @@ export function ProDynamicsPanel({
               )}
             </span>
           </div>
-          <input
-            type="range"
-            min="-12"
-            max="0"
-            step="0.5"
+          <RangeSliderWithSuggested
+            min={-12}
+            max={0}
+            step={0.5}
             value={effectiveInputTrim}
-            onChange={(e) => onChange(update(settings, 'inputTrimDB', parseFloat(e.target.value)))}
-            className="w-full h-2 rounded-full appearance-none cursor-pointer accent-amber-500"
+            suggestedValue={suggested.inputTrimDB}
+            suggestedLabel={`${suggested.inputTrimDB.toFixed(1)} dB`}
+            accentClassName="accent-amber-500"
+            onChange={(v) => onChange(update(settings, 'inputTrimDB', v))}
           />
           {settings.inputTrimDB != null && (
             <button
@@ -126,14 +137,15 @@ export function ProDynamicsPanel({
               {settings.outputTrimDB > 0 ? '+' : ''}{settings.outputTrimDB.toFixed(1)} dB
             </span>
           </div>
-          <input
-            type="range"
-            min="-6"
-            max="6"
-            step="0.5"
+          <RangeSliderWithSuggested
+            min={-6}
+            max={6}
+            step={0.5}
             value={settings.outputTrimDB}
-            onChange={(e) => onChange(update(settings, 'outputTrimDB', parseFloat(e.target.value)))}
-            className="w-full h-2 rounded-full appearance-none cursor-pointer accent-cyan-500"
+            suggestedValue={suggested.outputTrimDB}
+            suggestedLabel="0 dB"
+            accentClassName="accent-cyan-500"
+            onChange={(v) => onChange(update(settings, 'outputTrimDB', v))}
           />
         </div>
 
@@ -143,16 +155,15 @@ export function ProDynamicsPanel({
             <span className="text-xs font-mono text-zinc-600">Limiter ceiling</span>
             <span className="text-sm font-mono text-red-400">{effectiveCeiling.toFixed(1)} dBTP</span>
           </div>
-          <input
-            type="range"
-            min="-3"
-            max="-0.1"
-            step="0.1"
+          <RangeSliderWithSuggested
+            min={-3}
+            max={-0.1}
+            step={0.1}
             value={effectiveCeiling}
-            onChange={(e) =>
-              onChange(update(settings, 'limiterCeilingDBTP', parseFloat(e.target.value)))
-            }
-            className="w-full h-2 rounded-full appearance-none cursor-pointer accent-red-500"
+            suggestedValue={suggested.limiterCeilingDBTP}
+            suggestedLabel={`${suggested.limiterCeilingDBTP.toFixed(1)} dBTP`}
+            accentClassName="accent-red-500"
+            onChange={(v) => onChange(update(settings, 'limiterCeilingDBTP', v))}
           />
           {settings.limiterCeilingDBTP != null && (
             <button
@@ -168,27 +179,17 @@ export function ProDynamicsPanel({
         {/* SSL glue macro */}
         <div>
           <div className="text-xs font-mono text-zinc-600 mb-2">SSL bus glue</div>
-          <div className="flex gap-2">
-            {(['auto', 'gentle', 'firm'] as SSLGlueMode[]).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => onChange(update(settings, 'sslGlue', mode))}
-                className={`flex-1 py-2 rounded border text-[10px] font-mono uppercase tracking-wider transition-colors ${
-                  settings.sslGlue === mode
-                    ? 'border-purple-500/60 bg-purple-950/40 text-purple-300'
-                    : 'border-zinc-800 bg-zinc-950/50 text-zinc-500 hover:border-zinc-600'
-                }`}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
+          <SuggestedButtonGroup
+            options={['auto', 'gentle', 'firm'] as SSLGlueMode[]}
+            value={settings.sslGlue}
+            suggestedValue={suggested.sslGlue}
+            onChange={(mode) => onChange(update(settings, 'sslGlue', mode))}
+          />
         </div>
 
         {/* Mono bass */}
         <div className="md:col-span-2 flex flex-wrap items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className="relative flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
               checked={settings.forceMonoBass === true}
@@ -200,22 +201,31 @@ export function ProDynamicsPanel({
               className="rounded border-zinc-700"
             />
             <span className="text-xs font-mono text-zinc-400">Force mono bass</span>
-          </label>
-          {settings.forceMonoBass && (
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono text-zinc-600">HPF @</span>
-              <input
-                type="range"
-                min="60"
-                max="180"
-                step="5"
-                value={settings.monoBassHz}
-                onChange={(e) =>
-                  onChange(update(settings, 'monoBassHz', parseInt(e.target.value, 10)))
-                }
-                className="w-32 h-2 accent-purple-500"
+            {settings.forceMonoBass == null && (
+              <span
+                className="inline-block w-1 h-3 rounded-full bg-cyan-400"
+                style={{ boxShadow: '0 0 4px rgba(34, 211, 238, 0.8)' }}
+                title={`Genre suggests: ${suggested.forceMonoBass ? 'on' : 'off'}`}
+                aria-hidden
               />
-              <span className="text-xs font-mono text-purple-400">{settings.monoBassHz} Hz</span>
+            )}
+          </label>
+          {effectiveForceMonoBass && (
+            <div className="flex items-center gap-2 flex-1 min-w-[200px] max-w-xs">
+              <span className="text-[10px] font-mono text-zinc-600 shrink-0">HPF @</span>
+              <RangeSliderWithSuggested
+                min={60}
+                max={180}
+                step={5}
+                value={settings.monoBassHz}
+                suggestedValue={suggested.monoBassHz}
+                suggestedLabel={`${suggested.monoBassHz} Hz`}
+                accentClassName="accent-purple-500"
+                onChange={(v) => onChange(update(settings, 'monoBassHz', v))}
+              />
+              <span className="text-xs font-mono text-purple-400 shrink-0 w-12">
+                {settings.monoBassHz} Hz
+              </span>
             </div>
           )}
           {settings.forceMonoBass != null && (
@@ -224,11 +234,16 @@ export function ProDynamicsPanel({
               onClick={() => onChange(update(settings, 'forceMonoBass', null))}
               className="text-[10px] font-mono text-zinc-500 hover:text-cyan-400"
             >
-              Use genre default
+              Use genre default ({suggested.forceMonoBass ? 'on' : 'off'})
             </button>
           )}
         </div>
       </div>
+
+      <p className="text-[10px] font-mono text-zinc-600 mt-4 leading-relaxed">
+        <span className="inline-block w-0.5 h-2.5 bg-cyan-400 rounded-full align-middle mr-1.5" />
+        Cyan tick = suggested for current genre
+      </p>
     </div>
   );
 }

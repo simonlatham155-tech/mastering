@@ -1069,6 +1069,7 @@ export default function App() {
               <ProDynamicsPanel
                 settings={proDynamics}
                 onChange={setProDynamics}
+                gearProfile={gearProfile}
                 autoInputTrimDB={autoInputTrimDB}
                 presetCeilingDBTP={getExportPreset(exportPreset).ceiling}
                 outputMomentaryLUFS={outputMomentaryLUFS}
@@ -1108,6 +1109,7 @@ export default function App() {
               <ProfileAdjustmentsPanel
                 adjustments={profileAdjustments}
                 onChange={setProfileAdjustments}
+                gearProfile={gearProfile}
               />
             </div>
 
