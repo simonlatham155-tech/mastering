@@ -683,11 +683,11 @@ export default function App() {
 
       if (report.onTarget && report.peakOk) {
         toast.success(
-          `${presetId.toUpperCase()} master exported — ${lufsStr}, peak ${report.samplePeakDBFS.toFixed(1)} dBFS (on target)${stageNote}`
+          `${presetId.toUpperCase()} master exported — ${lufsStr}, true peak ${report.truePeakDBTP.toFixed(1)} dBTP (on target)${stageNote}`
         );
       } else if (!report.peakOk) {
         toast.warning(
-          `${presetId.toUpperCase()} exported — ${lufsStr}. Peak ${report.samplePeakDBFS.toFixed(1)} dBFS exceeds ceiling ${preset.ceiling} dBTP.${stageNote}`
+          `${presetId.toUpperCase()} exported — ${lufsStr}. True peak ${report.truePeakDBTP.toFixed(1)} dBTP exceeds ceiling ${preset.ceiling} dBTP.${stageNote}`
         );
       } else {
         toast.success(
@@ -1397,7 +1397,12 @@ export default function App() {
                 {lastExportReport.lufsDelta >= 0 ? '+' : ''}
                 {lastExportReport.lufsDelta.toFixed(1)} LU)
                 {' · '}
-                peak {lastExportReport.samplePeakDBFS.toFixed(1)} dBFS
+                true peak {lastExportReport.truePeakDBTP.toFixed(1)} dBTP
+                {lastExportReport.ispDifference > 0.2 && (
+                  <span className="text-purple-400">
+                    {' '}(ISP +{lastExportReport.ispDifference.toFixed(1)} dB)
+                  </span>
+                )}
                 {lastExportStaging?.iterations != null && lastExportStaging.iterations > 1 && (
                   <>
                     {' · '}

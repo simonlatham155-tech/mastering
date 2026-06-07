@@ -1,4 +1,12 @@
 import type { LufsMeterData } from '../services/lufs-meter-manager';
+import {
+  measureBufferTruePeak,
+  measureSamplePeakDBFS,
+  type TruePeakMeasurement,
+} from './measure-buffer-true-peak';
+
+export { measureSamplePeakDBFS, measureTruePeakLinearDBTP, measureBufferTruePeak };
+export type { TruePeakMeasurement };
 
 const EMPTY_LUFS: LufsMeterData = {
   momentary: -Infinity,
@@ -75,24 +83,15 @@ export async function measureBufferLoudness(buffer: AudioBuffer): Promise<LufsMe
   return latest;
 }
 
-/** Sample-peak dBFS on buffer (fast export sanity check). */
-export function measureSamplePeakDBFS(buffer: AudioBuffer): number {
-  let peak = 0;
-  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-    const data = buffer.getChannelData(ch);
-    for (let i = 0; i < data.length; i++) {
-      peak = Math.max(peak, Math.abs(data[i]));
-    }
-  }
-  if (peak <= 1e-12) return -60;
-  return 20 * Math.log10(peak);
-}
-
 export interface ExportQualityReport {
   integratedLUFS: number;
   momentaryLUFS: number;
   shortTermLUFS: number;
   samplePeakDBFS: number;
+  truePeakDBTP: number;
+  digitalPeakDB: number;
+  ispDifference: number;
+  truePeakSource: 'worklet' | 'linear';
   targetLUFS: number;
   ceilingDBTP: number;
   lufsDelta: number;
@@ -102,7 +101,7 @@ export interface ExportQualityReport {
 
 export function buildExportQualityReport(
   lufs: LufsMeterData,
-  samplePeakDBFS: number,
+  peaks: TruePeakMeasurement,
   targetLUFS: number,
   ceilingDBTP: number,
   toleranceLU = 0.5
@@ -111,17 +110,24 @@ export function buildExportQualityReport(
   const lufsDelta =
     integratedLUFS === -Infinity ? NaN : integratedLUFS - targetLUFS;
 
+  const truePeakDBTP = peaks.truePeakDBTP;
+  const digitalPeakDB = peaks.digitalPeakDB;
+
   return {
     integratedLUFS,
     momentaryLUFS: lufs.momentary,
     shortTermLUFS: lufs.shortTerm,
-    samplePeakDBFS,
+    samplePeakDBFS: digitalPeakDB,
+    truePeakDBTP,
+    digitalPeakDB,
+    ispDifference: peaks.ispDifference,
+    truePeakSource: peaks.source,
     targetLUFS,
     ceilingDBTP,
     lufsDelta,
     onTarget:
       integratedLUFS !== -Infinity &&
       Math.abs(integratedLUFS - targetLUFS) <= toleranceLU,
-    peakOk: samplePeakDBFS <= ceilingDBTP + 0.05,
+    peakOk: truePeakDBTP <= ceilingDBTP + 0.05,
   };
 }

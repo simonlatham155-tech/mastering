@@ -10,9 +10,9 @@ import {
 import {
   buildExportQualityReport,
   measureBufferLoudness,
-  measureSamplePeakDBFS,
   type ExportQualityReport,
 } from '../utils/measure-buffer-loudness';
+import { measureBufferTruePeak } from '../utils/measure-buffer-true-peak';
 
 export interface AutoStageExportOptions {
   limiterCeilingOverride?: number;
@@ -71,10 +71,10 @@ export async function renderExportWithAutoStaging(
     });
 
     const lufs = await measureBufferLoudness(buffer);
-    const samplePeak = measureSamplePeakDBFS(buffer);
+    const peaks = await measureBufferTruePeak(buffer, ceilingDBTP);
     report = buildExportQualityReport(
       lufs,
-      samplePeak,
+      peaks,
       targetLUFS,
       ceilingDBTP,
       toleranceLU
@@ -88,7 +88,7 @@ export async function renderExportWithAutoStaging(
       integratedLUFS: report.integratedLUFS,
       targetLUFS,
       currentOutputTrimDB: outputTrimDB,
-      peakDB: samplePeak,
+      peakDB: report.truePeakDBTP,
       ceilingDBTP,
       toleranceLU,
     });
