@@ -26,7 +26,11 @@
  * (in-chain FIR worklet caused bass buzz/rattle in realtime blocks)
  */
 
-import { buildMasteringChain, type MasteringChain } from './mastering-chain-builder';
+import {
+  buildMasteringChain,
+  buildMasteringChainAsync,
+  type MasteringChain,
+} from './mastering-chain-builder';
 import type { ProcessingSettings } from './audio-processor';
 import type { ProcessingPlan } from '../data/preset-resolution';
 import { OversamplingLimiterManager, type LimiterMeterData } from './oversampling-limiter-manager';
@@ -84,6 +88,7 @@ export class RealtimeAudioPlayer {
   private sslOutputBuffer: Float32Array | null = null;
   private currentLimiterCeilingOverride: number | undefined = undefined;
   private currentSslGlue: 'auto' | 'gentle' | 'firm' = 'auto';
+  private currentHqMode = true;
   private currentOutputTrimDB = 0;
   /** When set, dry bypass boosts original to processed level (Gain Match). */
   private currentBypassGainMatchDB: number | null = null;
@@ -167,8 +172,6 @@ export class RealtimeAudioPlayer {
     this.hqModeEnabled = enabled;
     this.limiterMeter.setParameters({ hqMode: enabled });
   }
-
-  /** Delivery output trim + optional bypass gain match (evaluation A/B). */
   setPlaybackGainOptions(
     outputTrimDB: number,
     bypassGainMatchDB: number | null
@@ -263,12 +266,11 @@ export class RealtimeAudioPlayer {
     this.lufsMeter.reset();
     this.syncMeterParams(plan, limiterCeilingOverride);
 
-    const chain = buildMasteringChain({
+    const chainConfig = {
       context: this.audioContext,
       destination: lufsNode,
       params: plan,
       settings,
-      quality: 'preview',
       useMinimalMaster,
       dryBypass,
       inputTrimDB,
@@ -280,7 +282,25 @@ export class RealtimeAudioPlayer {
           ? this.currentBypassGainMatchDB
           : undefined,
       sslGlue,
-    });
+    };
+
+    let chain: MasteringChain;
+    if (this.hqModeEnabled && !dryBypass) {
+      try {
+        chain = await buildMasteringChainAsync({
+          ...chainConfig,
+          quality: 'export',
+          useFaustLimiter: true,
+          useTruePeakWorklet: false,
+        });
+        console.log('✅ HQ live chain: Faust true-peak limiter (export parity)');
+      } catch (err) {
+        console.warn('HQ Faust limiter unavailable — preview ceiling fallback', err);
+        chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
+      }
+    } else {
+      chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
+    }
 
     this.wireLiveMeters(chain);
     return chain;
@@ -333,7 +353,8 @@ export class RealtimeAudioPlayer {
       this.currentUseMinimalMaster !== useMinimalMaster ||
       this.currentInputTrimDB !== inputTrimDB ||
       this.currentLimiterCeilingOverride !== limiterCeilingOverride ||
-      this.currentSslGlue !== (sslGlue ?? 'auto')
+      this.currentSslGlue !== (sslGlue ?? 'auto') ||
+      this.currentHqMode !== this.hqModeEnabled
     );
     
     this.currentSettings = settings;
@@ -343,6 +364,7 @@ export class RealtimeAudioPlayer {
     this.currentInputTrimDB = inputTrimDB;
     this.currentLimiterCeilingOverride = limiterCeilingOverride;
     this.currentSslGlue = sslGlue ?? 'auto';
+    this.currentHqMode = this.hqModeEnabled;
     
     // Build or rebuild mastering chain
     if (!this.masteringChain || settingsChanged) {

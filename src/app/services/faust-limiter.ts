@@ -20,6 +20,11 @@ function faustLimiterBaseUrl(): string {
   return `${base}faust/compiled/limiter/`;
 }
 
+/** Warm WASM factory cache on app load (speeds first HQ play/export). */
+export function preloadFaustLimiterFactory(): Promise<LooseFaustDspFactory> {
+  return loadFaustLimiterFactory();
+}
+
 export async function loadFaustLimiterFactory(): Promise<LooseFaustDspFactory> {
   if (!factoryPromise) {
     factoryPromise = (async () => {

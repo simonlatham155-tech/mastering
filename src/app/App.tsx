@@ -40,7 +40,9 @@ import { buildInputAnalysisFromProcessor, AudioAnalysisResult } from './utils/au
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
-import { buildExportQualityReport, preloadLufsMeterWorkletScript } from './utils/measure-buffer-loudness';
+import { buildExportQualityReport } from './utils/measure-buffer-loudness';
+import { preloadLufsMeterWorkletScript } from './services/lufs-meter-worklet';
+import { preloadFaustLimiterFactory } from './services/faust-limiter';
 import {
   computeAutoInputTrimDB,
   masterExportFilename,
@@ -103,6 +105,7 @@ function syncProfileAdjustmentsForGear(
 export default function App() {
   useEffect(() => {
     preloadLufsMeterWorkletScript();
+    void preloadFaustLimiterFactory().catch(() => undefined);
   }, []);
 
   const [circuitDrive, setCircuitDrive] = useState(50);
