@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { CircuitDriveKnob } from './components/circuit-drive-knob';
 import { LogicToggle } from './components/logic-toggle';
 import { GearProfileId, gearProfiles } from './components/gear-selector';
@@ -708,6 +708,17 @@ export default function App() {
   };
   
   // Real-time playback handlers
+  const syncPlaybackState = useCallback(() => {
+    if (realtimePlayerRef.current) {
+      setPlaybackState(realtimePlayerRef.current.getState());
+    }
+  }, []);
+
+  const getPlaybackTime = useCallback(
+    () => realtimePlayerRef.current?.getState().currentTime ?? 0,
+    []
+  );
+
   const handlePlay = async () => {
     if (!realtimePlayerRef.current || !analysis) return;
     
@@ -734,19 +745,22 @@ export default function App() {
     );
     applyProfileAdjustmentsToPlayer(realtimePlayerRef.current, gearProfile, profileAdjustments);
     applyProDynamicsToPlayer(realtimePlayerRef.current, proDynamics, autoInputTrimDB);
+    syncPlaybackState();
   };
   
   const handlePause = () => {
     if (!realtimePlayerRef.current) return;
     realtimePlayerRef.current.pause();
+    syncPlaybackState();
   };
   
   const handleSeek = (timeSeconds: number) => {
     if (!realtimePlayerRef.current) return;
+    const wasPlaying = playbackState.isPlaying;
     realtimePlayerRef.current.seek(timeSeconds);
-    // If we were playing, resume from new position
-    if (playbackState.isPlaying && analysis) {
-      handlePlay();
+    syncPlaybackState();
+    if (wasPlaying && analysis) {
+      void handlePlay();
     }
   };
   
@@ -1379,7 +1393,7 @@ export default function App() {
                 originalBuffer={originalBuffer}
                 processedBuffer={processedBuffer}
                 isWaveformRendering={isWaveformRendering}
-                getPlaybackTime={() => realtimePlayerRef.current?.getState().currentTime ?? 0}
+                getPlaybackTime={getPlaybackTime}
               />
             </div>
             
