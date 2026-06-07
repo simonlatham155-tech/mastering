@@ -3624,9 +3624,9 @@ export class AudioProcessor {
       console.log(`✅ Clean headroom: ${(-20*Math.log10(maxPeak)).toFixed(2)} dB below 0dBFS`);
     }
     
-    // === STEP 2: WRITE 24-BIT WAV ===
-    console.log('📦 Encoding 24-bit PCM WAV');
-    return encodeWavBlob(buffer, { bitDepth: 24 });
+    // === STEP 2: WRITE 16-BIT WAV (delivery master) ===
+    console.log('📦 Encoding 16-bit PCM WAV');
+    return encodeWavBlob(buffer, { bitDepth: 16 });
   }
 
   /**

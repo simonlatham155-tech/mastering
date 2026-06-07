@@ -164,7 +164,7 @@ export function AudioInputSection({
               Optimal Input
             </div>
             <div className="text-[10px] font-mono text-zinc-500">
-              -8dB LUFS • 44.1-192kHz • 24-bit
+              -8dB LUFS • 44.1–192 kHz • import up to 24-bit
             </div>
           </div>
         </div>
