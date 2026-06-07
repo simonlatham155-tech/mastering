@@ -30,6 +30,7 @@ import { buildMasteringChain, type MasteringChain } from './mastering-chain-buil
 import type { ProcessingSettings } from './audio-processor';
 import type { ProcessingPlan } from '../data/preset-resolution';
 import { OversamplingLimiterManager, type LimiterMeterData } from './oversampling-limiter-manager';
+import { estimateMomentaryLUFS } from '../utils/live-lufs-meter';
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -72,6 +73,10 @@ export class RealtimeAudioPlayer {
   private meterPollId: number | null = null;
   private sslInputBuffer: Float32Array | null = null;
   private sslOutputBuffer: Float32Array | null = null;
+  private outputMeterBuffer: Float32Array | null = null;
+  private outputLevelCallback: ((lufs: number) => void) | null = null;
+  private currentLimiterCeilingOverride: number | undefined = undefined;
+  private currentSslGlue: 'auto' | 'gentle' | 'firm' = 'auto';
   
   constructor() {
     // AudioContext will be created on first play (user interaction required)
@@ -104,7 +109,14 @@ export class RealtimeAudioPlayer {
   setSSLMeterCallback(callback: ((data: SSLMeterData) => void) | null): void {
     this.sslMeterCallback = callback;
     if (this.masteringChain) {
-      this.wireSSLMeters(this.masteringChain);
+      this.wireLiveMeters(this.masteringChain);
+    }
+  }
+
+  setOutputLevelCallback(callback: ((lufs: number) => void) | null): void {
+    this.outputLevelCallback = callback;
+    if (this.masteringChain) {
+      this.wireLiveMeters(this.masteringChain);
     }
   }
 
@@ -113,45 +125,74 @@ export class RealtimeAudioPlayer {
     this.limiterMeter.setParameters({ hqMode: enabled });
   }
 
-  private syncMeterParams(plan: ProcessingPlan): void {
+  private syncMeterParams(plan: ProcessingPlan, limiterCeilingOverride?: number): void {
+    const ceiling = limiterCeilingOverride ?? plan.deliveryTargets.ceiling;
     this.limiterMeter.setParameters({
       monitorOnly: true,
       hqMode: this.hqModeEnabled,
-      ceiling: plan.deliveryTargets.ceiling,
-      threshold: plan.deliveryTargets.ceiling - 3,
+      ceiling,
+      threshold: ceiling - 3,
     });
   }
 
-  private unwireSSLMeters(): void {
+  private unwireLiveMeters(): void {
     if (this.meterPollId !== null) {
       cancelAnimationFrame(this.meterPollId);
       this.meterPollId = null;
     }
   }
 
-  private wireSSLMeters(chain: MasteringChain): void {
-    this.unwireSSLMeters();
+  private wireLiveMeters(chain: MasteringChain): void {
+    this.unwireLiveMeters();
 
-    const inputAnalyser = chain.sslInputAnalyser;
-    const outputAnalyser = chain.sslOutputAnalyser;
-    if (!inputAnalyser || !outputAnalyser || !this.sslMeterCallback) {
-      return;
+    const hasSSL =
+      chain.sslInputAnalyser &&
+      chain.sslOutputAnalyser &&
+      this.sslMeterCallback;
+    const hasOutput = chain.outputAnalyser && this.outputLevelCallback;
+
+    if (!hasSSL && !hasOutput) return;
+
+    if (hasSSL) {
+      this.sslInputBuffer = new Float32Array(chain.sslInputAnalyser!.fftSize);
+      this.sslOutputBuffer = new Float32Array(chain.sslOutputAnalyser!.fftSize);
+    }
+    if (hasOutput) {
+      this.outputMeterBuffer = new Float32Array(chain.outputAnalyser!.fftSize);
     }
 
-    this.sslInputBuffer = new Float32Array(inputAnalyser.fftSize);
-    this.sslOutputBuffer = new Float32Array(outputAnalyser.fftSize);
-
     const poll = () => {
-      if (!this.masteringChain?.sslInputAnalyser || !this.masteringChain.sslOutputAnalyser) {
-        return;
+      if (!this.masteringChain) return;
+
+      if (
+        this.sslMeterCallback &&
+        this.masteringChain.sslInputAnalyser &&
+        this.masteringChain.sslOutputAnalyser &&
+        this.sslInputBuffer &&
+        this.sslOutputBuffer
+      ) {
+        const inputDb = analyserPeakDb(
+          this.masteringChain.sslInputAnalyser,
+          this.sslInputBuffer
+        );
+        const outputDb = analyserPeakDb(
+          this.masteringChain.sslOutputAnalyser,
+          this.sslOutputBuffer
+        );
+        this.sslMeterCallback({
+          gainReductionDB: Math.max(0, inputDb - outputDb),
+          inputLevelDB: inputDb,
+        });
       }
 
-      const inputDb = analyserPeakDb(this.masteringChain.sslInputAnalyser, this.sslInputBuffer!);
-      const outputDb = analyserPeakDb(this.masteringChain.sslOutputAnalyser, this.sslOutputBuffer!);
-      this.sslMeterCallback!({
-        gainReductionDB: Math.max(0, inputDb - outputDb),
-        inputLevelDB: inputDb,
-      });
+      if (
+        this.outputLevelCallback &&
+        this.masteringChain.outputAnalyser &&
+        this.outputMeterBuffer
+      ) {
+        this.masteringChain.outputAnalyser.getFloatTimeDomainData(this.outputMeterBuffer);
+        this.outputLevelCallback(estimateMomentaryLUFS(this.outputMeterBuffer));
+      }
 
       this.meterPollId = requestAnimationFrame(poll);
     };
@@ -164,7 +205,9 @@ export class RealtimeAudioPlayer {
     plan: ProcessingPlan,
     dryBypass: boolean,
     inputTrimDB?: number,
-    useMinimalMaster: boolean = false
+    useMinimalMaster: boolean = false,
+    limiterCeilingOverride?: number,
+    sslGlue?: 'auto' | 'gentle' | 'firm'
   ): Promise<MasteringChain> {
     if (!this.audioContext) {
       throw new Error('No audio context');
@@ -172,7 +215,7 @@ export class RealtimeAudioPlayer {
 
     const meterNode = await this.limiterMeter.initialize(this.audioContext);
     this.limiterMeter.connectToDestination(this.audioContext.destination);
-    this.syncMeterParams(plan);
+    this.syncMeterParams(plan, limiterCeilingOverride);
 
     const chain = buildMasteringChain({
       context: this.audioContext,
@@ -184,9 +227,11 @@ export class RealtimeAudioPlayer {
       dryBypass,
       inputTrimDB,
       inputLUFS: this.currentInputLUFS,
+      limiterCeilingOverride,
+      sslGlue,
     });
 
-    this.wireSSLMeters(chain);
+    this.wireLiveMeters(chain);
     return chain;
   }
 
@@ -203,7 +248,9 @@ export class RealtimeAudioPlayer {
     dryBypass: boolean,
     inputTrimDB?: number,
     useMinimalMaster: boolean = false,
-    inputLUFS?: number
+    inputLUFS?: number,
+    limiterCeilingOverride?: number,
+    sslGlue?: 'auto' | 'gentle' | 'firm'
   ): Promise<void> {
     if (!this.audioContext || !this.audioBuffer) {
       throw new Error('No audio loaded');
@@ -226,7 +273,10 @@ export class RealtimeAudioPlayer {
       this.currentSettings !== settings ||
       this.currentPlan !== plan ||
       this.currentDryBypass !== dryBypass ||
-      this.currentUseMinimalMaster !== useMinimalMaster
+      this.currentUseMinimalMaster !== useMinimalMaster ||
+      this.currentInputTrimDB !== inputTrimDB ||
+      this.currentLimiterCeilingOverride !== limiterCeilingOverride ||
+      this.currentSslGlue !== (sslGlue ?? 'auto')
     );
     
     this.currentSettings = settings;
@@ -234,11 +284,13 @@ export class RealtimeAudioPlayer {
     this.currentDryBypass = dryBypass;
     this.currentUseMinimalMaster = useMinimalMaster;
     this.currentInputTrimDB = inputTrimDB;
+    this.currentLimiterCeilingOverride = limiterCeilingOverride;
+    this.currentSslGlue = sslGlue ?? 'auto';
     
     // Build or rebuild mastering chain
     if (!this.masteringChain || settingsChanged) {
       if (this.masteringChain) {
-        this.unwireSSLMeters();
+        this.unwireLiveMeters();
         this.masteringChain.dispose();
         this.masteringChain = null;
       }
@@ -248,7 +300,9 @@ export class RealtimeAudioPlayer {
         plan,
         dryBypass,
         inputTrimDB,
-        useMinimalMaster
+        useMinimalMaster,
+        limiterCeilingOverride,
+        sslGlue
       );
       
       if (settingsChanged) {
@@ -428,6 +482,26 @@ export class RealtimeAudioPlayer {
           params.sslThreshold.setTargetAtTime(value, currentTime, rampTimeSeconds);
         }
         break;
+
+      case 'sslRatio':
+        if (params.sslRatio) {
+          params.sslRatio.setTargetAtTime(value, currentTime, rampTimeSeconds);
+        }
+        break;
+
+      case 'inputTrim':
+        if (params.inputTrim) {
+          const linear = Math.pow(10, value / 20);
+          params.inputTrim.setTargetAtTime(linear, currentTime, rampTimeSeconds);
+        }
+        break;
+
+      case 'outputTrim':
+        if (params.outputTrim) {
+          const linear = Math.pow(10, value / 20);
+          params.outputTrim.setTargetAtTime(linear, currentTime, rampTimeSeconds);
+        }
+        break;
       
       // === Limiter ===
       case 'limiterMakeup':
@@ -453,7 +527,9 @@ export class RealtimeAudioPlayer {
     dryBypass: boolean,
     inputTrimDB?: number,
     useMinimalMaster: boolean = false,
-    inputLUFS?: number
+    inputLUFS?: number,
+    limiterCeilingOverride?: number,
+    sslGlue?: 'auto' | 'gentle' | 'firm'
   ): Promise<void> {
     if (inputLUFS !== undefined) {
       this.currentInputLUFS = inputLUFS;
@@ -468,7 +544,7 @@ export class RealtimeAudioPlayer {
     
     // Dispose old chain
     if (this.masteringChain) {
-      this.unwireSSLMeters();
+      this.unwireLiveMeters();
       this.masteringChain.dispose();
       this.masteringChain = null;
     }
@@ -478,6 +554,9 @@ export class RealtimeAudioPlayer {
     this.currentPlan = plan;
     this.currentDryBypass = dryBypass;
     this.currentUseMinimalMaster = useMinimalMaster;
+    this.currentInputTrimDB = inputTrimDB;
+    this.currentLimiterCeilingOverride = limiterCeilingOverride;
+    this.currentSslGlue = sslGlue ?? 'auto';
     
     console.log('🔄 Rebuilding mastering chain...');
     
@@ -488,13 +567,24 @@ export class RealtimeAudioPlayer {
         plan,
         dryBypass,
         inputTrimDB,
-        useMinimalMaster
+        useMinimalMaster,
+        limiterCeilingOverride,
+        sslGlue
       );
     }
     
     if (wasPlaying && this.audioContext) {
       this.pauseTime = currentPosition;
-      await this.play(settings, plan, dryBypass, inputTrimDB, useMinimalMaster, this.currentInputLUFS);
+      await this.play(
+        settings,
+        plan,
+        dryBypass,
+        inputTrimDB,
+        useMinimalMaster,
+        this.currentInputLUFS,
+        limiterCeilingOverride,
+        sslGlue
+      );
     }
   }
   
@@ -510,7 +600,7 @@ export class RealtimeAudioPlayer {
     if (!this.isPlaying || !this.currentSettings || !this.currentPlan || !this.audioContext || !this.audioBuffer) {
       this.currentDryBypass = newDryBypass;
       if (this.masteringChain) {
-        this.unwireSSLMeters();
+        this.unwireLiveMeters();
         this.masteringChain.dispose();
         this.masteringChain = null;
       }
@@ -544,7 +634,7 @@ export class RealtimeAudioPlayer {
     
     // Dispose old chain
     if (this.masteringChain) {
-      this.unwireSSLMeters();
+      this.unwireLiveMeters();
       this.masteringChain.dispose();
       this.masteringChain = null;
     }
@@ -556,7 +646,9 @@ export class RealtimeAudioPlayer {
       this.currentPlan,
       newDryBypass,
       this.currentInputTrimDB,
-      this.currentUseMinimalMaster
+      this.currentUseMinimalMaster,
+      this.currentLimiterCeilingOverride,
+      this.currentSslGlue
     );
     
     // Create new source and resume from saved position
@@ -595,7 +687,7 @@ export class RealtimeAudioPlayer {
     this.stop();
     
     if (this.masteringChain) {
-      this.unwireSSLMeters();
+      this.unwireLiveMeters();
       this.masteringChain.dispose();
       this.masteringChain = null;
     }

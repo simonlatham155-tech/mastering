@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { CircuitDriveKnob } from './components/circuit-drive-knob';
 import { LogicToggle } from './components/logic-toggle';
-import { GearSelector, GearProfileId, gearProfiles } from './components/gear-selector';
+import { GearProfileId, gearProfiles } from './components/gear-selector';
 import { MeterDisplay } from './components/meter-display';
 import { GainStageVisualizer } from './components/gain-stage-visualizer';
 import { WaveformVisualizer } from './components/waveform-visualizer';
@@ -20,23 +20,27 @@ import { TruePeakIndicator } from './components/true-peak-indicator';
 import { DamageReportPanel } from './components/damage-report-panel';
 import { HQModeToggle } from './components/hq-mode-toggle';
 import { InterSamplePeakMeter } from './components/inter-sample-peak-meter';
-import { AdvancedCompressorControls, AdvancedCompressorSettings } from './components/advanced-compressor-controls';
-import { AudioPlayer } from './components/audio-player';
 import { ProfileAdjustmentsPanel, ProfileAdjustments } from './components/profile-adjustments';
-import { getGenrePreset } from './data/genre-presets';
+import { ProDynamicsPanel } from './components/pro-dynamics-panel';
 import { getExportPreset } from './data/export-presets';
 import {
   appliedRecommendationFromAI,
+  applyProfileAdjustmentsToPlayer,
+  applyProDynamicsToPlayer,
   buildAppProcessingPlan,
   buildAppProcessingSettings,
+  DEFAULT_PRO_DYNAMICS,
+  resolveEffectiveInputTrimDB,
+  resolveLimiterCeilingOverride,
   type AppProcessingContext,
+  type ProDynamicsSettings,
 } from './services/app-processing-context';
 import { toast, Toaster } from 'sonner';
 import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio-processor';
 import { analyzeAudioFile as analyzeInputAudio, AudioAnalysisResult } from './utils/audio-analyzer';
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
 import { MasteringWorkflow } from './components/mastering-workflow';
-import { AIRecommendationPanel } from './components/ai-recommendation-panel';
+import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer } from './services/realtime-audio-player';
 import { PlaybackControls } from './components/playback-controls';
 import { motion } from 'motion/react';
@@ -51,6 +55,7 @@ function buildProcessingContext(
     logicMode: LogicMode;
     circuitDrive: number;
     profileAdjustments: ProfileAdjustments;
+    proDynamics: ProDynamicsSettings;
   },
   overrides?: Partial<AppProcessingContext>
 ): AppProcessingContext {
@@ -60,12 +65,12 @@ function buildProcessingContext(
     logicMode: overrides?.logicMode ?? state.logicMode,
     circuitDrive: overrides?.circuitDrive ?? state.circuitDrive,
     profileAdjustments: overrides?.profileAdjustments ?? state.profileAdjustments,
+    proDynamics: overrides?.proDynamics ?? state.proDynamics,
   };
 }
 
 function syncProfileAdjustmentsForGear(
-  gearProfile: GearProfileId,
-  circuitDrive?: number
+  gearProfile: GearProfileId
 ): ProfileAdjustments | null {
   const profile = gearProfiles.find(p => p.id === gearProfile);
   if (!profile) return null;
@@ -75,7 +80,6 @@ function syncProfileAdjustmentsForGear(
     midRangeAdjust: profile.midRangeAdjust,
     highShelfBoost: profile.highShelfBoost,
     stereoWidth: profile.stereoWidth,
-    saturationAmount: circuitDrive ?? profile.saturationAmount,
   };
 }
 
@@ -96,16 +100,15 @@ export default function App() {
   const [heritageProfile, setHeritageProfile] = useState<HeritageProfile>('none');
   
   // Auto Input Trim — if the mix peaks above -3dB, attenuate to give the chain headroom.
-  // Same as a mastering engineer turning down the input gain on a hot mix.
-  const inputTrimDB = (() => {
+  const autoInputTrimDB = (() => {
     if (!analysis) return undefined;
-    const peakDB = analysis.peakLevel; // dBFS (negative)
-    const TARGET_HEADROOM = -6; // Where we want peaks to sit before processing
-    const TRIM_THRESHOLD = -3;  // Only trim if peaks are hotter than this
+    const peakDB = analysis.peakLevel;
+    const TARGET_HEADROOM = -6;
+    const TRIM_THRESHOLD = -3;
     if (peakDB > TRIM_THRESHOLD) {
-      return TARGET_HEADROOM - peakDB; // Negative value = attenuate
+      return TARGET_HEADROOM - peakDB;
     }
-    return undefined; // No trim needed — mix has enough headroom
+    return undefined;
   })();
 
   // Real-time audio player (processes audio live during playback - NO pre-rendering!)
@@ -128,7 +131,14 @@ export default function App() {
 
     (async () => {
       try {
-        const waveformBuffer = await audioProcessor.renderWaveformPreview(settings, inputTrimDB);
+        const waveformBuffer = await audioProcessor.renderWaveformPreview(
+          settings,
+          effectiveInputTrimDB,
+          45,
+          limiterCeilingOverride,
+          proDynamics.outputTrimDB,
+          proDynamics.sslGlue
+        );
         if (generation !== waveformRenderGenRef.current) return;
         setProcessedBuffer(waveformBuffer);
       } catch (err) {
@@ -143,9 +153,8 @@ export default function App() {
     })();
   };
   
-  // AI Mastering Recommendation
-  const [aiRecommendation, setAIRecommendation] = useState<AIMasteringRecommendation | null>(null);
-  const [isApplyingAI, setIsApplyingAI] = useState(false);
+  // Mix analysis summary (shown in unified setup panel after upload)
+  const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
   
   // Performance mode removed (2026-02-16) - studio mastering only
   const [zeroLatencyMode, setZeroLatencyMode] = useState(false);
@@ -158,21 +167,13 @@ export default function App() {
     midRangeAdjust: -0.5,
     highShelfBoost: 1.0,
     stereoWidth: 85,
-    saturationAmount: 35
   });
-  
-  // Advanced Compressor Settings (Pro-Grade AudioWorklet)
-  const [advancedCompressor, setAdvancedCompressor] = useState<AdvancedCompressorSettings>({
-    threshold: -20,
-    ratio: 4.0,
-    knee: 6.0,
-    attack: 5, // ms
-    release: 100, // ms
-    makeupGain: 0,
-    detectionMode: 'rms',
-    sidechainHPF: true,
-    hpfCutoff: 80
-  });
+
+  const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
+  const [outputMomentaryLUFS, setOutputMomentaryLUFS] = useState<number | null>(null);
+
+  const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
+  const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
   
   // Reference-Grade DSP State
   const [hqMode, setHQMode] = useState(true);
@@ -245,9 +246,14 @@ export default function App() {
       if (Number.isFinite(data.inputLevelDB)) setInputLevel(data.inputLevelDB);
     });
 
+    player.setOutputLevelCallback((lufs) => {
+      if (Number.isFinite(lufs)) setOutputMomentaryLUFS(lufs);
+    });
+
     return () => {
       player.setMeterCallback(null);
       player.setSSLMeterCallback(null);
+      player.setOutputLevelCallback(null);
     };
   }, [isReady]);
 
@@ -260,7 +266,6 @@ export default function App() {
         midRangeAdjust: profile.midRangeAdjust,
         highShelfBoost: profile.highShelfBoost,
         stereoWidth: profile.stereoWidth,
-        saturationAmount: profile.saturationAmount
       });
     }
   }, [gearProfile]);
@@ -270,34 +275,45 @@ export default function App() {
   // These fire instantly via AudioParam.setTargetAtTime (50ms ramp, no clicks).
   
   // EQ + Stereo Width → live updateParameter calls (instant, no clicks)
-  // All slider values are OFFSETS from genre defaults (slider 0 / 50% = no change)
-  //
-  // NOTE: Saturation slider does NOT live-update drive AudioParams because
-  // transformer/tape drive involves preGain + auto-gain compensation that
-  // can't be set via a single AudioParam. Saturation applies on chain rebuild
-  // (triggered by the separate useEffect below).
   useEffect(() => {
     const player = realtimePlayerRef.current;
     if (!player) return;
-    
-    const genre = getGenrePreset(gearProfile);
-    if (!genre) return;
-    
-    // EQ: genre default + slider offset (slider 0 = genre default, +3 = genre + 3dB)
-    player.updateParameter('lowShelfGain', genre.biases.bassTilt + profileAdjustments.lowShelfBoost);
-    player.updateParameter('midRangeGain', genre.biases.mudCut + profileAdjustments.midRangeAdjust);
-    player.updateParameter('highShelfGain', genre.biases.airTilt + profileAdjustments.highShelfBoost);
-    
-    // Stereo Width: genre default + offset (50% = genre default, 0% = -0.3, 100% = +0.3)
-    const widthOffset = (profileAdjustments.stereoWidth - 50) / 100 * 0.6;
-    player.updateParameter('stereoWidth', genre.biases.width + widthOffset);
-  }, [profileAdjustments.lowShelfBoost, profileAdjustments.midRangeAdjust, 
-      profileAdjustments.highShelfBoost, profileAdjustments.stereoWidth, gearProfile]);
+
+    applyProfileAdjustmentsToPlayer(player, gearProfile, profileAdjustments);
+  }, [
+    profileAdjustments.lowShelfBoost,
+    profileAdjustments.midRangeAdjust,
+    profileAdjustments.highShelfBoost,
+    profileAdjustments.stereoWidth,
+    gearProfile,
+  ]);
+
+  // Pro dynamics — live trim + SSL glue (no chain rebuild)
+  useEffect(() => {
+    const player = realtimePlayerRef.current;
+    if (!player) return;
+
+    applyProDynamicsToPlayer(player, proDynamics, autoInputTrimDB);
+  }, [
+    proDynamics.inputTrimDB,
+    proDynamics.outputTrimDB,
+    proDynamics.sslGlue,
+    autoInputTrimDB,
+  ]);
   
   // Logic Mode / Genre / Export Preset → full chain rebuild (changes DSP topology)
   // Uses a ref to track previous values so we only rebuild on actual changes,
   // not on initial mount.
-  const prevChainSettingsRef = useRef({ logicMode, gearProfile, exportPreset, circuitDrive, saturationAmount: profileAdjustments.saturationAmount });
+  const prevChainSettingsRef = useRef({
+    logicMode,
+    gearProfile,
+    exportPreset,
+    circuitDrive,
+    limiterCeilingDBTP: proDynamics.limiterCeilingDBTP,
+    forceMonoBass: proDynamics.forceMonoBass,
+    monoBassHz: proDynamics.monoBassHz,
+    sslGlue: proDynamics.sslGlue,
+  });
   
   useEffect(() => {
     const prev = prevChainSettingsRef.current;
@@ -306,16 +322,27 @@ export default function App() {
       prev.gearProfile !== gearProfile ||
       prev.exportPreset !== exportPreset ||
       prev.circuitDrive !== circuitDrive ||
-      prev.saturationAmount !== profileAdjustments.saturationAmount
+      prev.limiterCeilingDBTP !== proDynamics.limiterCeilingDBTP ||
+      prev.forceMonoBass !== proDynamics.forceMonoBass ||
+      prev.monoBassHz !== proDynamics.monoBassHz ||
+      prev.sslGlue !== proDynamics.sslGlue
     );
-    prevChainSettingsRef.current = { logicMode, gearProfile, exportPreset, circuitDrive, saturationAmount: profileAdjustments.saturationAmount };
+    prevChainSettingsRef.current = {
+      logicMode,
+      gearProfile,
+      exportPreset,
+      circuitDrive,
+      limiterCeilingDBTP: proDynamics.limiterCeilingDBTP,
+      forceMonoBass: proDynamics.forceMonoBass,
+      monoBassHz: proDynamics.monoBassHz,
+      sslGlue: proDynamics.sslGlue,
+    };
     
-    if (!changed) return; // Skip initial mount
+    if (!changed) return;
     
     const player = realtimePlayerRef.current;
     if (!player || !analysis) return;
     
-    // Build fresh settings + plan and rebuild the chain
     const rebuildAsync = async () => {
       const ctx = buildProcessingContext({
         gearProfile,
@@ -323,23 +350,44 @@ export default function App() {
         logicMode,
         circuitDrive,
         profileAdjustments,
+        proDynamics,
       });
       const plan = buildAppProcessingPlan(ctx);
       const settings = buildAppProcessingSettings(ctx);
       
-      player.rebuildChain(settings, plan, bypassMode, inputTrimDB, false, measuredInputLUFS);
+      await player.rebuildChain(
+        settings,
+        plan,
+        bypassMode,
+        effectiveInputTrimDB,
+        false,
+        measuredInputLUFS,
+        limiterCeilingOverride,
+        proDynamics.sslGlue
+      );
+      applyProfileAdjustmentsToPlayer(player, gearProfile, profileAdjustments);
+      applyProDynamicsToPlayer(player, proDynamics, autoInputTrimDB);
       console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
       
-      // Re-render processed waveform in background for visualization
       startWaveformPreviewRender(settings);
     };
     
     rebuildAsync();
-  }, [logicMode, gearProfile, exportPreset, circuitDrive, analysis]);
+  }, [
+    logicMode,
+    gearProfile,
+    exportPreset,
+    circuitDrive,
+    proDynamics.limiterCeilingDBTP,
+    proDynamics.forceMonoBass,
+    proDynamics.monoBassHz,
+    proDynamics.sslGlue,
+    analysis,
+  ]);
 
   const applyRecommendationToState = (recommendation: AIMasteringRecommendation) => {
     const applied = appliedRecommendationFromAI(recommendation);
-    const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
+    const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile);
 
     setCircuitDrive(applied.circuitDrive);
     setRecommendedCircuitDrive(applied.circuitDrive);
@@ -350,7 +398,6 @@ export default function App() {
       setProfileAdjustments(syncedProfile);
     }
 
-    setAIRecommendation(null);
     return { applied, syncedProfile };
   };
 
@@ -378,16 +425,23 @@ export default function App() {
 
       const recommendation = AIMasteringEngine.recommend(inputResult);
 
+      setMixSetup({
+        reasoning: recommendation.reasoning,
+        confidence: recommendation.confidence,
+        inputLufs: inputResult.lufs,
+        suggestedGenre: inputResult.suggestedGenre,
+      });
+
       const { applied } = applyRecommendationToState(recommendation);
 
       toast.success(
-        `Auto-configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
+        `Mix configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
       );
       
       const analysisResult = await audioProcessor.analyzeAudio();
       setAnalysis(analysisResult);
 
-      const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
+      const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile);
       const processingContext = buildProcessingContext(
         {
           gearProfile,
@@ -395,6 +449,7 @@ export default function App() {
           logicMode,
           circuitDrive,
           profileAdjustments,
+          proDynamics,
         },
         {
           gearProfile: applied.gearProfile,
@@ -435,6 +490,7 @@ export default function App() {
       logicMode,
       circuitDrive,
       profileAdjustments,
+      proDynamics,
     });
     const settings = buildAppProcessingSettings(ctx);
 
@@ -473,27 +529,7 @@ export default function App() {
   const handleFileSelect = async (file: File) => {
     setSelectedFile(file);
     setInputAnalysis(null);
-    setAIRecommendation(null);
-  };
-
-  const handleApplyAIRecommendation = async () => {
-    if (!aiRecommendation) return;
-    
-    setIsApplyingAI(true);
-    
-    try {
-      const { applied } = applyRecommendationToState(aiRecommendation);
-      toast.success(`Settings applied: ${applied.circuitDrive}% warmth, ${applied.logicMode.toUpperCase()} mode, ${applied.gearProfile} profile`);
-    } catch (error) {
-      console.error('Failed to apply AI recommendation:', error);
-      toast.error('Failed to apply settings');
-    } finally {
-      setIsApplyingAI(false);
-    }
-  };
-
-  const handleDismissAIRecommendation = () => {
-    setAIRecommendation(null);
+    setMixSetup(null);
   };
 
   const handleClearFile = () => {
@@ -501,7 +537,7 @@ export default function App() {
     setIsProcessing(false);
     setShowHeritageAlert(false);
     setInputAnalysis(null);
-    setAIRecommendation(null);
+    setMixSetup(null);
     setAnalysis(null);
     waveformRenderGenRef.current += 1;
     setProcessedBuffer(null);
@@ -526,10 +562,15 @@ export default function App() {
         logicMode,
         circuitDrive,
         profileAdjustments,
+        proDynamics,
       });
       const settings = buildAppProcessingSettings({ ...ctx, exportPreset: presetId });
 
-      const finalBuffer = await audioProcessor.renderExport(settings, inputTrimDB);
+      const finalBuffer = await audioProcessor.renderExport(
+        settings,
+        effectiveInputTrimDB,
+        { limiterCeilingOverride, outputTrimDB: proDynamics.outputTrimDB, sslGlue: proDynamics.sslGlue }
+      );
 
       // Export as WAV
       const blob = await audioProcessor.exportAsWAV(finalBuffer);
@@ -569,11 +610,23 @@ export default function App() {
       logicMode,
       circuitDrive,
       profileAdjustments,
+      proDynamics,
     });
     const plan = buildAppProcessingPlan(ctx);
     const settings = buildAppProcessingSettings(ctx);
     
-    await realtimePlayerRef.current.play(settings, plan, bypassMode, inputTrimDB, false, measuredInputLUFS);
+    await realtimePlayerRef.current.play(
+      settings,
+      plan,
+      bypassMode,
+      effectiveInputTrimDB,
+      false,
+      measuredInputLUFS,
+      limiterCeilingOverride,
+      proDynamics.sslGlue
+    );
+    applyProfileAdjustmentsToPlayer(realtimePlayerRef.current, gearProfile, profileAdjustments);
+    applyProDynamicsToPlayer(realtimePlayerRef.current, proDynamics, autoInputTrimDB);
   };
   
   const handlePause = () => {
@@ -660,10 +713,12 @@ export default function App() {
             </div>
 
             {/* Input Trim Indicator */}
-            {isReady && inputTrimDB && inputTrimDB < 0 && (
+            {isReady && effectiveInputTrimDB != null && effectiveInputTrimDB < 0 && (
               <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-300 text-sm">
                 <span>🎚️</span>
-                <span>Input trimmed by <strong>{Math.abs(inputTrimDB).toFixed(1)}dB</strong> — your mix peaks at {analysis?.peakLevel?.toFixed(1)}dBFS. Headroom applied automatically for clean processing.</span>
+                <span>Input trimmed by <strong>{Math.abs(effectiveInputTrimDB).toFixed(1)}dB</strong>
+                  {proDynamics.inputTrimDB == null && autoInputTrimDB != null && ' (auto)'}
+                  {' '}— mix peaks at {analysis?.peakLevel?.toFixed(1)}dBFS.</span>
               </div>
             )}
 
@@ -718,19 +773,19 @@ export default function App() {
             {!isReady && !isAnalyzing && (
               <div className="mb-6 text-center py-8 px-6 rounded-lg border border-zinc-800 bg-zinc-950/50">
                 <p className="text-sm text-zinc-400 font-mono">
-                  Upload a mix to begin — we&apos;ll detect genre, set warmth &amp; loudness targets, and prepare live preview.
+                  Upload a mix to begin — we&apos;ll analyze it, pick a gear profile, and set your loudness target automatically.
                 </p>
               </div>
             )}
 
             {isReady && (
               <>
-            {/* AI Recommendation Panel */}
-            <AIRecommendationPanel
-              recommendation={aiRecommendation}
-              onApply={handleApplyAIRecommendation}
-              onDismiss={handleDismissAIRecommendation}
-              isApplying={isApplyingAI}
+            <MixSetupPanel
+              summary={mixSetup}
+              gearProfile={gearProfile}
+              exportPreset={exportPreset}
+              onGearChange={setGearProfile}
+              onExportPresetChange={setExportPreset}
             />
 
             {/* Mastering Workflow: INPUT → GEAR → OUTPUT */}
@@ -800,8 +855,8 @@ export default function App() {
                 </div>
               ))}
 
-              {/* 3-column grid layout - ORIGINAL */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Core controls — warmth + dynamics mode */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-3xl mx-auto">
                 <CircuitDriveKnob
                   value={circuitDrive}
                   onChange={setCircuitDrive}
@@ -814,7 +869,6 @@ export default function App() {
                   }
                 />
                 <LogicToggle mode={logicMode} onChange={setLogicMode} />
-                <GearSelector selectedProfile={gearProfile} onChange={setGearProfile} />
               </div>
             </div>
 
@@ -985,6 +1039,45 @@ export default function App() {
               </div>
             )}
 
+            {/* Pro Dynamics — level staging + bus glue */}
+            <div 
+              className="relative border-2 rounded-lg p-6 mb-6"
+              style={{
+                borderColor: '#2a2a2a',
+                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
+                boxShadow: `
+                  inset 0 2px 4px rgba(0,0,0,0.6),
+                  inset 0 -1px 2px rgba(255,255,255,0.05),
+                  0 8px 16px rgba(0,0,0,0.5)
+                `
+              }}
+            >
+              {[0, 1, 2, 3].map((i) => (
+                <div 
+                  key={i}
+                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
+                  style={{
+                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
+                  }}
+                >
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-2 h-0.5 bg-zinc-900"></div>
+                  </div>
+                </div>
+              ))}
+
+              <ProDynamicsPanel
+                settings={proDynamics}
+                onChange={setProDynamics}
+                gearProfile={gearProfile}
+                autoInputTrimDB={autoInputTrimDB}
+                presetCeilingDBTP={getExportPreset(exportPreset).ceiling}
+                outputMomentaryLUFS={outputMomentaryLUFS}
+                targetLUFS={getExportPreset(exportPreset).lufs}
+                isPlaying={playbackState.isPlaying}
+              />
+            </div>
+
             {/* Profile Adjustments Panel - separate rack unit */}
             <div 
               className="relative border-2 rounded-lg p-6 mb-6"
@@ -1016,6 +1109,7 @@ export default function App() {
               <ProfileAdjustmentsPanel
                 adjustments={profileAdjustments}
                 onChange={setProfileAdjustments}
+                gearProfile={gearProfile}
               />
             </div>
 
@@ -1168,6 +1262,7 @@ export default function App() {
               onExport={handleExport} 
               disabled={!selectedFile || !analysis || isProcessing}
               currentTarget={getExportPreset(exportPreset).lufs}
+              selectedPreset={exportPreset}
             />
               </>
             )}

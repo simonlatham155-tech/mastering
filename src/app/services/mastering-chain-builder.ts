@@ -48,10 +48,16 @@ export interface MasteringChainConfig {
   dryBypass?: boolean;
   inputTrimDB?: number;
   inputLUFS?: number;
+  /** Post-chain output trim in dB */
+  outputTrimDB?: number;
   /** Pre-created true-peak limiter worklet (replaces Type2 waveshaper) */
   truePeakLimiterNode?: AudioWorkletNode | null;
   /** Create and wire true-peak limiter worklet automatically (async build only) */
   useTruePeakWorklet?: boolean;
+  /** Optional user override for limiter ceiling (dBTP) */
+  limiterCeilingOverride?: number;
+  /** SSL bus glue macro — gentle/firm override genre auto */
+  sslGlue?: 'auto' | 'gentle' | 'firm';
 }
 
 export interface MasteringChain {
@@ -62,6 +68,7 @@ export interface MasteringChain {
   sslOutputAnalyser: AnalyserNode | null;
   truePeakLimiterNode: AudioWorkletNode | null;
   limiterCeilingDBTP: number;
+  outputAnalyser: AnalyserNode | null;
   dispose: () => void;
 }
 
@@ -93,6 +100,10 @@ export interface ChainParameters {
   limiterThreshold: AudioParam | null;
   limiterMakeup: AudioParam | null;
   limiterCeiling: AudioParam | null;
+
+  // Level staging
+  inputTrim: AudioParam | null;
+  outputTrim: AudioParam | null;
 }
 
 // ============================================================
@@ -257,6 +268,9 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     inputTrimDB,
     inputLUFS,
     truePeakLimiterNode = null,
+    limiterCeilingOverride,
+    outputTrimDB,
+    sslGlue,
   } = config;
   
   const loudnessStyle = params.genreBehavior.loudnessStyle;
@@ -272,20 +286,24 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   const chainOutput = context.createGain();
   chainOutput.channelCountMode = 'max';
   chainOutput.channelInterpretation = 'speakers';
+  chainOutput.gain.value =
+    outputTrimDB != null && outputTrimDB !== 0
+      ? Math.pow(10, outputTrimDB / 20)
+      : 1.0;
   
   // Track current node in chain
   let currentNode: AudioNode = chainInput;
+  const nodesToDispose: AudioNode[] = [chainInput, chainOutput];
   
-  // === AUTO INPUT TRIM ===
-  // If the input mix is too hot (peaks above -3dB), attenuate before any processing.
-  // This gives the saturation and compression stages proper headroom to work.
-  // The limiter's makeup gain brings the level back up at the end.
-  if (inputTrimDB && inputTrimDB < 0) {
-    const trimGain = context.createGain();
-    trimGain.gain.value = Math.pow(10, inputTrimDB / 20);
-    currentNode.connect(trimGain);
-    currentNode = trimGain;
-    console.log(`   [PRE] Input Trim: ${inputTrimDB.toFixed(1)}dB (auto headroom correction)`);
+  // === INPUT TRIM (always present for live pro control) ===
+  const inputTrimGain = context.createGain();
+  inputTrimGain.gain.value =
+    inputTrimDB != null ? Math.pow(10, inputTrimDB / 20) : 1.0;
+  chainInput.connect(inputTrimGain);
+  currentNode = inputTrimGain;
+  nodesToDispose.push(inputTrimGain);
+  if (inputTrimDB != null && inputTrimDB !== 0) {
+    console.log(`   [PRE] Input Trim: ${inputTrimDB.toFixed(1)}dB`);
   }
   
   // Track parameters for live updates
@@ -304,12 +322,13 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     limiterThreshold: null,
     limiterMakeup: null,
     limiterCeiling: null,
+    inputTrim: inputTrimGain.gain,
+    outputTrim: chainOutput.gain,
   };
   
-  // Track nodes for cleanup
-  const nodesToDispose: AudioNode[] = [chainInput, chainOutput];
   let sslInputAnalyser: AnalyserNode | null = null;
   let sslOutputAnalyser: AnalyserNode | null = null;
+  let outputAnalyser: AnalyserNode | null = null;
   let limiterCeilingDBTP = params.deliveryTargets.ceiling;
   
   // === DRY BYPASS (A/B original) ===
@@ -326,6 +345,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
       sslOutputAnalyser: null,
       truePeakLimiterNode: null,
       limiterCeilingDBTP,
+      outputAnalyser: null,
       dispose: () => {
         nodesToDispose.forEach(node => {
           try { node.disconnect(); } catch (e) { /* ignore */ }
@@ -392,7 +412,15 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   
   // === STAGE 4: SSL BUS GLUE COMPRESSION (loudnessStyle-aware) ===
   console.log(`   [4] SSL Compression: ACTIVE (${loudnessStyle})`);
-  const ssl = createSSLCompressor(context, settings, params, styleParams, quality, useMinimalMaster);
+  const ssl = createSSLCompressor(
+    context,
+    settings,
+    params,
+    styleParams,
+    quality,
+    useMinimalMaster,
+    sslGlue
+  );
   currentNode.connect(ssl.input);
   currentNode = ssl.output;
   parameters.sslThreshold = ssl.threshold;
@@ -417,9 +445,11 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   }
 
   // === STAGE 5b: CLIPPER (genre toggle — before limiter) ===
-  // Clipper disabled for now — stacked waveshaping was rattling the low end in preview.
-  // Re-enable once limiter path is stable.
-  const useClipper = false && params.genreBehavior.useClipper && !useMinimalMaster;
+  // Clipper: Pressure mode + genre toggle only (Flow keeps sub clean)
+  const useClipper =
+    params.genreBehavior.useClipper &&
+    !useMinimalMaster &&
+    settings.logicMode === 'brickwall';
   if (useClipper) {
     console.log('   [5b] Clipper: ACTIVE');
     const clipper = buildClipperStage(context, settings, params, quality);
@@ -439,7 +469,8 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     styleParams,
     quality,
     inputLUFS,
-    truePeakLimiterNode
+    truePeakLimiterNode,
+    limiterCeilingOverride
   );
   limiterCeilingDBTP = limiter.ceilingDBTP;
   currentNode.connect(limiter.input);
@@ -452,9 +483,14 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     nodesToDispose.push(limiter.truePeakNode);
   }
   
-  // Connect final output to destination
+  // Connect final output to destination + output analyser tap
   currentNode.connect(chainOutput);
+  outputAnalyser = context.createAnalyser();
+  outputAnalyser.fftSize = 2048;
+  outputAnalyser.smoothingTimeConstant = 0.85;
   chainOutput.connect(destination);
+  chainOutput.connect(outputAnalyser);
+  nodesToDispose.push(outputAnalyser);
   
   console.log(`✅ Mastering chain built: ${nodesToDispose.length / 2} stages (${loudnessStyle} loudness, ${settings.logicMode} logic)`);
   
@@ -466,6 +502,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     sslOutputAnalyser,
     truePeakLimiterNode: limiter.truePeakNode,
     limiterCeilingDBTP,
+    outputAnalyser,
     dispose: () => {
       disposeTruePeakLimiterNode(limiter.truePeakNode);
       nodesToDispose.forEach(node => {
@@ -504,7 +541,8 @@ function createSSLCompressor(
   params: ProcessingPlan,
   styleParams: LoudnessStyleParams,
   quality: QualityMode,
-  useMinimalMaster: boolean
+  useMinimalMaster: boolean,
+  sslGlue: 'auto' | 'gentle' | 'firm' = 'auto'
 ): {
   input: AudioNode;
   output: AudioNode;
@@ -533,7 +571,19 @@ function createSSLCompressor(
   
   const compressor = context.createDynamicsCompressor();
   
-  if (useMinimalMaster) {
+  if (sslGlue === 'gentle') {
+    compressor.threshold.value = -14;
+    compressor.ratio.value = 2;
+    compressor.attack.value = 0.010;
+    compressor.release.value = 0.12;
+    compressor.knee.value = 6;
+  } else if (sslGlue === 'firm') {
+    compressor.threshold.value = -6;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.005;
+    compressor.release.value = 0.08;
+    compressor.knee.value = 4;
+  } else if (useMinimalMaster) {
     // Minimal mode: gentle compression (max 1.5dB GR)
     compressor.threshold.value = -18;
     compressor.ratio.value = 2;
@@ -703,7 +753,8 @@ function createLimiterStage(
   styleParams: LoudnessStyleParams,
   quality: QualityMode,
   inputLUFS?: number,
-  truePeakLimiterNode?: AudioWorkletNode | null
+  truePeakLimiterNode?: AudioWorkletNode | null,
+  limiterCeilingOverride?: number
 ): {
   input: AudioNode;
   output: AudioNode;
@@ -739,8 +790,8 @@ function createLimiterStage(
   // === CEILING (from export preset, but loudnessStyle can't exceed it) ===
   const exportCeiling = params.deliveryTargets.ceiling;
   const styleCeiling = limParams.ceiling;
-  // Use the MORE conservative (more negative) ceiling
-  const finalCeiling = Math.min(exportCeiling, styleCeiling);
+  const resolvedCeiling = Math.min(exportCeiling, styleCeiling);
+  const finalCeiling = limiterCeilingOverride ?? resolvedCeiling;
   const ceilingLinear = Math.pow(10, finalCeiling / 20);
   
   // === MAKEUP GAIN (sole loudness authority) ===

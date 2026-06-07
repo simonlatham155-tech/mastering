@@ -1,6 +1,6 @@
 /**
  * Clipper Stage — soft peak rounding before the final limiter.
- * Adds controlled harmonic energy for club/festival genres.
+ * Pressure mode only; gentle drive to avoid low-end artifacts.
  */
 
 import type { QualityMode } from '../../data/quality-profiles';
@@ -15,7 +15,7 @@ export interface ClipperStage {
 function buildSoftClipCurve(amount: number): Float32Array {
   const samples = 65536;
   const curve = new Float32Array(samples);
-  const drive = 1 + amount * 2.5;
+  const drive = 1 + amount * 1.8;
 
   for (let i = 0; i < samples; i++) {
     const x = (i * 2 - samples) / samples;
@@ -34,32 +34,23 @@ export function buildClipperStage(
   const input = context.createGain();
   const output = context.createGain();
 
-  const isBrickwall = settings.logicMode === 'brickwall';
   const style = params.genreBehavior.loudnessStyle;
-
-  let amount = 0.28;
-  if (isBrickwall) {
-    amount = 0.5;
-  } else if (style === 'aggressive') {
-    amount = 0.42;
-  } else if (style === 'balanced') {
-    amount = 0.32;
-  } else {
-    amount = 0.2;
-  }
+  const amount = style === 'aggressive' ? 0.32 : 0.24;
 
   const shaper = context.createWaveShaper();
   shaper.curve = buildSoftClipCurve(amount);
   shaper.oversample = quality === 'export' ? '4x' : '2x';
 
   const trim = context.createGain();
-  trim.gain.value = 0.97;
+  trim.gain.value = 0.98;
 
   input.connect(shaper);
   shaper.connect(trim);
   trim.connect(output);
 
-  console.log(`   Clipper: soft-clip amount=${amount.toFixed(2)} (${isBrickwall ? 'pressure' : style})`);
+  console.log(
+    `   Clipper: pressure-only soft-clip amount=${amount.toFixed(2)} (${settings.logicMode})`
+  );
 
   return { input, output };
 }

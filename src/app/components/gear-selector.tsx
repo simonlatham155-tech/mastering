@@ -68,9 +68,10 @@ const gearProfiles: GearProfile[] = Object.values(GENRE_PRESETS).map(genrePreset
 interface GearSelectorProps {
   selectedProfile: GearProfileId;
   onChange: (profile: GearProfileId) => void;
+  variant?: 'default' | 'compact';
 }
 
-export function GearSelector({ selectedProfile, onChange }: GearSelectorProps) {
+export function GearSelector({ selectedProfile, onChange, variant = 'default' }: GearSelectorProps) {
   const profile = gearProfiles.find((prof) => prof.id === selectedProfile);
 
   // Group profiles by category
@@ -147,7 +148,7 @@ export function GearSelector({ selectedProfile, onChange }: GearSelectorProps) {
         </Select.Portal>
       </Select.Root>
 
-      {/* Gear characteristics display with technical specs */}
+      {variant === 'default' && (
       <div 
         className="border rounded px-3 py-2"
         style={{
@@ -167,6 +168,7 @@ export function GearSelector({ selectedProfile, onChange }: GearSelectorProps) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

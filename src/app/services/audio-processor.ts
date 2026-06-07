@@ -459,7 +459,12 @@ export class AudioProcessor {
   async renderExport(
     settings: ProcessingSettings,
     inputTrimDB?: number,
-    options?: { forVisualization?: boolean }
+    options?: {
+      forVisualization?: boolean;
+      limiterCeilingOverride?: number;
+      outputTrimDB?: number;
+      sslGlue?: 'auto' | 'gentle' | 'firm';
+    }
   ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
@@ -514,6 +519,9 @@ export class AudioProcessor {
       useMinimalMaster,
       inputTrimDB,
       inputLUFS: this.analysis?.lufs ?? -16,
+      limiterCeilingOverride: options?.limiterCeilingOverride,
+      outputTrimDB: options?.outputTrimDB,
+      sslGlue: options?.sslGlue,
     });
 
     // Create source
@@ -565,7 +573,10 @@ export class AudioProcessor {
     settings: ProcessingSettings,
     chunkOffset: number = 0,
     chunkDuration: number = 30,
-    inputTrimDB?: number
+    inputTrimDB?: number,
+    limiterCeilingOverride?: number,
+    outputTrimDB?: number,
+    sslGlue?: 'auto' | 'gentle' | 'firm'
   ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
@@ -606,6 +617,9 @@ export class AudioProcessor {
       useMinimalMaster,
       inputTrimDB,
       inputLUFS: this.analysis?.lufs ?? -16,
+      limiterCeilingOverride,
+      outputTrimDB,
+      sslGlue,
     });
 
     // Extract chunk
@@ -647,7 +661,10 @@ export class AudioProcessor {
   async renderWaveformPreview(
     settings: ProcessingSettings,
     inputTrimDB?: number,
-    maxSeconds: number = 45
+    maxSeconds: number = 45,
+    limiterCeilingOverride?: number,
+    outputTrimDB?: number,
+    sslGlue?: 'auto' | 'gentle' | 'firm'
   ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
@@ -666,7 +683,15 @@ export class AudioProcessor {
     console.log(`🎨 Waveform preview: rendering first ${chunkSeconds.toFixed(1)}s (fast path)`);
 
     const timeoutMs = 25000;
-    const renderPromise = this.renderPreviewChunk(previewSettings, 0, chunkSeconds, inputTrimDB);
+    const renderPromise = this.renderPreviewChunk(
+      previewSettings,
+      0,
+      chunkSeconds,
+      inputTrimDB,
+      limiterCeilingOverride,
+      outputTrimDB,
+      sslGlue
+    );
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error('Waveform preview timed out')), timeoutMs);
     });

@@ -4,10 +4,11 @@ import { EXPORT_PRESETS, ExportPresetId } from '../data/export-presets';
 interface ExportPanelProps {
   onExport: (preset: ExportPresetId) => void;
   disabled: boolean;
-  currentTarget?: number; // Current LUFS target from selected export preset
+  currentTarget?: number;
+  selectedPreset?: ExportPresetId;
 }
 
-export function ExportPanel({ onExport, disabled, currentTarget }: ExportPanelProps) {
+export function ExportPanel({ onExport, disabled, currentTarget, selectedPreset }: ExportPanelProps) {
   const exportPresets = Object.values(EXPORT_PRESETS);
 
   return (
@@ -24,7 +25,9 @@ export function ExportPanel({ onExport, disabled, currentTarget }: ExportPanelPr
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        {exportPresets.map((preset) => (
+        {exportPresets.map((preset) => {
+          const isSelected = selectedPreset === preset.id;
+          return (
           <button
             key={preset.id}
             onClick={() => onExport(preset.id)}
@@ -33,11 +36,15 @@ export function ExportPanel({ onExport, disabled, currentTarget }: ExportPanelPr
             style={{
               background: disabled 
                 ? 'linear-gradient(180deg, #1a1a1a, #0f0f0f)' 
-                : `linear-gradient(180deg, ${preset.color}15, ${preset.color}05)`,
-              borderColor: disabled ? '#2a2a2a' : `${preset.color}40`,
+                : isSelected
+                  ? `linear-gradient(180deg, ${preset.color}28, ${preset.color}10)`
+                  : `linear-gradient(180deg, ${preset.color}15, ${preset.color}05)`,
+              borderColor: disabled ? '#2a2a2a' : isSelected ? preset.color : `${preset.color}40`,
               boxShadow: disabled 
                 ? 'inset 0 1px 0 rgba(255,255,255,0.03)' 
-                : `inset 0 1px 0 ${preset.color}20, 0 2px 8px ${preset.color}15`
+                : isSelected
+                  ? `inset 0 1px 0 ${preset.color}40, 0 0 12px ${preset.color}33`
+                  : `inset 0 1px 0 ${preset.color}20, 0 2px 8px ${preset.color}15`
             }}
           >
             <div className="flex items-start justify-between mb-2">
@@ -60,7 +67,8 @@ export function ExportPanel({ onExport, disabled, currentTarget }: ExportPanelPr
               {preset.lufs} LUFS • {preset.ceiling} dBTP
             </div>
           </button>
-        ))}
+          );
+        })}
       </div>
 
       {/* Help text */}
