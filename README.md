@@ -52,7 +52,8 @@ src/
 │       ├── oversampling-limiter.js     # 4x oversampling true peak limiter
 │       └── lufs-metering-processor.js  # LUFS measurement
 ├── dsp/
-│   ├── limiter.dsp                # Faust limiter source
+│   ├── limiter.dsp                # Faust export limiter (built to WASM)
+│   ├── limiter-lookahead.dsp      # Future look-ahead spec (not compiled yet)
 │   └── BUILD_INSTRUCTIONS.md
 └── styles/                        # Tailwind v4 + VST theme
 

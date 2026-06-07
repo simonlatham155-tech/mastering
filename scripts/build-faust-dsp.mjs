@@ -13,7 +13,7 @@ const root = path.join(__dirname, '..');
 const faust2wasm = path.join(root, 'node_modules/@grame/faustwasm/scripts/faust2wasm.js');
 
 const targets = [
-  { dsp: path.join(root, 'src/dsp/limiter-v2.dsp'), out: path.join(root, 'public/faust/compiled/limiter') },
+  { dsp: path.join(root, 'src/dsp/limiter.dsp'), out: path.join(root, 'public/faust/compiled/limiter') },
 ];
 
 function compileTarget({ dsp, out }) {

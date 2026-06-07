@@ -66,7 +66,7 @@ export async function createFaustLimiterNode(
     factory,
     false,
     1024,
-    'latham-faust-limiter-v2'
+    'latham-faust-limiter'
   );
 
   if (!node) {
