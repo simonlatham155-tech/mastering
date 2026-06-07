@@ -154,6 +154,28 @@ export default function App() {
   const isReady = !!selectedFile && !!analysis;
   const measuredInputLUFS = analysis?.lufs ?? inputAnalysis?.lufs ?? -16;
 
+  const [profileAdjustments, setProfileAdjustments] = useState<ProfileAdjustments>({
+    lowShelfBoost: 2.5,
+    midRangeAdjust: -0.5,
+    highShelfBoost: 1.0,
+    stereoWidth: 85,
+  });
+
+  const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
+  const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
+  const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
+  const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
+  const [isBatchExporting, setIsBatchExporting] = useState(false);
+  const [batchExportProgress, setBatchExportProgress] = useState<{
+    index: number;
+    total: number;
+    name: string;
+  } | null>(null);
+  const liveStageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
+  const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
+
   const startWaveformPreviewRender = (
     settings: ReturnType<typeof buildAppProcessingSettings>,
     options?: { hq?: boolean }
@@ -314,29 +336,6 @@ export default function App() {
   const [zeroLatencyMode, setZeroLatencyMode] = useState(false);
   const [autoMonoBass, setAutoMonoBass] = useState(false);
   const [clipIndicator, setClipIndicator] = useState(false);
-  
-  // Profile Adjustments
-  const [profileAdjustments, setProfileAdjustments] = useState<ProfileAdjustments>({
-    lowShelfBoost: 2.5,
-    midRangeAdjust: -0.5,
-    highShelfBoost: 1.0,
-    stereoWidth: 85,
-  });
-
-  const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
-  const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
-  const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
-  const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
-  const [isBatchExporting, setIsBatchExporting] = useState(false);
-  const [batchExportProgress, setBatchExportProgress] = useState<{
-    index: number;
-    total: number;
-    name: string;
-  } | null>(null);
-  const liveStageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
-  const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
   
   // Reference-Grade DSP State
   const [hqMode, setHQMode] = useState(true);
