@@ -167,7 +167,7 @@ export function HQModeToggle({
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-emerald-400 shrink-0">Export file:</span>
-                <span>Same 4× FIR limiter worklet in the ceiling stage + 24-bit WAV.</span>
+                <span>Faust WASM limiter on export files + 24-bit WAV.</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-orange-400">⚠</span>

@@ -37,8 +37,8 @@ Manual checklist: [`LISTEN_QA.md`](./LISTEN_QA.md)
 2. ~~Album / batch export~~ — **shipped** (shared `runMasterExport` pipeline + ZIP)
 3. ~~Product nav~~ — **shipped** (Mastering Suite · Demo · Plugins soon)
 4. Bundle cleanup (TensorFlow dead chunk, unused Radix) — **partial** (removed TF chunk; TF dep still in package for ML stub)
-5. ~~Faust WASM PR #1~~ — **deferred**; export uses hand-written 4× FIR worklet (`oversampling-limiter.js`)
-6. Export delivery: **24-bit WAV** + in-chain true-peak worklet on offline render
+5. **Faust WASM limiter** — `npm run build:faust` compiles `src/dsp/limiter-v2.dsp` → `public/faust/compiled/limiter/`; export prefers Faust, falls back to FIR worklet
+6. Export delivery: **24-bit WAV** + premium ceiling limiter on offline render
 
 ---
 

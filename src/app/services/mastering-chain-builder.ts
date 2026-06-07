@@ -30,6 +30,7 @@ import { buildTransformerStage, getTransformerConfig } from './stages/transforme
 import { buildTapeStage, getTapeConfig } from './stages/tape-stage';
 import { buildMultibandStage } from './stages/multiband-stage';
 import { createTruePeakLimiterNode, disposeTruePeakLimiterNode } from './limiter-worklet';
+import { createFaustLimiterNode, disposeFaustLimiterNode } from './faust-limiter';
 import { buildClipperStage } from './stages/clipper-stage';
 import { smoothParam } from './stages/stage-utils';
 
@@ -50,10 +51,12 @@ export interface MasteringChainConfig {
   outputTrimDB?: number;
   /** Boost applied on dry bypass when Gain Match is on (dB, does not affect export) */
   bypassGainMatchDB?: number;
-  /** Pre-created true-peak limiter worklet (replaces Type2 waveshaper) */
-  truePeakLimiterNode?: AudioWorkletNode | null;
-  /** Create and wire true-peak limiter worklet automatically (async build only) */
+  /** Create Faust WASM limiter (preferred for export when compiled assets exist) */
+  useFaustLimiter?: boolean;
+  /** Create hand-written FIR true-peak worklet (fallback) */
   useTruePeakWorklet?: boolean;
+  /** Pre-created ceiling limiter node (Faust WASM or FIR worklet) */
+  truePeakLimiterNode?: AudioWorkletNode | null;
   /** Optional user override for limiter ceiling (dBTP) */
   limiterCeilingOverride?: number;
   /** SSL bus glue macro — gentle/firm override genre auto */
@@ -219,25 +222,43 @@ export function shouldUseTruePeakWorkletOffline(
 }
 
 /**
- * Build offline chain — export quality uses 4× FIR true-peak worklet for the ceiling stage.
+ * Build offline chain — export uses Faust WASM limiter, with FIR worklet fallback.
  */
 export async function buildOfflineMasteringChain(
   config: MasteringChainConfig
 ): Promise<MasteringChain> {
-  const useWorklet = shouldUseTruePeakWorkletOffline(
+  const usePremium = shouldUseTruePeakWorkletOffline(
     config.quality,
     config.dryBypass,
-    config.useTruePeakWorklet
+    config.useTruePeakWorklet ?? config.useFaustLimiter
   );
 
-  if (useWorklet) {
+  if (!usePremium) {
+    return buildMasteringChain(config);
+  }
+
+  if (config.useTruePeakWorklet && !config.useFaustLimiter) {
     return buildMasteringChainAsync({
       ...config,
       useTruePeakWorklet: true,
+      useFaustLimiter: false,
     });
   }
 
-  return buildMasteringChain(config);
+  try {
+    return await buildMasteringChainAsync({
+      ...config,
+      useFaustLimiter: true,
+      useTruePeakWorklet: false,
+    });
+  } catch (err) {
+    console.warn('Faust WASM limiter unavailable — using FIR worklet fallback', err);
+    return buildMasteringChainAsync({
+      ...config,
+      useFaustLimiter: false,
+      useTruePeakWorklet: true,
+    });
+  }
 }
 
 /**
@@ -248,7 +269,7 @@ export async function buildMasteringChainAsync(
 ): Promise<MasteringChain> {
   let truePeakLimiterNode = config.truePeakLimiterNode ?? null;
 
-  if (config.useTruePeakWorklet && !truePeakLimiterNode && !config.dryBypass) {
+  if (!truePeakLimiterNode && !config.dryBypass) {
     const loudnessStyle = config.params.genreBehavior.loudnessStyle;
     const styleParams = LOUDNESS_STYLE_PARAMS[loudnessStyle] || LOUDNESS_STYLE_PARAMS.balanced;
     const isBrickwall = config.settings.logicMode === 'brickwall';
@@ -260,14 +281,26 @@ export async function buildMasteringChainAsync(
       limParams.ceiling
     );
 
-    truePeakLimiterNode = await createTruePeakLimiterNode(config.context, {
-      monitorOnly: false,
-      hqMode: true,
-      ceiling: finalCeiling,
-      threshold: finalCeiling - 3,
-      attack: limParams.attack,
-      release: limParams.release,
-    });
+    if (config.useFaustLimiter) {
+      truePeakLimiterNode = await createFaustLimiterNode(config.context, {
+        thresholdDB: finalCeiling - 3,
+        ratio: limParams.ratio,
+        attackSec: limParams.attack,
+        releaseSec: limParams.release,
+        ceilingDBTP: finalCeiling,
+        mix: 1,
+      });
+      console.log(`   TruePeak: FAUST WASM @ ${finalCeiling.toFixed(1)} dBTP ceiling`);
+    } else if (config.useTruePeakWorklet) {
+      truePeakLimiterNode = await createTruePeakLimiterNode(config.context, {
+        monitorOnly: false,
+        hqMode: true,
+        ceiling: finalCeiling,
+        threshold: finalCeiling - 3,
+        attack: limParams.attack,
+        release: limParams.release,
+      });
+    }
   }
 
   return buildMasteringChain({
@@ -549,7 +582,12 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     limiterCeilingDBTP,
     outputAnalyser,
     dispose: () => {
-      disposeTruePeakLimiterNode(limiter.truePeakNode);
+      const tp = limiter.truePeakNode;
+      if (tp && 'destroy' in tp && typeof (tp as { destroy?: () => void }).destroy === 'function') {
+        disposeFaustLimiterNode(tp as import('@grame/faustwasm').IFaustMonoWebAudioNode);
+      } else {
+        disposeTruePeakLimiterNode(tp);
+      }
       nodesToDispose.forEach(node => {
         try { node.disconnect(); } catch (e) { /* ignore */ }
       });

@@ -96,12 +96,8 @@ export function ActiveSettingsStrip({
           }
         />
         <AppliedRow
-          label="True-peak mode"
-          detail={
-            hqMode
-              ? 'HQ meters (4× FIR) · export uses same FIR limiter + 24-bit WAV'
-              : 'Standard peak detect on meters · export still uses FIR limiter'
-          }
+          label="Export limiter"
+          detail="Faust WASM compressor + brickwall ceiling (fallback: FIR worklet)"
         />
       </div>
     </div>
