@@ -222,6 +222,11 @@ export function shouldUseTruePeakWorkletOffline(
   return quality === 'export';
 }
 
+/** Single quality switch for live playback, waveform preview, and export. */
+export function resolveMasteringQualityMode(hqEnabled: boolean): QualityMode {
+  return hqEnabled ? 'export' : 'preview';
+}
+
 /**
  * Build offline chain — export uses Faust WASM limiter, with FIR worklet fallback.
  */

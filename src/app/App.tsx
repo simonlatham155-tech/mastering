@@ -139,6 +139,8 @@ export default function App() {
   /** Ozone-style level-matched A/B — boosts bypass to processed loudness (export unchanged). */
   const [gainMatchEnabled, setGainMatchEnabled] = useState(false);
   const [bypassGainMatchDB, setBypassGainMatchDB] = useState(0);
+  /** HQ: export-quality chain (Faust ceiling, 4× saturation OS) for live + waveform. */
+  const [hqMode, setHQMode] = useState(true);
 
   const [spectralProfile, setSpectralProfile] = useState<SpectralProfile | null>(null);
   const [matchStrength, setMatchStrength] = useState(DEFAULT_TONAL_MATCH_STRENGTH);
@@ -172,13 +174,14 @@ export default function App() {
   const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
   const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
 
-  const startWaveformPreviewRender = (
-    settings: ReturnType<typeof buildAppProcessingSettings>,
-    options?: { hq?: boolean }
-  ) => {
+  const startWaveformPreviewRender = useCallback(
+    (
+      settings: ReturnType<typeof buildAppProcessingSettings>,
+      options?: { hq?: boolean }
+    ) => {
     const generation = ++waveformRenderGenRef.current;
     setIsWaveformRendering(true);
-    const hq = options?.hq ?? false;
+    const hq = options?.hq ?? hqMode;
 
     const preset = getExportPreset(exportPreset);
     const ceilingDBTP = limiterCeilingOverride ?? preset.ceiling;
@@ -235,7 +238,17 @@ export default function App() {
         }
       }
     })();
-  };
+  },
+  [
+    hqMode,
+    exportPreset,
+    limiterCeilingOverride,
+    effectiveInputTrimDB,
+    proDynamics.sslGlue,
+    proDynamics.outputTrimDB,
+    proDynamics.autoStageOnExport,
+    originalBuffer,
+  ]);
 
   const syncPlaybackGainOptions = useCallback(() => {
     const player = realtimePlayerRef.current;
@@ -381,7 +394,6 @@ export default function App() {
   const [clipIndicator, setClipIndicator] = useState(false);
   
   // Reference-Grade DSP State
-  const [hqMode, setHQMode] = useState(true);
   const [truePeakDBTP, setTruePeakDBTP] = useState(-1.0);
   const [digitalPeakDB, setDigitalPeakDB] = useState(-1.5);
   const [gainReductionDB, setGainReductionDB] = useState(0);
