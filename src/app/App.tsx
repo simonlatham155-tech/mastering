@@ -1211,7 +1211,7 @@ export default function App() {
                   <span className="text-white font-bold">AUDIO</span>
                   <span className="text-white text-lg"> MASTERING SUITE</span>
                 </h1>
-                <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
+                <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider leading-relaxed">
                   Latham Audio · Plugins and other apps in development
                   {' · '}
                   <a
@@ -1220,9 +1220,10 @@ export default function App() {
                   >
                     Black box vs genre-aware demo →
                   </a>
-                </p>
-                <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed normal-case tracking-normal">
-                  Built on three decades of recording, mixing and mastering best practices.
+                  <br />
+                  <span className="normal-case tracking-normal text-zinc-400">
+                    Built on three decades of recording, mixing and mastering best practices.
+                  </span>
                 </p>
               </div>
             </header>
