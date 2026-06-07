@@ -43,7 +43,8 @@ export class RealtimeAudioPlayer {
   private isPlaying: boolean = false;
   private currentSettings: ProcessingSettings | null = null;
   private currentPlan: ProcessingPlan | null = null;
-  private currentBypassMode: boolean = false;
+  private currentDryBypass: boolean = false;
+  private currentUseMinimalMaster: boolean = false;
   private currentInputTrimDB: number | undefined = undefined;
   private isSwitchingBypass: boolean = false; // Flag to prevent state corruption during A/B switch
   
@@ -72,7 +73,13 @@ export class RealtimeAudioPlayer {
    * Previously the chain was reused even when settings changed, meaning slider
    * tweaks made while paused were silently ignored.
    */
-  play(settings: ProcessingSettings, plan: ProcessingPlan, useMinimalMaster: boolean, inputTrimDB?: number): void {
+  play(
+    settings: ProcessingSettings,
+    plan: ProcessingPlan,
+    dryBypass: boolean,
+    inputTrimDB?: number,
+    useMinimalMaster: boolean = false
+  ): void {
     if (!this.audioContext || !this.audioBuffer) {
       throw new Error('No audio loaded');
     }
@@ -91,13 +98,14 @@ export class RealtimeAudioPlayer {
     const settingsChanged = (
       this.currentSettings !== settings ||
       this.currentPlan !== plan ||
-      this.currentBypassMode !== useMinimalMaster
+      this.currentDryBypass !== dryBypass ||
+      this.currentUseMinimalMaster !== useMinimalMaster
     );
     
-    // Store current settings for seamless bypass toggling
     this.currentSettings = settings;
     this.currentPlan = plan;
-    this.currentBypassMode = useMinimalMaster;
+    this.currentDryBypass = dryBypass;
+    this.currentUseMinimalMaster = useMinimalMaster;
     this.currentInputTrimDB = inputTrimDB;
     
     // Build or rebuild mastering chain
@@ -112,8 +120,9 @@ export class RealtimeAudioPlayer {
         destination: this.audioContext.destination,
         params: plan,
         settings,
-        quality: 'draft',
+        quality: 'preview',
         useMinimalMaster,
+        dryBypass,
         inputTrimDB,
       });
       
@@ -313,7 +322,13 @@ export class RealtimeAudioPlayer {
    * Rebuild the mastering chain (only needed when switching quality mode or major setting changes)
    * This WILL cause a momentary interruption
    */
-  rebuildChain(settings: ProcessingSettings, plan: ProcessingPlan, useMinimalMaster: boolean, inputTrimDB?: number): void {
+  rebuildChain(
+    settings: ProcessingSettings,
+    plan: ProcessingPlan,
+    dryBypass: boolean,
+    inputTrimDB?: number,
+    useMinimalMaster: boolean = false
+  ): void {
     const wasPlaying = this.isPlaying;
     const currentPosition = this.getState().currentTime;
     
@@ -331,7 +346,8 @@ export class RealtimeAudioPlayer {
     // Update stored settings
     this.currentSettings = settings;
     this.currentPlan = plan;
-    this.currentBypassMode = useMinimalMaster;
+    this.currentDryBypass = dryBypass;
+    this.currentUseMinimalMaster = useMinimalMaster;
     
     console.log('🔄 Rebuilding mastering chain...');
     
@@ -342,16 +358,16 @@ export class RealtimeAudioPlayer {
         destination: this.audioContext.destination,
         params: plan,
         settings,
-        quality: 'draft',
+        quality: 'preview',
         useMinimalMaster,
+        dryBypass,
         inputTrimDB,
       });
     }
     
-    // Resume playback if was playing
     if (wasPlaying && this.audioContext) {
       this.pauseTime = currentPosition;
-      this.play(settings, plan, useMinimalMaster);
+      this.play(settings, plan, dryBypass, inputTrimDB, useMinimalMaster);
     }
   }
   
@@ -363,16 +379,14 @@ export class RealtimeAudioPlayer {
    * The old onended handler is now detached before stopping the source,
    * and isPlaying is explicitly maintained through the switch.
    */
-  toggleBypass(newBypassMode: boolean): void {
+  toggleBypass(newDryBypass: boolean): void {
     if (!this.isPlaying || !this.currentSettings || !this.currentPlan || !this.audioContext || !this.audioBuffer) {
-      // If not playing, just store the new bypass mode for next play
-      // PATCH: Also dispose chain so it's rebuilt on next play() with correct mode
-      this.currentBypassMode = newBypassMode;
+      this.currentDryBypass = newDryBypass;
       if (this.masteringChain) {
         this.masteringChain.dispose();
         this.masteringChain = null;
       }
-      console.log(`🔄 Bypass mode set to: ${newBypassMode ? 'ORIGINAL' : 'PROCESSED'} (will apply on next play)`);
+      console.log(`🔄 Bypass mode set to: ${newDryBypass ? 'ORIGINAL' : 'PROCESSED'} (will apply on next play)`);
       return;
     }
     
@@ -385,7 +399,7 @@ export class RealtimeAudioPlayer {
     // CRITICAL: Also update pauseTime so getState() returns correct time during the switch
     this.pauseTime = currentPosition;
     
-    console.log(`🔄 Seamless A/B switch: ${newBypassMode ? 'ORIGINAL' : 'PROCESSED'} at ${currentPosition.toFixed(1)}s`);
+    console.log(`🔄 Seamless A/B switch: ${newDryBypass ? 'ORIGINAL' : 'PROCESSED'} at ${currentPosition.toFixed(1)}s`);
     
     // PATCH: Detach onended BEFORE stopping source to prevent race condition
     // Previously, source.stop() fired onended → stop() → pauseTime = 0, isPlaying = false
@@ -407,14 +421,15 @@ export class RealtimeAudioPlayer {
     }
     
     // Build new chain with new bypass mode
-    this.currentBypassMode = newBypassMode;
+    this.currentDryBypass = newDryBypass;
     this.masteringChain = buildMasteringChain({
       context: this.audioContext,
       destination: this.audioContext.destination,
       params: this.currentPlan,
       settings: this.currentSettings,
-      quality: 'draft',
-      useMinimalMaster: newBypassMode,
+      quality: 'preview',
+      useMinimalMaster: this.currentUseMinimalMaster,
+      dryBypass: newDryBypass,
       inputTrimDB: this.currentInputTrimDB,
     });
     

@@ -23,8 +23,14 @@ import { InterSamplePeakMeter } from './components/inter-sample-peak-meter';
 import { AdvancedCompressorControls, AdvancedCompressorSettings } from './components/advanced-compressor-controls';
 import { AudioPlayer } from './components/audio-player';
 import { ProfileAdjustmentsPanel, ProfileAdjustments } from './components/profile-adjustments';
-import { resolveProcessingPlan } from './data/preset-resolution';
 import { getGenrePreset } from './data/genre-presets';
+import { getExportPreset } from './data/export-presets';
+import {
+  appliedRecommendationFromAI,
+  buildAppProcessingPlan,
+  buildAppProcessingSettings,
+  type AppProcessingContext,
+} from './services/app-processing-context';
 import { toast, Toaster } from 'sonner';
 import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio-processor';
 import { analyzeAudioFile as analyzeInputAudio, AudioAnalysisResult } from './utils/audio-analyzer';
@@ -37,6 +43,41 @@ import { motion } from 'motion/react';
 
 type LogicMode = 'brickwall' | 'dynamics';
 // PerformanceMode removed (2026-02-16) - studio mastering only
+
+function buildProcessingContext(
+  state: {
+    gearProfile: GearProfileId;
+    exportPreset: ExportPresetId;
+    logicMode: LogicMode;
+    circuitDrive: number;
+    profileAdjustments: ProfileAdjustments;
+  },
+  overrides?: Partial<AppProcessingContext>
+): AppProcessingContext {
+  return {
+    gearProfile: overrides?.gearProfile ?? state.gearProfile,
+    exportPreset: overrides?.exportPreset ?? state.exportPreset,
+    logicMode: overrides?.logicMode ?? state.logicMode,
+    circuitDrive: overrides?.circuitDrive ?? state.circuitDrive,
+    profileAdjustments: overrides?.profileAdjustments ?? state.profileAdjustments,
+  };
+}
+
+function syncProfileAdjustmentsForGear(
+  gearProfile: GearProfileId,
+  circuitDrive?: number
+): ProfileAdjustments | null {
+  const profile = gearProfiles.find(p => p.id === gearProfile);
+  if (!profile) return null;
+
+  return {
+    lowShelfBoost: profile.lowShelfBoost,
+    midRangeAdjust: profile.midRangeAdjust,
+    highShelfBoost: profile.highShelfBoost,
+    stereoWidth: profile.stereoWidth,
+    saturationAmount: circuitDrive ?? profile.saturationAmount,
+  };
+}
 
 export default function App() {
   const [circuitDrive, setCircuitDrive] = useState(50);
@@ -214,27 +255,15 @@ export default function App() {
     
     // Build fresh settings + plan and rebuild the chain
     const rebuildAsync = async () => {
-      const { getExportPreset } = await import('./data/export-presets');
-      const preset = getExportPreset(exportPreset);
-      const { resolveProcessingPlan } = await import('./data/preset-resolution');
-      const userOverrides = {
-        width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
-        bassTilt: profileAdjustments.lowShelfBoost,
-        mudCut: profileAdjustments.midRangeAdjust,
-        airTilt: profileAdjustments.highShelfBoost,
-        colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
-      };
-      const plan = resolveProcessingPlan({ genreId: gearProfile, exportPresetId: exportPreset, userOverrides });
-      
-      const settings = {
-        circuitDrive,
-        logicMode,
-        targetLUFS: preset.lufs,
-        exportPresetId: exportPreset,
-        genreId: gearProfile,
+      const ctx = buildProcessingContext({
         gearProfile,
-        userOverrides,
-      };
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments,
+      });
+      const plan = buildAppProcessingPlan(ctx);
+      const settings = buildAppProcessingSettings(ctx);
       
       player.rebuildChain(settings, plan, bypassMode, inputTrimDB);
       console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
@@ -258,13 +287,12 @@ export default function App() {
     if (!selectedFile) return;
 
     setIsProcessing(true);
+    setIsAnalyzing(true);
     toast.info('Analyzing audio file...');
 
     try {
-      // Load and analyze
       await audioProcessor.loadAudioFile(selectedFile);
       
-      // Store original buffer for playback/visualization
       const original = audioProcessor.getOriginalBuffer();
       setOriginalBuffer(original);
       
@@ -273,27 +301,64 @@ export default function App() {
         duration: original?.duration.toFixed(2),
         sampleRate: original?.sampleRate
       });
+
+      const inputResult = await analyzeInputAudio(selectedFile);
+      setInputAnalysis(inputResult);
+
+      const recommendation = AIMasteringEngine.recommend(inputResult);
+      setAIRecommendation(recommendation);
+
+      const applied = appliedRecommendationFromAI(recommendation);
+      const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
+      if (syncedProfile) {
+        setProfileAdjustments(syncedProfile);
+      }
+      setCircuitDrive(applied.circuitDrive);
+      setLogicMode(applied.logicMode);
+      setGearProfile(applied.gearProfile);
+      setExportPreset(applied.exportPreset);
+
+      toast.success(
+        `Auto-configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
+      );
       
       const analysisResult = await audioProcessor.analyzeAudio();
       setAnalysis(analysisResult);
 
-      toast.success(`Analysis complete: ${analysisResult.lufs.toFixed(1)} LUFS`);
+      const processingContext = buildProcessingContext(
+        {
+          gearProfile,
+          exportPreset,
+          logicMode,
+          circuitDrive,
+          profileAdjustments,
+        },
+        {
+          gearProfile: applied.gearProfile,
+          exportPreset: applied.exportPreset,
+          logicMode: applied.logicMode,
+          circuitDrive: applied.circuitDrive,
+          profileAdjustments: syncedProfile ?? profileAdjustments,
+        }
+      );
 
-      // Auto-process in draft mode for instant A/B comparison
-      // Pass the buffer directly (state hasn't updated yet!)
-      await processAudioFile(analysisResult, original);
+      await processAudioFile(analysisResult, original, processingContext);
     } catch (error) {
       console.error('Audio analysis failed:', error);
       toast.error('Failed to analyze audio file');
       setIsProcessing(false);
+    } finally {
+      setIsAnalyzing(false);
     }
-    // Note: finally block removed - processAudioFile manages isProcessing state
   };
 
-  const processAudioFile = async (analysisData?: AudioAnalysis, sourceBuffer?: AudioBuffer) => {
-    console.log('⚡ Initializing real-time draft player (NO pre-rendering!)');
+  const processAudioFile = async (
+    analysisData?: AudioAnalysis,
+    sourceBuffer?: AudioBuffer,
+    processingContext?: AppProcessingContext
+  ) => {
+    console.log('⚡ Initializing real-time preview player (NO pre-rendering!)');
     
-    // Use passed analysis or state analysis
     const currentAnalysis = analysisData || analysis;
     
     if (!selectedFile || !currentAnalysis) {
@@ -301,60 +366,31 @@ export default function App() {
       return;
     }
 
+    const ctx = processingContext ?? buildProcessingContext({
+      gearProfile,
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      profileAdjustments,
+    });
+    const settings = buildAppProcessingSettings(ctx);
+
     try {
-      // Get target LUFS from selected export preset
-      const { getExportPreset } = await import('./data/export-presets');
-      const preset = getExportPreset(exportPreset);
-      const targetLUFS = preset.lufs;
-      
-      // Build processing plan
-      const { resolveProcessingPlan } = await import('./data/preset-resolution');
-      const plan = resolveProcessingPlan({
-        genreId: gearProfile,
-        exportPresetId: exportPreset,
-        userOverrides: {
-          width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
-          bassTilt: profileAdjustments.lowShelfBoost,
-          mudCut: profileAdjustments.midRangeAdjust,
-          airTilt: profileAdjustments.highShelfBoost,
-          colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
-        },
-      });
-      
-      // Initialize RealtimeAudioPlayer (processes audio live during playback)
       if (!realtimePlayerRef.current) {
         realtimePlayerRef.current = new RealtimeAudioPlayer();
       }
       
-      // Load the audio file into the player
       await realtimePlayerRef.current.loadAudio(selectedFile);
       
       console.log('✅ Real-time player ready! Audio will be processed live during playback');
       console.log('   No pre-rendering! Instant start! 🚀');
       
-      toast.success('⚡ Draft mode ready - hit play to hear live processing!');
+      toast.success('⚡ Preview ready — hit play for live mastering');
       
-      // === BACKGROUND: Render processed waveform for visualization ===
-      // This runs async after the player is ready — doesn't block playback.
-      // The user can start playing immediately; waveform appears when ready.
       (async () => {
         try {
           console.log('🎨 Generating processed waveform for visualization...');
-          const waveformBuffer = await audioProcessor.renderExport({
-            circuitDrive,
-            logicMode,
-            genreId: gearProfile,
-            exportPresetId: exportPreset,
-            targetLUFS: preset.lufs,
-            gearProfile,
-            userOverrides: {
-              width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
-              bassTilt: profileAdjustments.lowShelfBoost,
-              mudCut: profileAdjustments.midRangeAdjust,
-              airTilt: profileAdjustments.highShelfBoost,
-              colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
-            },
-          }, inputTrimDB);
+          const waveformBuffer = await audioProcessor.renderExport(settings, inputTrimDB);
           setProcessedBuffer(waveformBuffer);
           console.log('🎨 Processed waveform ready for visualization');
         } catch (err) {
@@ -382,29 +418,8 @@ export default function App() {
 
   const handleFileSelect = async (file: File) => {
     setSelectedFile(file);
-    
-    // Run input analysis
-    setIsAnalyzing(true);
     setInputAnalysis(null);
     setAIRecommendation(null);
-    
-    try {
-      const result = await analyzeInputAudio(file);
-      setInputAnalysis(result);
-      
-      // Generate AI recommendation
-      const recommendation = AIMasteringEngine.recommend(result);
-      setAIRecommendation(recommendation);
-      
-      toast.success(`Input: ${result.lufs.toFixed(1)} LUFS • DR ${result.dynamicRange.toFixed(1)}dB • Genre: ${result.suggestedGenre}`, {
-        duration: 4000
-      });
-    } catch (error) {
-      console.error('Input analysis failed:', error);
-      toast.error('Failed to analyze input audio');
-    } finally {
-      setIsAnalyzing(false);
-    }
   };
 
   const handleApplyAIRecommendation = async () => {
@@ -413,21 +428,22 @@ export default function App() {
     setIsApplyingAI(true);
     
     try {
-      // Apply recommended settings
-      setCircuitDrive(aiRecommendation.circuitDrive);
-      setLogicMode(aiRecommendation.logicMode);
-      setGearProfile(aiRecommendation.gearProfile);
+      const applied = appliedRecommendationFromAI(aiRecommendation);
+      const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
+
+      setCircuitDrive(applied.circuitDrive);
+      setLogicMode(applied.logicMode);
+      setGearProfile(applied.gearProfile);
+      setExportPreset(applied.exportPreset);
+      if (syncedProfile) {
+        setProfileAdjustments(syncedProfile);
+      }
       
-      toast.success(`AI settings applied: ${aiRecommendation.circuitDrive}% THD, ${aiRecommendation.logicMode.toUpperCase()} mode, ${aiRecommendation.gearProfile.toUpperCase()} profile`);
-      
-      // Auto-dismiss the AI panel after applying
-      setTimeout(() => {
-        setAIRecommendation(null);
-      }, 2000);
+      toast.success(`Settings applied: ${applied.circuitDrive}% warmth, ${applied.logicMode.toUpperCase()} mode, ${applied.gearProfile} profile`);
       
     } catch (error) {
       console.error('Failed to apply AI recommendation:', error);
-      toast.error('Failed to apply AI settings');
+      toast.error('Failed to apply settings');
     } finally {
       setIsApplyingAI(false);
     }
@@ -459,28 +475,16 @@ export default function App() {
     toast.info(`Rendering ${presetId.toUpperCase()} optimized master...`);
 
     try {
-      // Import export preset to get target LUFS
-      const { getExportPreset } = await import('./data/export-presets');
-      const preset = getExportPreset(presetId);
-      const targetLUFS = preset.lufs;
-
-      // Render at export quality using NEW renderExport() method
-      const finalBuffer = await audioProcessor.renderExport({
-        circuitDrive,
+      const ctx = buildProcessingContext({
+        gearProfile,
+        exportPreset,
         logicMode,
-        // performanceMode removed - always studio
-        genreId: gearProfile, // gearProfile IS the genreId in current UI
-        exportPresetId: presetId,
-        targetLUFS,
-        gearProfile, // Legacy - keep during migration
-        userOverrides: {
-          width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
-          bassTilt: profileAdjustments.lowShelfBoost,
-          mudCut: profileAdjustments.midRangeAdjust,
-          airTilt: profileAdjustments.highShelfBoost,
-          colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
-        },
-      }, inputTrimDB);
+        circuitDrive,
+        profileAdjustments,
+      });
+      const settings = buildAppProcessingSettings({ ...ctx, exportPreset: presetId });
+
+      const finalBuffer = await audioProcessor.renderExport(settings, inputTrimDB);
 
       // Export as WAV
       const blob = await audioProcessor.exportAsWAV(finalBuffer);
@@ -495,7 +499,8 @@ export default function App() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      toast.success(`${presetId.toUpperCase()} master exported (${targetLUFS} LUFS)`);
+      const preset = getExportPreset(presetId);
+      toast.success(`${presetId.toUpperCase()} master exported (${preset.lufs} LUFS)`);
     } catch (error) {
       console.error('Export failed:', error);
       toast.error('Failed to export audio');
@@ -513,38 +518,15 @@ export default function App() {
   const handlePlay = async () => {
     if (!realtimePlayerRef.current || !analysis) return;
     
-    const { getExportPreset } = await import('./data/export-presets');
-    const preset = getExportPreset(exportPreset);
-    const targetLUFS = preset.lufs;
-    
-    const { resolveProcessingPlan } = await import('./data/preset-resolution');
-    const plan = resolveProcessingPlan({
-      genreId: gearProfile,
-      exportPresetId: exportPreset,
-      userOverrides: {
-        width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
-        bassTilt: profileAdjustments.lowShelfBoost,
-        mudCut: profileAdjustments.midRangeAdjust,
-        airTilt: profileAdjustments.highShelfBoost,
-        colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
-      },
-    });
-    
-    const settings = {
-      circuitDrive,
-      logicMode,
-      targetLUFS,
-      exportPresetId: exportPreset,
-      genreId: gearProfile,
+    const ctx = buildProcessingContext({
       gearProfile,
-      userOverrides: {
-        width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6, // Offset from genre default
-        bassTilt: profileAdjustments.lowShelfBoost,
-        mudCut: profileAdjustments.midRangeAdjust,
-        airTilt: profileAdjustments.highShelfBoost,
-        colorAmount: (profileAdjustments.saturationAmount - 50) / 100, // Offset from genre default
-      },
-    };
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      profileAdjustments,
+    });
+    const plan = buildAppProcessingPlan(ctx);
+    const settings = buildAppProcessingSettings(ctx);
     
     realtimePlayerRef.current.play(settings, plan, bypassMode, inputTrimDB);
   };
@@ -1068,7 +1050,7 @@ export default function App() {
             <ExportPanel 
               onExport={handleExport} 
               disabled={!selectedFile || !analysis || isProcessing}
-              currentTarget={exportPreset ? exportPreset : undefined}
+              currentTarget={getExportPreset(exportPreset).lufs}
             />
           </main>
         </div>
