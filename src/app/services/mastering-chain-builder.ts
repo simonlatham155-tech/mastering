@@ -44,7 +44,8 @@ export interface MasteringChainConfig {
   quality: QualityMode;
   useMinimalMaster: boolean;
   dryBypass?: boolean;
-  inputTrimDB?: number; // Auto input trim (negative = attenuate). Applied before any processing.
+  inputTrimDB?: number;
+  inputLUFS?: number; // Measured integrated LUFS for makeup gain calculation
 }
 
 export interface MasteringChain {
@@ -199,7 +200,7 @@ const LOUDNESS_STYLE_PARAMS: Record<string, LoudnessStyleParams> = {
  * 6. Limiter (peak management + loudness targeting — loudnessStyle controls behavior)
  */
 export function buildMasteringChain(config: MasteringChainConfig): MasteringChain {
-  const { context, destination, params, settings, quality, useMinimalMaster, dryBypass = false, inputTrimDB } = config;
+  const { context, destination, params, settings, quality, useMinimalMaster, dryBypass = false, inputTrimDB, inputLUFS } = config;
   
   const loudnessStyle = params.genreBehavior.loudnessStyle;
   const styleParams = LOUDNESS_STYLE_PARAMS[loudnessStyle] || LOUDNESS_STYLE_PARAMS.balanced;
@@ -351,7 +352,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   
   // === STAGE 6: LIMITER (loudnessStyle-aware, dual-stage WaveShaper) ===
   console.log(`   [6] Limiter: ACTIVE (${loudnessStyle}, ${settings.logicMode})`);
-  const limiter = createLimiterStage(context, settings, params, styleParams, quality);
+  const limiter = createLimiterStage(context, settings, params, styleParams, quality, inputLUFS);
   currentNode.connect(limiter.input);
   currentNode = limiter.output;
   parameters.limiterThreshold = limiter.threshold;
@@ -594,7 +595,8 @@ function createLimiterStage(
   settings: ProcessingSettings,
   params: ProcessingPlan,
   styleParams: LoudnessStyleParams,
-  quality: QualityMode
+  quality: QualityMode,
+  inputLUFS?: number
 ): {
   input: AudioNode;
   output: AudioNode;
@@ -634,8 +636,7 @@ function createLimiterStage(
   
   // === MAKEUP GAIN (sole loudness authority) ===
   const targetLUFS = params.deliveryTargets.targetLUFS;
-  // TODO: Get actual analysis LUFS from AudioAnalysisResult
-  const estimatedCurrentLUFS = -16; // Placeholder — wire from analysis
+  const estimatedCurrentLUFS = inputLUFS ?? -16;
   const requiredGainDB = targetLUFS - estimatedCurrentLUFS;
   
   // Clamp makeup by loudnessStyle's maxGR (prevents over-limiting)
@@ -744,7 +745,7 @@ function createLimiterStage(
   
   console.log(`   Limiter: ceiling=${finalCeiling.toFixed(1)}dBTP, ratio=${limParams.ratio}:1, ` +
     `attack=${(limParams.attack * 1000).toFixed(1)}ms, release=${(limParams.release * 1000).toFixed(0)}ms, ` +
-    `maxGR=${limParams.maxGR}dB, makeup=${makeupGainDB.toFixed(1)}dB`);
+    `maxGR=${limParams.maxGR}dB, makeup=${makeupGainDB.toFixed(1)}dB (from ${estimatedCurrentLUFS.toFixed(1)} → ${targetLUFS} LUFS)`);
   console.log(`   Type1: ${isType1Active ? 'ACTIVE' : 'BYPASS'} (threshold @ ${(type1ThresholdRatio * 100).toFixed(0)}% ceiling), ` +
     `Type2: knee @ ${(type2KneeStart * 100).toFixed(0)}% ceiling`);
   

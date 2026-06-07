@@ -69,6 +69,7 @@ class OversamplingLimiter extends AudioWorkletProcessor {
     
     // HQ mode toggle
     this.hqMode = true; // Default: oversampling ON
+    this.monitorOnly = false; // Passthrough + measure only (no double limiting)
     
     // Listen for parameter changes from main thread
     this.port.onmessage = (event) => {
@@ -91,6 +92,9 @@ class OversamplingLimiter extends AudioWorkletProcessor {
         }
         if (data.hqMode !== undefined) {
           this.hqMode = data.hqMode;
+        }
+        if (data.monitorOnly !== undefined) {
+          this.monitorOnly = data.monitorOnly;
         }
       }
     };
@@ -307,6 +311,38 @@ class OversamplingLimiter extends AudioWorkletProcessor {
     for (let channel = 0; channel < numChannels; channel++) {
       const inputChannel = input[channel];
       const outputChannel = output[channel];
+
+      if (this.monitorOnly) {
+        outputChannel.set(inputChannel);
+
+        for (let i = 0; i < inputChannel.length; i++) {
+          const peak = Math.abs(inputChannel[i]);
+          if (peak > this.dbToLinear(this.digitalPeakDB)) {
+            this.digitalPeakDB = this.linearToDb(peak);
+          }
+        }
+
+        if (this.hqMode) {
+          const upsampled = this.upsample(inputChannel);
+          for (let i = 0; i < upsampled.length; i++) {
+            const peak = Math.abs(upsampled[i]);
+            if (peak > this.dbToLinear(this.truePeakDBTP)) {
+              this.truePeakDBTP = this.linearToDb(peak);
+            }
+          }
+        } else {
+          this.truePeakDBTP = this.digitalPeakDB;
+        }
+
+        const peakLinear = this.dbToLinear(this.truePeakDBTP);
+        if (peakLinear > this.ceilingLinear && peakLinear > 0) {
+          this.gainReductionDB = this.linearToDb(this.ceilingLinear / peakLinear);
+        } else {
+          this.gainReductionDB = 0;
+        }
+
+        continue;
+      }
       
       if (this.hqMode) {
         // HQ MODE: 4x Oversampling + FIR filtering

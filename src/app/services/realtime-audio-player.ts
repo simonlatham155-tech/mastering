@@ -23,9 +23,10 @@
  * - Fixed toggleBypass when paused (chain wasn't disposed)
  */
 
-import { buildMasteringChain, type MasteringChain, type QualityMode } from './mastering-chain-builder';
+import { buildMasteringChain, type MasteringChain } from './mastering-chain-builder';
 import type { ProcessingSettings } from './audio-processor';
 import type { ProcessingPlan } from '../data/preset-resolution';
+import { OversamplingLimiterManager, type LimiterMeterData } from './oversampling-limiter-manager';
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -46,7 +47,10 @@ export class RealtimeAudioPlayer {
   private currentDryBypass: boolean = false;
   private currentUseMinimalMaster: boolean = false;
   private currentInputTrimDB: number | undefined = undefined;
-  private isSwitchingBypass: boolean = false; // Flag to prevent state corruption during A/B switch
+  private currentInputLUFS: number = -16;
+  private isSwitchingBypass: boolean = false;
+  private limiterMeter = new OversamplingLimiterManager();
+  private hqModeEnabled = true;
   
   constructor() {
     // AudioContext will be created on first play (user interaction required)
@@ -67,22 +71,74 @@ export class RealtimeAudioPlayer {
   }
   
   /**
+   * Subscribe to live true-peak / GR meter updates from the limiter worklet tap.
+   */
+  setMeterCallback(callback: ((data: LimiterMeterData) => void) | null): void {
+    this.limiterMeter.setMeterCallback(callback);
+  }
+
+  setHQMode(enabled: boolean): void {
+    this.hqModeEnabled = enabled;
+    this.limiterMeter.setParameters({ hqMode: enabled });
+  }
+
+  private syncMeterParams(plan: ProcessingPlan): void {
+    this.limiterMeter.setParameters({
+      monitorOnly: true,
+      hqMode: this.hqModeEnabled,
+      ceiling: plan.deliveryTargets.ceiling,
+      threshold: plan.deliveryTargets.ceiling - 3,
+    });
+  }
+
+  private async createMasteringChain(
+    settings: ProcessingSettings,
+    plan: ProcessingPlan,
+    dryBypass: boolean,
+    inputTrimDB?: number,
+    useMinimalMaster: boolean = false
+  ): Promise<MasteringChain> {
+    if (!this.audioContext) {
+      throw new Error('No audio context');
+    }
+
+    const meterNode = await this.limiterMeter.initialize(this.audioContext);
+    this.limiterMeter.connectToDestination(this.audioContext.destination);
+    this.syncMeterParams(plan);
+
+    return buildMasteringChain({
+      context: this.audioContext,
+      destination: meterNode,
+      params: plan,
+      settings,
+      quality: 'preview',
+      useMinimalMaster,
+      dryBypass,
+      inputTrimDB,
+      inputLUFS: this.currentInputLUFS,
+    });
+  }
+
+  /**
    * Start or resume playback
    * 
    * PATCH: Always rebuild chain if settings/plan/bypass have changed since last build.
    * Previously the chain was reused even when settings changed, meaning slider
    * tweaks made while paused were silently ignored.
    */
-  play(
+  async play(
     settings: ProcessingSettings,
     plan: ProcessingPlan,
     dryBypass: boolean,
     inputTrimDB?: number,
-    useMinimalMaster: boolean = false
-  ): void {
+    useMinimalMaster: boolean = false,
+    inputLUFS?: number
+  ): Promise<void> {
     if (!this.audioContext || !this.audioBuffer) {
       throw new Error('No audio loaded');
     }
+
+    this.currentInputLUFS = inputLUFS ?? this.currentInputLUFS;
     
     // Resume AudioContext if suspended (browser autoplay policy)
     if (this.audioContext.state === 'suspended') {
@@ -114,17 +170,14 @@ export class RealtimeAudioPlayer {
         this.masteringChain.dispose();
         this.masteringChain = null;
       }
-      
-      this.masteringChain = buildMasteringChain({
-        context: this.audioContext,
-        destination: this.audioContext.destination,
-        params: plan,
+
+      this.masteringChain = await this.createMasteringChain(
         settings,
-        quality: 'preview',
-        useMinimalMaster,
+        plan,
         dryBypass,
         inputTrimDB,
-      });
+        useMinimalMaster
+      );
       
       if (settingsChanged) {
         console.log('🔄 Chain rebuilt (settings changed since last play)');
@@ -322,13 +375,17 @@ export class RealtimeAudioPlayer {
    * Rebuild the mastering chain (only needed when switching quality mode or major setting changes)
    * This WILL cause a momentary interruption
    */
-  rebuildChain(
+  async rebuildChain(
     settings: ProcessingSettings,
     plan: ProcessingPlan,
     dryBypass: boolean,
     inputTrimDB?: number,
-    useMinimalMaster: boolean = false
-  ): void {
+    useMinimalMaster: boolean = false,
+    inputLUFS?: number
+  ): Promise<void> {
+    if (inputLUFS !== undefined) {
+      this.currentInputLUFS = inputLUFS;
+    }
     const wasPlaying = this.isPlaying;
     const currentPosition = this.getState().currentTime;
     
@@ -353,21 +410,18 @@ export class RealtimeAudioPlayer {
     
     // Build new chain
     if (this.audioContext) {
-      this.masteringChain = buildMasteringChain({
-        context: this.audioContext,
-        destination: this.audioContext.destination,
-        params: plan,
+      this.masteringChain = await this.createMasteringChain(
         settings,
-        quality: 'preview',
-        useMinimalMaster,
+        plan,
         dryBypass,
         inputTrimDB,
-      });
+        useMinimalMaster
+      );
     }
     
     if (wasPlaying && this.audioContext) {
       this.pauseTime = currentPosition;
-      this.play(settings, plan, dryBypass, inputTrimDB, useMinimalMaster);
+      await this.play(settings, plan, dryBypass, inputTrimDB, useMinimalMaster, this.currentInputLUFS);
     }
   }
   
@@ -379,7 +433,7 @@ export class RealtimeAudioPlayer {
    * The old onended handler is now detached before stopping the source,
    * and isPlaying is explicitly maintained through the switch.
    */
-  toggleBypass(newDryBypass: boolean): void {
+  async toggleBypass(newDryBypass: boolean): Promise<void> {
     if (!this.isPlaying || !this.currentSettings || !this.currentPlan || !this.audioContext || !this.audioBuffer) {
       this.currentDryBypass = newDryBypass;
       if (this.masteringChain) {
@@ -422,16 +476,13 @@ export class RealtimeAudioPlayer {
     
     // Build new chain with new bypass mode
     this.currentDryBypass = newDryBypass;
-    this.masteringChain = buildMasteringChain({
-      context: this.audioContext,
-      destination: this.audioContext.destination,
-      params: this.currentPlan,
-      settings: this.currentSettings,
-      quality: 'preview',
-      useMinimalMaster: this.currentUseMinimalMaster,
-      dryBypass: newDryBypass,
-      inputTrimDB: this.currentInputTrimDB,
-    });
+    this.masteringChain = await this.createMasteringChain(
+      this.currentSettings,
+      this.currentPlan,
+      newDryBypass,
+      this.currentInputTrimDB,
+      this.currentUseMinimalMaster
+    );
     
     // Create new source and resume from saved position
     this.sourceNode = this.audioContext.createBufferSource();
@@ -472,6 +523,8 @@ export class RealtimeAudioPlayer {
       this.masteringChain.dispose();
       this.masteringChain = null;
     }
+
+    this.limiterMeter.dispose();
     
     if (this.audioContext) {
       this.audioContext.close();

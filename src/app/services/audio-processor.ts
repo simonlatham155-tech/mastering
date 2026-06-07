@@ -348,6 +348,7 @@ export class AudioProcessor {
         settings,
         quality: 'preview',
         useMinimalMaster,
+        inputLUFS: this.analysis?.lufs ?? -16,
       });
     }
 
@@ -455,12 +456,19 @@ export class AudioProcessor {
    * This is the high-quality offline render for final export.
    * Uses OfflineAudioContext with full oversampling and integrated LUFS.
    */
-  async renderExport(settings: ProcessingSettings, inputTrimDB?: number): Promise<AudioBuffer> {
+  async renderExport(
+    settings: ProcessingSettings,
+    inputTrimDB?: number,
+    options?: { forVisualization?: boolean }
+  ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
     }
 
-    console.log('💎 EXPORT MODE: Full quality offline render');
+    const forVisualization = options?.forVisualization ?? false;
+    console.log(forVisualization
+      ? '🎨 WAVEFORM PREVIEW: Full chain render (matches live preview)'
+      : '💎 EXPORT MODE: Full quality offline render');
 
     // Build processing plan
     const plan = resolveProcessingPlan({
@@ -471,7 +479,7 @@ export class AudioProcessor {
       userOverrides: settings.userOverrides
     });
 
-    // Determine minimal master mode
+    // Determine minimal master mode — skip for waveform viz (must match live preview)
     const inputLUFS = this.analysis?.lufs ?? -16;
     const inputPeakDBFS = this.analysis?.peakLevel ?? -1;
     const inputCrestDBFS = this.analysis?.crestFactor ?? 12;
@@ -481,7 +489,9 @@ export class AudioProcessor {
     const isHotPeaks = inputPeakDBFS >= -1.5;
     const isCompressed = inputCrestDBFS < 8.0;
     const isCloseToTarget = requiredLoudnessChange <= 3.0;
-    const useMinimalMaster = isHotPeaks && isCompressed && isCloseToTarget;
+    const useMinimalMaster = forVisualization
+      ? false
+      : isHotPeaks && isCompressed && isCloseToTarget;
 
     // Create OfflineAudioContext for full track
     const sampleRate = this.audioBuffer.sampleRate;
@@ -494,15 +504,16 @@ export class AudioProcessor {
       sampleRate
     );
 
-    // Build mastering chain (export quality)
+    // Build mastering chain (export quality for download, preview for waveform viz)
     const chain = buildMasteringChain({
       context: offlineContext,
       destination: offlineContext.destination,
       params: plan,
       settings,
-      quality: 'export',
+      quality: forVisualization ? 'preview' : 'export',
       useMinimalMaster,
       inputTrimDB,
+      inputLUFS: this.analysis?.lufs ?? -16,
     });
 
     // Create source
@@ -524,7 +535,6 @@ export class AudioProcessor {
 
     // Connect chain
     source.connect(chain.input);
-    chain.output.connect(offlineContext.destination);
 
     // Start source
     source.start(0);
@@ -551,7 +561,12 @@ export class AudioProcessor {
    * This is the old chunk-based preview system. Keep it for A/B comparison,
    * but real-time playback via startPlayback() is preferred.
    */
-  async renderPreviewChunk(settings: ProcessingSettings, chunkOffset: number = 0, chunkDuration: number = 30): Promise<AudioBuffer> {
+  async renderPreviewChunk(
+    settings: ProcessingSettings,
+    chunkOffset: number = 0,
+    chunkDuration: number = 30,
+    inputTrimDB?: number
+  ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
     }
@@ -587,8 +602,10 @@ export class AudioProcessor {
       destination: offlineContext.destination,
       params: plan,
       settings,
-      quality: 'preview', // Preview quality for realtime monitoring
+      quality: 'preview',
       useMinimalMaster,
+      inputTrimDB,
+      inputLUFS: this.analysis?.lufs ?? -16,
     });
 
     // Extract chunk
@@ -611,7 +628,7 @@ export class AudioProcessor {
 
     // Connect chain
     source.connect(chain.input);
-    chain.output.connect(offlineContext.destination);
+    // chain.output is already wired to destination inside buildMasteringChain
 
     // Start and render
     source.start(0);
@@ -621,6 +638,40 @@ export class AudioProcessor {
     chain.dispose();
 
     return renderedBuffer;
+  }
+
+  /**
+   * Fast processed waveform preview — renders a short chunk only (not full track).
+   * Full-track mastering is heard via the realtime player; this is for the UI waveform.
+   */
+  async renderWaveformPreview(
+    settings: ProcessingSettings,
+    inputTrimDB?: number,
+    maxSeconds: number = 45
+  ): Promise<AudioBuffer> {
+    if (!this.audioBuffer) {
+      throw new Error('No audio buffer loaded');
+    }
+
+    const chunkSeconds = Math.min(maxSeconds, this.audioBuffer.duration);
+    const previewSettings: ProcessingSettings = {
+      ...settings,
+      userOverrides: {
+        ...settings.userOverrides,
+        // Multiband offline render is very slow on long files — skip for waveform viz
+        useMultiband: false,
+      },
+    };
+
+    console.log(`🎨 Waveform preview: rendering first ${chunkSeconds.toFixed(1)}s (fast path)`);
+
+    const timeoutMs = 25000;
+    const renderPromise = this.renderPreviewChunk(previewSettings, 0, chunkSeconds, inputTrimDB);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Waveform preview timed out')), timeoutMs);
+    });
+
+    return Promise.race([renderPromise, timeoutPromise]);
   }
 
   // ============================================================================
