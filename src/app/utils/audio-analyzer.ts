@@ -3,9 +3,11 @@
 
 import {
   measureBufferLoudness,
-  measureBufferTruePeak,
   resolveIntegratedLUFS,
+  INPUT_ANALYSIS_MAX_SECONDS,
 } from './measure-buffer-loudness';
+import { measureTruePeakLinearDBTP, measureSamplePeakDBFS } from './measure-buffer-true-peak';
+import type { AudioAnalysis } from '../services/audio-processor';
 
 export interface AudioAnalysisResult {
   lufs: number;          // Integrated LUFS (BS.1770 when async path used)
@@ -95,18 +97,28 @@ export async function analyzeAudioBufferAsync(
 ): Promise<AudioAnalysisResult> {
   const features = analyzeAudioFeatures(audioBuffer);
 
-  const [loudness, peaks] = await Promise.all([
-    measureBufferLoudness(audioBuffer),
-    measureBufferTruePeak(audioBuffer),
-  ]);
+  const loudness = await measureBufferLoudness(audioBuffer, {
+    maxDurationSec: INPUT_ANALYSIS_MAX_SECONDS,
+  });
 
   const integratedLUFS = resolveIntegratedLUFS(loudness, features.rmsFallbackLUFS);
+  const digitalPeakDB = measureSamplePeakDBFS(audioBuffer);
+  const truePeakDBTP = measureTruePeakLinearDBTP(audioBuffer);
 
+  return featuresToResult(features, integratedLUFS, truePeakDBTP, digitalPeakDB);
+}
+
+/** Mix-setup UI result from a single AudioProcessor analysis pass (no duplicate worklet renders). */
+export function buildInputAnalysisFromProcessor(
+  audioBuffer: AudioBuffer,
+  analysis: AudioAnalysis
+): AudioAnalysisResult {
+  const features = analyzeAudioFeatures(audioBuffer);
   return featuresToResult(
     features,
-    integratedLUFS,
-    peaks.truePeakDBTP,
-    peaks.digitalPeakDB
+    analysis.lufs,
+    analysis.truePeakDBTP,
+    analysis.peakLevel
   );
 }
 

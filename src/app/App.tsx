@@ -36,7 +36,7 @@ import {
 } from './services/app-processing-context';
 import { toast, Toaster } from 'sonner';
 import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio-processor';
-import { analyzeAudioBufferAsync, AudioAnalysisResult } from './utils/audio-analyzer';
+import { buildInputAnalysisFromProcessor, AudioAnalysisResult } from './utils/audio-analyzer';
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
@@ -735,10 +735,8 @@ export default function App() {
         sampleRate: original.sampleRate,
       });
 
-      const [inputResult, analysisResult] = await Promise.all([
-        analyzeAudioBufferAsync(original),
-        audioProcessor.analyzeAudio(),
-      ]);
+      const analysisResult = await audioProcessor.analyzeAudio();
+      const inputResult = buildInputAnalysisFromProcessor(original, analysisResult);
 
       setInputAnalysis(inputResult);
       setAnalysis(analysisResult);

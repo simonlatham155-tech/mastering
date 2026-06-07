@@ -4,9 +4,18 @@ import {
   measureSamplePeakDBFS,
   type TruePeakMeasurement,
 } from './measure-buffer-true-peak';
+import { INPUT_ANALYSIS_MAX_SECONDS, sliceBufferHead } from './analysis-buffer-slice';
 
 export { measureSamplePeakDBFS, measureTruePeakLinearDBTP, measureBufferTruePeak };
 export type { TruePeakMeasurement };
+export { INPUT_ANALYSIS_MAX_SECONDS, sliceBufferHead };
+
+export interface MeasureBufferLoudnessOptions {
+  /** Cap offline render length (upload path). Default: full buffer. */
+  maxDurationSec?: number;
+  /** Abort offline render and fall back to RMS if exceeded. */
+  renderTimeoutMs?: number;
+}
 
 const EMPTY_LUFS: LufsMeterData = {
   momentary: -Infinity,
@@ -34,14 +43,23 @@ function workletUrl(): string {
  * Measure integrated / momentary LUFS on a rendered AudioBuffer using the same
  * BS.1770 worklet as live playback (parity guaranteed).
  */
-export async function measureBufferLoudness(buffer: AudioBuffer): Promise<BufferLoudnessResult> {
+export async function measureBufferLoudness(
+  buffer: AudioBuffer,
+  options: MeasureBufferLoudnessOptions = {}
+): Promise<BufferLoudnessResult> {
   if (buffer.length === 0) return { ...EMPTY_BUFFER_LUFS };
 
-  const channels = Math.min(2, buffer.numberOfChannels);
-  const sampleRate = buffer.sampleRate;
-  const length = buffer.length;
+  const measureTarget =
+    options.maxDurationSec != null
+      ? sliceBufferHead(buffer, options.maxDurationSec)
+      : buffer;
+
+  const channels = Math.min(2, measureTarget.numberOfChannels);
+  const sampleRate = measureTarget.sampleRate;
+  const length = measureTarget.length;
 
   const offline = new OfflineAudioContext(channels, length, sampleRate);
+  const renderTimeoutMs = options.renderTimeoutMs ?? 30_000;
 
   try {
     await offline.audioWorklet.addModule(workletUrl());
@@ -71,13 +89,13 @@ export async function measureBufferLoudness(buffer: AudioBuffer): Promise<Buffer
   meter.port.postMessage({ type: 'reset' });
 
   const measureBuffer = offline.createBuffer(channels, length, sampleRate);
-  if (buffer.numberOfChannels === 1) {
-    const mono = buffer.getChannelData(0);
+  if (measureTarget.numberOfChannels === 1) {
+    const mono = measureTarget.getChannelData(0);
     measureBuffer.copyToChannel(mono, 0);
     if (channels > 1) measureBuffer.copyToChannel(mono, 1);
   } else {
-    measureBuffer.copyToChannel(buffer.getChannelData(0), 0);
-    if (channels > 1) measureBuffer.copyToChannel(buffer.getChannelData(1), 1);
+    measureBuffer.copyToChannel(measureTarget.getChannelData(0), 0);
+    if (channels > 1) measureBuffer.copyToChannel(measureTarget.getChannelData(1), 1);
   }
 
   const source = offline.createBufferSource();
@@ -86,7 +104,19 @@ export async function measureBufferLoudness(buffer: AudioBuffer): Promise<Buffer
   meter.connect(offline.destination);
   source.start(0);
 
-  await offline.startRendering();
+  try {
+    await Promise.race([
+      offline.startRendering(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('LUFS offline render timeout')), renderTimeoutMs);
+      }),
+    ]);
+  } catch (err) {
+    console.warn('LUFS offline measure failed:', err);
+    meter.disconnect();
+    source.disconnect();
+    return { ...EMPTY_BUFFER_LUFS };
+  }
 
   // Allow final port message to arrive
   await new Promise((r) => setTimeout(r, 0));
