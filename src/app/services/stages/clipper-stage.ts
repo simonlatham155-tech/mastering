@@ -37,15 +37,15 @@ export function buildClipperStage(
   const isBrickwall = settings.logicMode === 'brickwall';
   const style = params.genreBehavior.loudnessStyle;
 
-  let amount = 0.35;
+  let amount = 0.28;
   if (isBrickwall) {
-    amount = 0.65;
+    amount = 0.5;
   } else if (style === 'aggressive') {
-    amount = 0.55;
+    amount = 0.42;
   } else if (style === 'balanced') {
-    amount = 0.4;
+    amount = 0.32;
   } else {
-    amount = 0.25;
+    amount = 0.2;
   }
 
   const shaper = context.createWaveShaper();
@@ -53,7 +53,7 @@ export function buildClipperStage(
   shaper.oversample = quality === 'export' ? '4x' : '2x';
 
   const trim = context.createGain();
-  trim.gain.value = 0.95;
+  trim.gain.value = 0.97;
 
   input.connect(shaper);
   shaper.connect(trim);

@@ -847,8 +847,16 @@ function createLimiterStage(
   input.connect(makeupGain);
   makeupGain.connect(lookAheadDelay);
   lookAheadDelay.connect(limiter);
-  limiter.connect(type1Shaper);
-  type1Shaper.connect(ceilingNode);
+
+  // When the true-peak worklet handles the ceiling, skip Type1 waveshaping —
+  // stacking both caused bass aliasing and rattling on heavy low end.
+  if (truePeakNode) {
+    limiter.connect(ceilingNode);
+  } else {
+    limiter.connect(type1Shaper);
+    type1Shaper.connect(ceilingNode);
+  }
+
   ceilingNode.connect(output);
   
   console.log(`   Limiter: ceiling=${finalCeiling.toFixed(1)}dBTP, ratio=${limParams.ratio}:1, ` +

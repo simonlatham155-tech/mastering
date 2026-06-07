@@ -142,12 +142,12 @@ export function buildMultibandStage(
     for (let i = 0; i < 65536; i++) {
       const x = (i * 2 - 65536) / 65536;
       const saturated = Math.tanh(x * 1.5);
-      const secondHarmonic = 0.15 * x * Math.abs(x);
+      const secondHarmonic = 0.05 * x * Math.abs(x);
       band1Curve[i] = saturated + secondHarmonic;
     }
     normalizeCurve(band1Curve);
     band1Saturation.curve = band1Curve;
-    band1Saturation.oversample = 'none';
+    band1Saturation.oversample = '2x';
 
     const band1Post = context.createGain();
     band1Post.gain.value = 1.0;
@@ -167,7 +167,7 @@ export function buildMultibandStage(
     }
     normalizeCurve(band2Curve);
     band2Saturation.curve = band2Curve;
-    band2Saturation.oversample = 'none';
+    band2Saturation.oversample = '2x';
 
     const band2Post = context.createGain();
     band2Post.gain.value = 1.0;
@@ -189,7 +189,7 @@ export function buildMultibandStage(
     }
     normalizeCurve(band3Curve);
     band3Saturation.curve = band3Curve;
-    band3Saturation.oversample = 'none';
+    band3Saturation.oversample = '2x';
 
     const band3Post = context.createGain();
     band3Post.gain.value = 1.0;
@@ -218,7 +218,7 @@ export function buildMultibandStage(
     }
     normalizeCurve(band4Curve);
     band4Saturation.curve = band4Curve;
-    band4Saturation.oversample = 'none';
+    band4Saturation.oversample = '2x';
 
     const band4Post = context.createGain();
     band4Post.gain.value = 1.0;
