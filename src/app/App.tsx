@@ -44,7 +44,16 @@ import { MasteringWorkflow } from './components/mastering-workflow';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
 import { buildExportQualityReport } from './utils/measure-buffer-loudness';
-import { renderExportWithAutoStaging } from './services/export-auto-staging';
+import {
+  computeAutoInputTrimDB,
+  masterExportFilename,
+  runMasterExport,
+} from './services/master-export-pipeline';
+import {
+  batchResultsToZip,
+  runBatchAlbumExport,
+} from './services/batch-export';
+import { batchZipFilename } from './utils/master-export-utils';
 import { renderWaveformPreviewWithAutoStaging } from './services/waveform-preview-staging';
 import { computeBypassGainMatchDB } from './utils/gain-match';
 import { computeStagingTrimStep } from './utils/auto-staging';
@@ -57,6 +66,9 @@ import {
   matchingAutoGainToOutputTrimDelta,
   matchingGainsToProfileAdjustments,
 } from './utils/matching-gains-to-eq';
+import { BatchExportPanel } from './components/batch-export-panel';
+import { ProductNav } from './components/product-nav';
+import { CreatorAboutStrip } from './components/creator-about-strip';
 import { motion } from 'motion/react';
 
 type LogicMode = 'brickwall' | 'dynamics';
@@ -114,16 +126,9 @@ export default function App() {
   const [heritageProfile, setHeritageProfile] = useState<HeritageProfile>('none');
   
   // Auto Input Trim — if the mix peaks above -3dB, attenuate to give the chain headroom.
-  const autoInputTrimDB = (() => {
-    if (!analysis) return undefined;
-    const peakDB = analysis.peakLevel;
-    const TARGET_HEADROOM = -6;
-    const TRIM_THRESHOLD = -3;
-    if (peakDB > TRIM_THRESHOLD) {
-      return TARGET_HEADROOM - peakDB;
-    }
-    return undefined;
-  })();
+  const autoInputTrimDB = analysis
+    ? computeAutoInputTrimDB(analysis.peakLevel)
+    : undefined;
 
   // Real-time audio player (processes audio live during playback - NO pre-rendering!)
   const realtimePlayerRef = useRef<RealtimeAudioPlayer | null>(null);
@@ -322,6 +327,12 @@ export default function App() {
   const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
   const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
   const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
+  const [isBatchExporting, setIsBatchExporting] = useState(false);
+  const [batchExportProgress, setBatchExportProgress] = useState<{
+    index: number;
+    total: number;
+    name: string;
+  } | null>(null);
   const liveStageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
@@ -817,7 +828,6 @@ export default function App() {
         proDynamics,
       });
       const settings = buildAppProcessingSettings({ ...ctx, exportPreset: presetId });
-
       const preset = getExportPreset(presetId);
 
       toast.info(
@@ -826,20 +836,13 @@ export default function App() {
           : `Rendering ${presetId.toUpperCase()} optimized master...`
       );
 
-      const exportResult = await renderExportWithAutoStaging(
+      const exportResult = await runMasterExport({
         settings,
-        effectiveInputTrimDB,
-        {
-          limiterCeilingOverride,
-          sslGlue: proDynamics.sslGlue,
-          initialOutputTrimDB: proDynamics.outputTrimDB,
-          targetLUFS: preset.lufs,
-          ceilingDBTP: preset.ceiling,
-          autoStage: proDynamics.autoStageOnExport,
-        }
-      );
+        exportPresetId: presetId,
+        proDynamics,
+        autoInputTrimDB,
+      });
 
-      const finalBuffer = exportResult.buffer;
       const report = exportResult.report;
       setLastExportReport(report);
       setLastExportStaging({
@@ -854,14 +857,10 @@ export default function App() {
         }));
       }
 
-      // Export as WAV
-      const blob = await audioProcessor.exportAsWAV(finalBuffer);
-      
-      // Download
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(exportResult.wavBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${selectedFile.name.replace(/\.[^/.]+$/, '')}_${presetId}_master.wav`;
+      a.download = masterExportFilename(selectedFile.name, presetId);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -894,6 +893,87 @@ export default function App() {
       toast.error('Failed to export audio');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleBatchExport = async (files: File[]) => {
+    if (files.length === 0) return;
+
+    const ctx = buildProcessingContext({
+      gearProfile,
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      profileAdjustments,
+      proDynamics,
+    });
+
+    const restoreFile = selectedFile;
+    setIsBatchExporting(true);
+    setBatchExportProgress({ index: 0, total: files.length, name: files[0].name });
+
+    toast.info(
+      `Album export: ${files.length} track${files.length > 1 ? 's' : ''} · ${exportPreset.toUpperCase()} · full pipeline`
+    );
+
+    try {
+      const summary = await runBatchAlbumExport(
+        files,
+        exportPreset,
+        ctx,
+        (p) =>
+          setBatchExportProgress({
+            index: p.index,
+            total: p.total,
+            name: p.currentName,
+          })
+      );
+
+      const ok = summary.rows.filter((r) => r.ok);
+      const failed = summary.rows.filter((r) => !r.ok);
+
+      if (ok.length === 0) {
+        toast.error('Batch export failed — no tracks rendered');
+        return;
+      }
+
+      const zipBlob = await batchResultsToZip(summary.rows, batchZipFilename(exportPreset));
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = batchZipFilename(exportPreset);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      if (failed.length > 0) {
+        toast.warning(
+          `ZIP ready: ${ok.length}/${files.length} tracks · ${failed.length} failed (see manifest.json in ZIP)`
+        );
+      } else {
+        toast.success(
+          `Album ZIP exported — ${ok.length} track${ok.length > 1 ? 's' : ''} at ${getExportPreset(exportPreset).lufs} LUFS target`
+        );
+      }
+    } catch (error) {
+      console.error('Batch export failed:', error);
+      toast.error('Album batch export failed');
+    } finally {
+      setBatchExportProgress(null);
+      setIsBatchExporting(false);
+
+      if (restoreFile) {
+        try {
+          await audioProcessor.loadAudioFile(restoreFile);
+          const refreshed = await audioProcessor.analyzeAudio();
+          setAnalysis(refreshed);
+          setOriginalBuffer(audioProcessor.getOriginalBuffer());
+          void analyzeSpectralProfile(audioProcessor.getOriginalBuffer());
+        } catch (err) {
+          console.warn('Could not restore session after batch export:', err);
+        }
+      }
     }
   };
 
@@ -1051,6 +1131,7 @@ export default function App() {
             </header>
 
             <CreatorAboutStrip />
+            <ProductNav />
 
             {/* Heritage Alert */}
             <div className="mb-6">
@@ -1691,9 +1772,16 @@ export default function App() {
             {/* Export Panel */}
             <ExportPanel 
               onExport={handleExport} 
-              disabled={!selectedFile || !analysis || isProcessing}
+              disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
               currentTarget={getExportPreset(exportPreset).lufs}
               selectedPreset={exportPreset}
+            />
+            <BatchExportPanel
+              disabled={isProcessing}
+              isExporting={isBatchExporting}
+              progress={batchExportProgress}
+              selectedPreset={exportPreset}
+              onBatchExport={handleBatchExport}
             />
               </>
             )}

@@ -33,10 +33,10 @@ Manual checklist: [`LISTEN_QA.md`](./LISTEN_QA.md)
 
 ## Next (after listen QA sign-off)
 
-1. ~~Reference track matching in main UI~~ — **shipped** (genre curves → profile EQ; custom upload + Faust 10-band later)
-2. Album / batch export
-3. Product nav (Mastering Suite · plugins · apps)
-4. Bundle cleanup (TensorFlow dead chunk, unused Radix)
+1. ~~Reference track matching in main UI~~ — **shipped**
+2. ~~Album / batch export~~ — **shipped** (shared `runMasterExport` pipeline + ZIP)
+3. ~~Product nav~~ — **shipped** (Mastering Suite · Demo · Plugins soon)
+4. Bundle cleanup (TensorFlow dead chunk, unused Radix) — **partial** (removed TF chunk; TF dep still in package for ML stub)
 5. Faust WASM PR #1 — evaluate separately
 
 ---
