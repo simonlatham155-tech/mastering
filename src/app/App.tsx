@@ -60,6 +60,7 @@ import { computeBypassGainMatchDB } from './utils/gain-match';
 import { computeStagingTrimStep } from './utils/auto-staging';
 import { PlaybackControls } from './components/playback-controls';
 import { ReferenceMatchPanel } from './components/reference-match-panel';
+import { ActiveSettingsStrip } from './components/active-settings-strip';
 import { ReferenceMatchingController } from './services/reference-matching-controller';
 import type { SpectralProfile } from './services/spectral-analyzer';
 import { getReferenceCurveForGear } from './utils/gear-reference-map';
@@ -138,9 +139,9 @@ export default function App() {
 
   const [spectralProfile, setSpectralProfile] = useState<SpectralProfile | null>(null);
   const [matchStrength, setMatchStrength] = useState(0);
+  const [appliedTonalMatchStrength, setAppliedTonalMatchStrength] = useState<number | null>(null);
   const [isSpectralAnalyzing, setIsSpectralAnalyzing] = useState(false);
   const referenceMatchControllerRef = useRef<ReferenceMatchingController | null>(null);
-  const referenceMatchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Audio Input Analysis
   const [inputAnalysis, setInputAnalysis] = useState<AudioAnalysisResult | null>(null);
@@ -333,29 +334,28 @@ export default function App() {
     ]
   );
 
-  // Expert tonal match: live-apply from neutral offsets when strength changes (no Apply button).
-  useEffect(() => {
-    if (!previewMatchingGains || !expertMode) return;
+  const handleApplyReferenceMatch = () => {
+    if (!previewMatchingGains || matchStrength <= 0) return;
 
-    if (referenceMatchDebounceRef.current) {
-      clearTimeout(referenceMatchDebounceRef.current);
-    }
+    applyReferenceMatchFromGains(previewMatchingGains, matchStrength);
+    setAppliedTonalMatchStrength(matchStrength);
+    toast.success(`Tonal match applied at ${matchStrength}% — profile EQ updated`);
+  };
 
-    referenceMatchDebounceRef.current = setTimeout(() => {
-      applyReferenceMatchFromGains(previewMatchingGains, matchStrength);
-    }, matchStrength === 0 ? 0 : 350);
-
-    return () => {
-      if (referenceMatchDebounceRef.current) {
-        clearTimeout(referenceMatchDebounceRef.current);
-      }
-    };
-  }, [
-    previewMatchingGains,
-    matchStrength,
-    expertMode,
-    applyReferenceMatchFromGains,
-  ]);
+  const handleResetReferenceMatch = () => {
+    setMatchStrength(0);
+    setAppliedTonalMatchStrength(null);
+    applyReferenceMatchFromGains(
+      previewMatchingGains ?? {
+        bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        autoGain: 0,
+        warnings: [],
+        deltaVisualization: { muddy: false, dark: false, boomy: false, harsh: false },
+      },
+      0
+    );
+    toast.info('Tonal match removed — genre EQ only');
+  };
   
   // Mix analysis summary (shown in unified setup panel after upload)
   const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
@@ -456,6 +456,8 @@ export default function App() {
   // Reset user EQ/width offsets when gear profile changes (genre defaults stay in the chain).
   useEffect(() => {
     setProfileAdjustments({ ...NEUTRAL_PROFILE_ADJUSTMENTS });
+    setAppliedTonalMatchStrength(null);
+    setMatchStrength(0);
   }, [gearProfile]);
 
   // === LIVE PARAMETER UPDATES (PATCH 2026-05-25: Viktor) ===
@@ -843,6 +845,7 @@ export default function App() {
     setOriginalBuffer(null);
     setSpectralProfile(null);
     setMatchStrength(0);
+    setAppliedTonalMatchStrength(null);
     setMeterValues({ peak: 0, lra: 0 });
   };
 
@@ -1265,6 +1268,16 @@ export default function App() {
               onExportPresetChange={setExportPreset}
             />
 
+            <ActiveSettingsStrip
+              gearProfile={gearProfile}
+              exportPreset={exportPreset}
+              circuitDrive={circuitDrive}
+              logicMode={logicMode}
+              appliedTonalMatchStrength={appliedTonalMatchStrength}
+              hasInputTrim={effectiveInputTrimDB != null && effectiveInputTrimDB < 0}
+              inputTrimDB={effectiveInputTrimDB}
+            />
+
             {/* Playback — primary beginner action (listen before tweaking) */}
             <div 
               className="relative border-2 rounded-lg p-6 mb-6"
@@ -1517,7 +1530,10 @@ export default function App() {
                 referenceCurve={referenceCurve}
                 matchingGains={previewMatchingGains}
                 matchStrength={matchStrength}
+                appliedStrength={appliedTonalMatchStrength}
                 onMatchStrengthChange={setMatchStrength}
+                onApplyMatching={handleApplyReferenceMatch}
+                onResetMatching={handleResetReferenceMatch}
                 isAnalyzing={isSpectralAnalyzing}
                 gearLabel={gearProfiles.find((p) => p.id === gearProfile)?.name}
               />
