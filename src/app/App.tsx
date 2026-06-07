@@ -1379,6 +1379,7 @@ export default function App() {
                 originalBuffer={originalBuffer}
                 processedBuffer={processedBuffer}
                 isWaveformRendering={isWaveformRendering}
+                getPlaybackTime={() => realtimePlayerRef.current?.getState().currentTime ?? 0}
               />
             </div>
             

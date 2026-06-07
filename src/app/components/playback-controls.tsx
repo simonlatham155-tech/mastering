@@ -23,6 +23,8 @@ interface PlaybackControlsProps {
   originalBuffer?: AudioBuffer | null;
   processedBuffer?: AudioBuffer | null;
   isWaveformRendering?: boolean;
+  /** Live audio clock for smooth waveform playhead (bypasses React poll lag) */
+  getPlaybackTime?: () => number;
 }
 
 function barAmplitude(
@@ -59,6 +61,7 @@ export function PlaybackControls({
   originalBuffer,
   processedBuffer,
   isWaveformRendering = false,
+  getPlaybackTime,
 }: PlaybackControlsProps) {
   const { isPlaying, currentTime, duration } = playbackState;
   
@@ -97,7 +100,23 @@ export function PlaybackControls({
   };
   
   const displayTime = isDragging ? dragTime : currentTime;
-  
+  const playbackRef = useRef({
+    displayTime,
+    duration,
+    bypassMode,
+    timelineBuffer,
+    originalBuffer,
+    processedBuffer,
+  });
+  playbackRef.current = {
+    displayTime,
+    duration,
+    bypassMode,
+    timelineBuffer,
+    originalBuffer,
+    processedBuffer,
+  };
+
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -111,88 +130,125 @@ export function PlaybackControls({
   
   useEffect(() => {
     const canvas = waveformCanvasRef.current;
-    if (!canvas || !timelineBuffer || duration <= 0) return;
-    
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
-    
-    const width = rect.width;
-    const height = rect.height;
-    
-    ctx.clearRect(0, 0, width, height);
-    
-    ctx.strokeStyle = '#3f3f46';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, height / 2);
-    ctx.lineTo(width, height / 2);
-    ctx.stroke();
-    
-    const barWidth = 3;
-    const barGap = 1;
-    const totalBarWidth = barWidth + barGap;
-    const numBars = Math.floor(width / totalBarWidth);
-    const progress = duration > 0 ? currentTime / duration : 0;
-    const processedCover = processedBuffer?.duration ?? 0;
+    if (!canvas) return;
 
-    for (let i = 0; i < numBars; i++) {
-      const x = i * totalBarWidth;
-      const timeStart = (i / numBars) * duration;
-      const timeEnd = ((i + 1) / numBars) * duration;
+    const drawWaveform = () => {
+      const {
+        displayTime: scrubTime,
+        duration: dur,
+        bypassMode: bypass,
+        timelineBuffer: timeline,
+        originalBuffer: original,
+        processedBuffer: processed,
+      } = playbackRef.current;
 
-      let amplitude = 0.02;
-      let useProcessedShape = false;
+      const liveTime =
+        isPlaying && !isDragging && getPlaybackTime ? getPlaybackTime() : scrubTime;
+      const t = liveTime;
 
-      if (bypassMode && originalBuffer) {
-        amplitude = barAmplitude(originalBuffer, timeStart, timeEnd);
-      } else if (originalBuffer) {
-        if (processedBuffer && timeStart < processedCover) {
-          amplitude = barAmplitude(processedBuffer, timeStart, Math.min(timeEnd, processedCover));
+      if (!timeline || dur <= 0) return;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const width = rect.width;
+      const height = rect.height;
+
+      ctx.clearRect(0, 0, width, height);
+
+      ctx.strokeStyle = '#3f3f46';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, height / 2);
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+
+      const barWidth = 3;
+      const barGap = 1;
+      const totalBarWidth = barWidth + barGap;
+      const numBars = Math.floor(width / totalBarWidth);
+      const processedCover = processed?.duration ?? 0;
+
+      for (let i = 0; i < numBars; i++) {
+        const x = i * totalBarWidth;
+        const timeStart = (i / numBars) * dur;
+        const timeEnd = ((i + 1) / numBars) * dur;
+
+        let amplitude = 0.02;
+        let useProcessedShape = false;
+
+        if (bypass && original) {
+          amplitude = barAmplitude(original, timeStart, timeEnd);
+        } else if (original) {
+          if (processed && timeStart < processedCover) {
+            amplitude = barAmplitude(processed, timeStart, Math.min(timeEnd, processedCover));
+            useProcessedShape = true;
+          } else {
+            amplitude = barAmplitude(original, timeStart, timeEnd);
+          }
+        } else if (processed) {
+          amplitude = barAmplitude(processed, timeStart, timeEnd);
           useProcessedShape = true;
-        } else {
-          amplitude = barAmplitude(originalBuffer, timeStart, timeEnd);
         }
-      } else if (processedBuffer) {
-        amplitude = barAmplitude(processedBuffer, timeStart, timeEnd);
-        useProcessedShape = true;
+
+        const barHeight = Math.max(3, amplitude * (height / 2));
+        const y = height / 2 - barHeight / 2;
+        const isPlayed = timeStart < t;
+
+        if (isPlayed) {
+          // Playhead highlight follows playback across the full track
+          ctx.fillStyle = bypass ? '#d97706' : '#0891b2';
+        } else {
+          ctx.fillStyle = bypass ? '#3f3f46' : useProcessedShape ? '#164e63' : '#27272a';
+        }
+
+        ctx.fillRect(x, y, barWidth, barHeight);
       }
 
-      const barHeight = Math.max(3, amplitude * (height / 2));
-      const y = (height / 2) - (barHeight / 2);
-      const isPlayed = i / numBars < progress;
-
-      if (isPlayed) {
-        ctx.fillStyle = bypassMode ? '#d97706' : (useProcessedShape ? '#0891b2' : '#3f3f46');
-      } else {
-        ctx.fillStyle = bypassMode ? '#3f3f46' : (useProcessedShape ? '#164e63' : '#27272a');
-      }
-
-      ctx.fillRect(x, y, barWidth, barHeight);
-    }
-    
-    if (duration > 0) {
-      const playheadX = (currentTime / duration) * width;
+      const playheadX = (t / dur) * width;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
       ctx.lineTo(playheadX, height);
       ctx.stroke();
-      
-      ctx.strokeStyle = bypassMode ? 'rgba(217, 119, 6, 0.5)' : 'rgba(8, 145, 178, 0.5)';
+
+      ctx.strokeStyle = bypass ? 'rgba(217, 119, 6, 0.5)' : 'rgba(8, 145, 178, 0.5)';
       ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
       ctx.lineTo(playheadX, height);
       ctx.stroke();
-    }
-  }, [timelineBuffer, originalBuffer, processedBuffer, currentTime, duration, bypassMode]);
+    };
+
+    drawWaveform();
+
+    if (!isPlaying) return;
+
+    let rafId = 0;
+    const tick = () => {
+      drawWaveform();
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [
+    isPlaying,
+    timelineBuffer,
+    originalBuffer,
+    processedBuffer,
+    displayTime,
+    duration,
+    bypassMode,
+    getPlaybackTime,
+    isDragging,
+  ]);
 
   return (
     <div className="space-y-3 p-4 bg-black/20 rounded-lg border border-white/10">
