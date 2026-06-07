@@ -106,6 +106,36 @@ export const DNB: GenrePreset = {
   // No guardrail overrides - use engine defaults
 };
 
+/** One-size-fits-all chain for A/B demo — mimics generic automated mastering services */
+export const GENERIC_BLACKBOX: GenrePreset = {
+  id: 'generic',
+  name: 'Generic Black Box',
+  category: 'Demo',
+  description: 'Smile-curve EQ, brickwall limit, no genre intelligence',
+
+  biases: {
+    bassTilt: +1.5,
+    airTilt: +2,
+    mudCut: 0,
+    width: 1.02,
+    colorAmount: 0.35,
+  },
+
+  loudnessStyle: 'balanced',
+  thdMode: 'pressure',
+
+  toggles: {
+    useMultiband: false,
+    useClipper: true,
+    useMidSide: false,
+    forceMonoBass: true,
+  },
+
+  guardrails: {
+    maxLimiterGR: 8,
+  },
+};
+
 export const DEEP_HOUSE: GenrePreset = {
   id: 'deephouse',
   name: 'Deep House',
@@ -688,6 +718,9 @@ export const GENRE_PRESETS: Record<string, GenrePreset> = {
   // Legacy
   'rnb': RNB,
   'tape': TAPE,
+
+  // Demo / comparison
+  'generic': GENERIC_BLACKBOX,
 };
 
 // Helper to get preset by ID
