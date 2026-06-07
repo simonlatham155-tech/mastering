@@ -15,7 +15,7 @@ import { PerformanceClipMeter } from './components/performance-clip-meter';
 import { ChunkSelector } from './components/chunk-selector';
 import { SignalChainVisualizer } from './components/signal-chain-visualizer';
 import { GenreProfileInfo } from './components/genre-profile-info';
-import { GainReductionMeter } from './components/gain-reduction-meter';
+import { GainReductionMeter, GainReductionMeterCompact } from './components/gain-reduction-meter';
 import { TruePeakIndicator } from './components/true-peak-indicator';
 import { DamageReportPanel } from './components/damage-report-panel';
 import { HQModeToggle } from './components/hq-mode-toggle';
@@ -110,10 +110,14 @@ export default function App() {
   const realtimePlayerRef = useRef<RealtimeAudioPlayer | null>(null);
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
   const [bypassMode, setBypassMode] = useState(false); // A/B comparison: false = processed, true = original
+  const [expertMode, setExpertMode] = useState(false);
   
   // Audio Input Analysis
   const [inputAnalysis, setInputAnalysis] = useState<AudioAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const isReady = !!selectedFile && !!analysis;
+  const measuredInputLUFS = analysis?.lufs ?? inputAnalysis?.lufs ?? -16;
   
   // AI Mastering Recommendation
   const [aiRecommendation, setAIRecommendation] = useState<AIMasteringRecommendation | null>(null);
@@ -188,6 +192,30 @@ export default function App() {
       setShowHeritageAlert(false);
     }
   }, [logicMode, analysis, selectedFile]);
+
+  // Sync HQ mode to limiter meter worklet
+  useEffect(() => {
+    realtimePlayerRef.current?.setHQMode(hqMode);
+  }, [hqMode]);
+
+  // Wire live meter updates from the oversampling limiter worklet tap
+  useEffect(() => {
+    const player = realtimePlayerRef.current;
+    if (!player || !isReady) return;
+
+    player.setMeterCallback((data) => {
+      if (Number.isFinite(data.truePeakDBTP)) setTruePeakDBTP(data.truePeakDBTP);
+      if (Number.isFinite(data.digitalPeakDB)) setDigitalPeakDB(data.digitalPeakDB);
+      if (Number.isFinite(data.gainReductionDB)) setGainReductionDB(data.gainReductionDB);
+      if (Number.isFinite(data.ispDifference)) setISPDifference(data.ispDifference);
+      setMeterValues(prev => ({
+        peak: Math.abs(data.truePeakDBTP),
+        lra: prev.lra,
+      }));
+    });
+
+    return () => player.setMeterCallback(null);
+  }, [isReady]);
 
   // Sync profile adjustments when gear profile changes
   useEffect(() => {
@@ -265,7 +293,7 @@ export default function App() {
       const plan = buildAppProcessingPlan(ctx);
       const settings = buildAppProcessingSettings(ctx);
       
-      player.rebuildChain(settings, plan, bypassMode, inputTrimDB);
+      player.rebuildChain(settings, plan, bypassMode, inputTrimDB, false, measuredInputLUFS);
       console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
       
       // Re-render processed waveform in background for visualization
@@ -528,7 +556,7 @@ export default function App() {
     const plan = buildAppProcessingPlan(ctx);
     const settings = buildAppProcessingSettings(ctx);
     
-    realtimePlayerRef.current.play(settings, plan, bypassMode, inputTrimDB);
+    await realtimePlayerRef.current.play(settings, plan, bypassMode, inputTrimDB, false, measuredInputLUFS);
   };
   
   const handlePause = () => {
@@ -615,7 +643,7 @@ export default function App() {
             </div>
 
             {/* Input Trim Indicator */}
-            {inputTrimDB && inputTrimDB < 0 && (
+            {isReady && inputTrimDB && inputTrimDB < 0 && (
               <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-300 text-sm">
                 <span>🎚️</span>
                 <span>Input trimmed by <strong>{Math.abs(inputTrimDB).toFixed(1)}dB</strong> — your mix peaks at {analysis?.peakLevel?.toFixed(1)}dBFS. Headroom applied automatically for clean processing.</span>
@@ -623,7 +651,7 @@ export default function App() {
             )}
 
             {/* Low Dynamic Range Warning */}
-            {analysis && analysis.dynamicRange < 6 && (
+            {isReady && analysis && analysis.dynamicRange < 6 && (
               <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm">
                 <span>⚠️</span>
                 <span>Dynamic range is only <strong>{analysis.dynamicRange.toFixed(1)}dB</strong>. This mix may already be heavily compressed. If you have a limiter on your mix bus, try bypassing it before exporting.</span>
@@ -670,8 +698,16 @@ export default function App() {
               </div>
             </div>
 
-            {/* Live Performance Options removed (2026-02-16) - studio mastering only */}
+            {!isReady && !isAnalyzing && (
+              <div className="mb-6 text-center py-8 px-6 rounded-lg border border-zinc-800 bg-zinc-950/50">
+                <p className="text-sm text-zinc-400 font-mono">
+                  Upload a mix to begin — we&apos;ll detect genre, set warmth &amp; loudness targets, and prepare live preview.
+                </p>
+              </div>
+            )}
 
+            {isReady && (
+              <>
             {/* AI Recommendation Panel */}
             <AIRecommendationPanel
               recommendation={aiRecommendation}
@@ -755,6 +791,50 @@ export default function App() {
               </div>
             </div>
 
+            {/* Live output meters (compact) */}
+            <div
+              className="relative border-2 rounded-lg px-6 py-4 mb-6"
+              style={{
+                borderColor: '#2a2a2a',
+                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
+                  Live Output
+                </div>
+                <div className="flex flex-wrap items-center gap-6">
+                  <GainReductionMeterCompact gainReductionDB={gainReductionDB} />
+                  <div className="flex items-center gap-2">
+                    <span className="text-[8px] font-mono text-zinc-500">TP:</span>
+                    <span className={`text-xs font-mono font-bold ${
+                      truePeakDBTP > -1 ? 'text-red-400' : truePeakDBTP > -3 ? 'text-yellow-400' : 'text-green-400'
+                    }`}>
+                      {Number.isFinite(truePeakDBTP) ? truePeakDBTP.toFixed(1) : '—'} dBTP
+                    </span>
+                  </div>
+                  {hqMode && ispDifference > 0.3 && (
+                    <span className="text-[9px] font-mono text-purple-400">
+                      ISP +{ispDifference.toFixed(1)} dB
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Expert controls toggle */}
+            <div className="mb-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setExpertMode(prev => !prev)}
+                className="px-4 py-2 rounded-lg border border-zinc-700 bg-zinc-900 text-xs font-mono text-zinc-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
+              >
+                {expertMode ? '▲ Hide expert rack' : '▼ Show expert rack (EQ, chain, meters…)'}
+              </button>
+            </div>
+
+            {expertMode && (
+              <>
             {/* Meter Display - separate panel */}
             <div 
               className="relative border-2 rounded-lg p-8 mb-6"
@@ -838,7 +918,7 @@ export default function App() {
                     {/* True Peak Indicator */}
                     <TruePeakIndicator
                       truePeakDBTP={truePeakDBTP}
-                      ceiling={-0.3}
+                      ceiling={getExportPreset(exportPreset).ceiling}
                       enabled={hqMode}
                     />
 
@@ -969,7 +1049,7 @@ export default function App() {
               <GenreProfileInfo gearProfile={gearProfile} />
             </div>
 
-            {/* Gain Stage Visualizer - separate rack unit */}
+            {/* Gain Stage Visualizer - expert only */}
             <div 
               className="relative border-2 rounded-lg p-6 mb-6"
               style={{
@@ -982,7 +1062,6 @@ export default function App() {
                 `
               }}
             >
-              {/* Rack screws */}
               {[0, 1, 2, 3].map((i) => (
                 <div 
                   key={i}
@@ -1004,6 +1083,8 @@ export default function App() {
                 hasProcessedAudio={!!selectedFile && !!analysis}
               />
             </div>
+              </>
+            )}
 
             {/* Audio Player with Real-Time Processing */}
             <div 
@@ -1052,6 +1133,8 @@ export default function App() {
               disabled={!selectedFile || !analysis || isProcessing}
               currentTarget={getExportPreset(exportPreset).lufs}
             />
+              </>
+            )}
           </main>
         </div>
       </div>

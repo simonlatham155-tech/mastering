@@ -348,6 +348,7 @@ export class AudioProcessor {
         settings,
         quality: 'preview',
         useMinimalMaster,
+        inputLUFS: this.analysis?.lufs ?? -16,
       });
     }
 
@@ -503,6 +504,7 @@ export class AudioProcessor {
       quality: 'export',
       useMinimalMaster,
       inputTrimDB,
+      inputLUFS: this.analysis?.lufs ?? -16,
     });
 
     // Create source
@@ -587,8 +589,9 @@ export class AudioProcessor {
       destination: offlineContext.destination,
       params: plan,
       settings,
-      quality: 'preview', // Preview quality for realtime monitoring
+      quality: 'preview',
       useMinimalMaster,
+      inputLUFS: this.analysis?.lufs ?? -16,
     });
 
     // Extract chunk
