@@ -1,0 +1,65 @@
+From f4810d457663a54ac3eaf2430fbb53a387fb3a1b Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sun, 7 Jun 2026 18:17:50 +0000
+Subject: [PATCH 3/3] Add Cloud Agent environment config and AGENTS.md
+
+---
+ .cursor/environment.json |  3 +++
+ AGENTS.md                | 35 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+ create mode 100644 .cursor/environment.json
+ create mode 100644 AGENTS.md
+
+diff --git a/.cursor/environment.json b/.cursor/environment.json
+new file mode 100644
+index 0000000..23e6e01
+--- /dev/null
++++ b/.cursor/environment.json
+@@ -0,0 +1,3 @@
++{
++  "install": "echo 'RhythmicSpace: JUCE plugin — build and test on macOS with Xcode 14+ and JUCE 8.0.10'"
++}
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..9f767d8
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,35 @@
++# RhythmicSpace — Cloud Agent Instructions
++
++## Project
++
++JUCE 8 audio plugin (AU, VST3, Standalone). Step-sequencer multi-effect processor.
++
++## Build
++
++Requires **macOS + Xcode**. Cannot compile on Linux cloud VMs.
++
++```bash
++# On macOS after opening RhythmicSpace.jucer in Projucer:
++# Save and Open in IDE → Release build (AU + VST3 targets)
++```
++
++## Git
++
++- Default branch: `main`
++- Feature branches: `cursor/<descriptive-name>-a9cf`
++- Push with: `git push -u origin <branch-name>`
++
++## Key paths
++
++- `Source/PluginProcessor.cpp` — main DSP + state
++- `Source/DSP/` — sequencer, effects, modulation smoother
++- `Source/UI/` — editor components
++- `Source/Data/` — presets, MIDI map
++- `RhythmicSpace.jucer` — Projucer project
++
++## Testing checklist (macOS DAW)
++
++1. Save/reload project — steps, knobs, MIDI mappings persist
++2. Host SYNC on — sequencer follows DAW playhead
++3. Filter type + preset switching works
++4. AU and VST3 load without crash
+-- 
+2.43.0
+

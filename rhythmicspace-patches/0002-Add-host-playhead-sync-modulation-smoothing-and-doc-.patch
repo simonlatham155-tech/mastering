@@ -1,0 +1,369 @@
+From dca9b455270105922034a8e93bfc6445ee33bd3a Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sun, 7 Jun 2026 18:09:16 +0000
+Subject: [PATCH 2/3] Add host playhead sync, modulation smoothing, and doc
+ updates
+
+- Sync sequencer step phase to DAW PPQ position when host sync is enabled
+- Add 10ms modulation smoothing to reduce zipper noise on step transitions
+- Guard volume gain against -inf dB at zero crossings
+- Update README and download page with correct preset count and parameters
+- Refresh transport UI from host when sync is active
+---
+ README.md                       | 27 +++++++++------
+ RhythmicSpace.jucer             |  2 ++
+ Source/DSP/ModulationSmoother.h | 60 +++++++++++++++++++++++++++++++++
+ Source/DSP/StepSequencer.cpp    | 16 +++++++++
+ Source/DSP/StepSequencer.h      |  1 +
+ Source/DSP/VolumeProcessor.cpp  |  4 +--
+ Source/PluginEditor.cpp         |  4 ++-
+ Source/PluginProcessor.cpp      | 27 ++++++++++-----
+ Source/PluginProcessor.h        |  3 ++
+ docs/index.html                 | 21 +++++-------
+ 10 files changed, 131 insertions(+), 34 deletions(-)
+ create mode 100644 Source/DSP/ModulationSmoother.h
+
+diff --git a/README.md b/README.md
+index eefd1c2..88607b0 100644
+--- a/README.md
++++ b/README.md
+@@ -7,29 +7,36 @@ A JUCE-based audio plugin that combines a step sequencer with five independent e
+ ## Features
+ 
+ - **5 Effect Modules:** Filter, Delay, Reverb, Pan, Volume — each with its own step sequencer lane
+-- **MIDI Learn:** Right-click any knob to assign a MIDI controller
+-- **15 Factory Presets:** Modulation, Auto Pan, Filter Sweep, Experimental, Drum Bounce, Helicopter, Build-Up, Stereo Wobble, Lo-Fi Crush, Ambient, FilterSteps, PanSteps, DelaySteps, ReverbSteps, VolumeSteps
++- **MIDI Learn:** Right-click any knob to assign a MIDI controller (mappings saved with your DAW project)
++- **24 Factory Presets:** Filter Wobble, Stutter Gate, Auto Pan, Helicopter, Lo-Fi Crush, Breakbeat Shuffle, and more
+ - **Preset Browser:** Save, load, and delete custom presets
+-- **Transport Sync:** Lock to host tempo
+-- **Level Metering:** Real-time input/output monitoring
++- **Host Sync:** Lock to DAW tempo and playhead position
++- **Level Metering:** Real-time stereo input/output monitoring
+ 
+ ## Plugin Formats
+ 
+ | Format | Status |
+ |--------|--------|
+ | Audio Unit (AU) | ✅ macOS |
+-| VST3 | ✅ macOS / Windows |
++| VST3 | ✅ macOS (Windows build planned) |
+ | Standalone | ✅ macOS |
+ 
+ ## Parameters
+ 
+ | Module | Parameters |
+ |--------|-----------|
+-| **Filter** | Cutoff, Resonance, Wobble, Mix |
+-| **Delay** | Time, Feedback, Mix |
+-| **Reverb** | Amount, Damping, Size, Mix |
+-| **Pan** | Rate, Width, Position |
+-| **Volume** | Amount, Gate |
++| **Filter** | Cutoff, Resonance, Type (LP/HP/BP), Mix |
++| **Delay** | Time (ms), Feedback, Mix |
++| **Reverb** | Size, Damping, Mix |
++| **Pan** | Width, Rate (LFO) |
++| **Volume** | Amount |
++| **Global** | Master Volume, BPM, Transport Play/Stop |
++
++Each effect lane also has a 16-step sequencer that modulates that effect rhythmically.
++
++## Factory Presets
++
++Filter Wobble · Stutter Gate · Ping Pong Delay · Space Reverb · Tremolo · Auto Pan · Filter Sweep · Glitch Stutter · Drum Bounce · Subtle Movement · Helicopter · Reverse Swell · Triplet Groove · Phaser · Sidechain Pump · Dramatic Riser · Stereo Width · Lo-Fi Crush · Eighth Note Delay · Bass Wobble (Slow) · Arpeggiated Pan · Rhythmic Chop · Ambient Wash · Breakbeat Shuffle
+ 
+ ## Download
+ 
+diff --git a/RhythmicSpace.jucer b/RhythmicSpace.jucer
+index 7d1f67e..d03f8b7 100644
+--- a/RhythmicSpace.jucer
++++ b/RhythmicSpace.jucer
+@@ -64,6 +64,8 @@
+               file="Source/DSP/StepSequencer.h"/>
+         <FILE id="StepSeqC" name="StepSequencer.cpp" compile="1" resource="0"
+               file="Source/DSP/StepSequencer.cpp"/>
++        <FILE id="ModSmoothH" name="ModulationSmoother.h" compile="0" resource="0"
++              file="Source/DSP/ModulationSmoother.h"/>
+         <FILE id="FilterProcH" name="FilterProcessor.h" compile="0" resource="0"
+               file="Source/DSP/FilterProcessor.h"/>
+         <FILE id="FilterProcC" name="FilterProcessor.cpp" compile="1" resource="0"
+diff --git a/Source/DSP/ModulationSmoother.h b/Source/DSP/ModulationSmoother.h
+new file mode 100644
+index 0000000..8d561b9
+--- /dev/null
++++ b/Source/DSP/ModulationSmoother.h
+@@ -0,0 +1,60 @@
++#pragma once
++
++#include "StepSequencer.h"
++
++//==============================================================================
++struct ModulationSmoother
++{
++    void prepare(double sampleRate)
++    {
++        constexpr double rampSeconds = 0.01;
++
++        filter.reset(sampleRate, rampSeconds);
++        pan.reset(sampleRate, rampSeconds);
++        delay.reset(sampleRate, rampSeconds);
++        reverb.reset(sampleRate, rampSeconds);
++        volume.reset(sampleRate, rampSeconds);
++
++        filter.setCurrentAndTargetValue(0.5f);
++        pan.setCurrentAndTargetValue(0.5f);
++        delay.setCurrentAndTargetValue(0.5f);
++        reverb.setCurrentAndTargetValue(0.5f);
++        volume.setCurrentAndTargetValue(0.5f);
++    }
++
++    void setTargets(const ModulationValues& values)
++    {
++        filter.setTargetValue(values.filter);
++        pan.setTargetValue(values.pan);
++        delay.setTargetValue(values.delay);
++        reverb.setTargetValue(values.reverb);
++        volume.setTargetValue(values.volume);
++    }
++
++    ModulationValues advance(int numSamples)
++    {
++        if (numSamples > 1)
++        {
++            filter.skip(numSamples - 1);
++            pan.skip(numSamples - 1);
++            delay.skip(numSamples - 1);
++            reverb.skip(numSamples - 1);
++            volume.skip(numSamples - 1);
++        }
++
++        ModulationValues values;
++        values.filter = filter.getNextValue();
++        values.pan = pan.getNextValue();
++        values.delay = delay.getNextValue();
++        values.reverb = reverb.getNextValue();
++        values.volume = volume.getNextValue();
++        return values;
++    }
++
++private:
++    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> filter;
++    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> pan;
++    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> delay;
++    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> reverb;
++    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> volume;
++};
+diff --git a/Source/DSP/StepSequencer.cpp b/Source/DSP/StepSequencer.cpp
+index b0d3ce7..bd64ff4 100644
+--- a/Source/DSP/StepSequencer.cpp
++++ b/Source/DSP/StepSequencer.cpp
+@@ -54,6 +54,22 @@ void StepSequencer::reset()
+     sampleCounter = 0;
+ }
+ 
++void StepSequencer::syncToHostPpq(double ppqPosition)
++{
++    const double sixteenthPosition = ppqPosition * 4.0;
++    const auto wholeSteps = static_cast<int64_t>(std::floor(sixteenthPosition));
++
++    int step = static_cast<int>(wholeSteps % NUM_STEPS);
++    if (step < 0)
++        step += NUM_STEPS;
++
++    currentStep = step;
++
++    const double fraction = sixteenthPosition - std::floor(sixteenthPosition);
++    sampleCounter = juce::jlimit(0, juce::jmax(0, samplesPerStep - 1),
++                                   static_cast<int>(std::round(fraction * samplesPerStep)));
++}
++
+ //==============================================================================
+ void StepSequencer::setBPM(double newBPM)
+ {
+diff --git a/Source/DSP/StepSequencer.h b/Source/DSP/StepSequencer.h
+index 721a67c..e799d4a 100644
+--- a/Source/DSP/StepSequencer.h
++++ b/Source/DSP/StepSequencer.h
+@@ -66,6 +66,7 @@ public:
+     void advance(int numSamples);
+     int getSamplesUntilNextStep() const;
+     void reset();
++    void syncToHostPpq(double ppqPosition);
+     
+     // Transport
+     void setBPM(double newBPM);
+diff --git a/Source/DSP/VolumeProcessor.cpp b/Source/DSP/VolumeProcessor.cpp
+index 7b24a5e..2ee1929 100644
+--- a/Source/DSP/VolumeProcessor.cpp
++++ b/Source/DSP/VolumeProcessor.cpp
+@@ -24,8 +24,8 @@ void VolumeProcessor::process(juce::dsp::ProcessContextReplacing<float>& context
+     // Amount controls how much the sequencer affects volume
+     float volumeGain = modulation * amount + (1.0f - amount);
+     volumeGain = juce::jlimit(0.0f, 2.0f, volumeGain);
+-    
+-    // Convert to decibels for natural volume control
++    volumeGain = juce::jmax(0.0001f, volumeGain);
++
+     float gainDB = juce::Decibels::gainToDecibels(volumeGain);
+     gain.setGainDecibels(gainDB);
+     
+diff --git a/Source/PluginEditor.cpp b/Source/PluginEditor.cpp
+index 60c3a06..2e48933 100644
+--- a/Source/PluginEditor.cpp
++++ b/Source/PluginEditor.cpp
+@@ -324,7 +324,9 @@ void RhythmicSpaceAudioProcessorEditor::timerCallback()
+     reverbStepSequencer->setCurrentStep(currentStep);
+     volumeStepSequencer->setCurrentStep(currentStep);
+     
+-    // Update level meters
++    if (audioProcessor.isHostSyncEnabled())
++        transport->syncFromProcessor();
++
+     inputMeter->setLevel(audioProcessor.getInputLevel());
+     outputMeter->setLevel(audioProcessor.getOutputLevel());
+     
+diff --git a/Source/PluginProcessor.cpp b/Source/PluginProcessor.cpp
+index a9ac145..c8f3b15 100644
+--- a/Source/PluginProcessor.cpp
++++ b/Source/PluginProcessor.cpp
+@@ -162,6 +162,7 @@ void RhythmicSpaceAudioProcessor::prepareToPlay (double sampleRate, int samplesP
+     spec.numChannels = 2;
+     
+     stepSequencer.prepare(sampleRate, bpm.load());
++    modulationSmoother.prepare(sampleRate);
+     filterProcessor.prepare(spec);
+     delayProcessor.prepare(spec);
+     reverbProcessor.prepare(spec);
+@@ -219,16 +220,19 @@ void RhythmicSpaceAudioProcessor::updateHostTransportState()
+             }
+ 
+             if (position->getIsPlaying().hasValue())
++                playing.store(*position->getIsPlaying());
++
++            if (position->getPpqPosition().hasValue())
+             {
+-                const bool hostPlaying = *position->getIsPlaying();
++                const double hostPpq = *position->getPpqPosition();
++                const bool hostPlaying = playing.load();
++                const bool hostJumped = lastHostPpq < 0.0
++                                     || std::abs(hostPpq - lastHostPpq) > 0.25;
+ 
+-                if (hostPlaying != playing.load())
+-                {
+-                    if (hostPlaying)
+-                        stepSequencer.reset();
++                if (hostPlaying || hostJumped)
++                    stepSequencer.syncToHostPpq(hostPpq);
+ 
+-                    playing.store(hostPlaying);
+-                }
++                lastHostPpq = hostPpq;
+             }
+         }
+     }
+@@ -308,16 +312,18 @@ void RhythmicSpaceAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer
+         int samplesToProcess = stepSequencer.getSamplesUntilNextStep();
+         samplesToProcess = juce::jmin(samplesToProcess, numSamples - startSample);
+ 
+-        if (playing.load())
++        if (! hostSyncEnabled.load() && playing.load())
+             stepSequencer.advance(samplesToProcess);
+ 
+         const auto modValues = stepSequencer.getCurrentModulationValues();
++        modulationSmoother.setTargets(modValues);
++        const auto smoothedMod = modulationSmoother.advance(samplesToProcess);
+ 
+         juce::dsp::AudioBlock<float> fullBlock(buffer);
+         auto subBlock = fullBlock.getSubBlock((size_t) startSample, (size_t) samplesToProcess);
+         juce::dsp::ProcessContextReplacing<float> context(subBlock);
+ 
+-        processEffectChain(context, modValues);
++        processEffectChain(context, smoothedMod);
+         subBlock.multiplyBy(masterVol);
+ 
+         startSample += samplesToProcess;
+@@ -438,6 +444,9 @@ void RhythmicSpaceAudioProcessor::setBPM(double newBPM)
+ void RhythmicSpaceAudioProcessor::setHostSyncEnabled(bool enabled)
+ {
+     hostSyncEnabled.store(enabled);
++
++    if (enabled)
++        lastHostPpq = -1.0;
+ }
+ 
+ void RhythmicSpaceAudioProcessor::loadPreset(int presetIndex)
+diff --git a/Source/PluginProcessor.h b/Source/PluginProcessor.h
+index cb8fff9..0522d48 100644
+--- a/Source/PluginProcessor.h
++++ b/Source/PluginProcessor.h
+@@ -2,6 +2,7 @@
+ 
+ #include <JuceHeader.h>
+ #include "DSP/StepSequencer.h"
++#include "DSP/ModulationSmoother.h"
+ #include "DSP/FilterProcessor.h"
+ #include "DSP/DelayProcessor.h"
+ #include "DSP/ReverbProcessor.h"
+@@ -85,6 +86,7 @@ public:
+ 
+ private:
+     StepSequencer stepSequencer;
++    ModulationSmoother modulationSmoother;
+     FilterProcessor filterProcessor;
+     DelayProcessor delayProcessor;
+     ReverbProcessor reverbProcessor;
+@@ -105,6 +107,7 @@ private:
+     
+     int currentProgramIndex = 0;
+     double currentSampleRate = 44100.0;
++    double lastHostPpq = -1.0;
+     
+     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+     void syncRuntimeStateFromParameters();
+diff --git a/docs/index.html b/docs/index.html
+index 17a4835..b625e45 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -365,8 +365,8 @@
+         </div>
+         <div class="feature">
+             <div class="feature-icon">🎨</div>
+-            <h3>15 Factory Presets</h3>
+-            <p>From subtle modulation to extreme helicopter effects, instantly usable</p>
++            <h3>24 Factory Presets</h3>
++            <p>From subtle movement to helicopter and breakbeat shuffle effects, instantly usable</p>
+         </div>
+         <div class="feature">
+             <div class="feature-icon">⏱️</div>
+@@ -424,21 +424,18 @@
+     <section class="presets">
+         <h2>Factory Presets</h2>
+         <div class="preset-grid">
+-            <span class="preset-chip">Modulation</span>
++            <span class="preset-chip">Filter Wobble</span>
++            <span class="preset-chip">Stutter Gate</span>
+             <span class="preset-chip">Auto Pan</span>
+             <span class="preset-chip">Filter Sweep</span>
+-            <span class="preset-chip">Experimental</span>
+             <span class="preset-chip">Drum Bounce</span>
+             <span class="preset-chip">Helicopter</span>
+-            <span class="preset-chip">Build-Up</span>
+-            <span class="preset-chip">Stereo Wobble</span>
+             <span class="preset-chip">Lo-Fi Crush</span>
+-            <span class="preset-chip">Ambient</span>
+-            <span class="preset-chip">FilterSteps</span>
+-            <span class="preset-chip">PanSteps</span>
+-            <span class="preset-chip">DelaySteps</span>
+-            <span class="preset-chip">ReverbSteps</span>
+-            <span class="preset-chip">VolumeSteps</span>
++            <span class="preset-chip">Breakbeat Shuffle</span>
++            <span class="preset-chip">Ambient Wash</span>
++            <span class="preset-chip">Sidechain Pump</span>
++            <span class="preset-chip">Stereo Width</span>
++            <span class="preset-chip">+ 12 more</span>
+         </div>
+     </section>
+ 
+-- 
+2.43.0
+
