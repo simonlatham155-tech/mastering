@@ -291,6 +291,14 @@ export default function App() {
         return;
       }
 
+      if (
+        !matchingGains.bands.every(Number.isFinite) ||
+        !Number.isFinite(matchingGains.autoGain)
+      ) {
+        console.warn('Skipping tonal match — non-finite matching gains');
+        return;
+      }
+
       const nextProfile = matchingGainsToProfileAdjustments(
         matchingGains,
         NEUTRAL_PROFILE_ADJUSTMENTS

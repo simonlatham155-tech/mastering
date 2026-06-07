@@ -31,6 +31,11 @@ import type { ProcessingSettings } from './audio-processor';
 import type { ProcessingPlan } from '../data/preset-resolution';
 import { OversamplingLimiterManager, type LimiterMeterData } from './oversampling-limiter-manager';
 import { LufsMeterManager, type LufsMeterData } from './lufs-meter-manager';
+import {
+  finiteDB,
+  setTargetFinite,
+  setTargetLinearFromDB,
+} from '../utils/finite-audio';
 
 export type { LufsMeterData };
 
@@ -168,8 +173,11 @@ export class RealtimeAudioPlayer {
     outputTrimDB: number,
     bypassGainMatchDB: number | null
   ): void {
-    this.currentOutputTrimDB = outputTrimDB;
-    this.currentBypassGainMatchDB = bypassGainMatchDB;
+    this.currentOutputTrimDB = finiteDB(outputTrimDB, 0);
+    this.currentBypassGainMatchDB =
+      bypassGainMatchDB != null && Number.isFinite(bypassGainMatchDB)
+        ? bypassGainMatchDB
+        : null;
   }
 
   private syncMeterParams(plan: ProcessingPlan, limiterCeilingOverride?: number): void {
@@ -301,7 +309,11 @@ export class RealtimeAudioPlayer {
 
     this.ensureContext();
 
-    this.currentInputLUFS = inputLUFS ?? this.currentInputLUFS;
+    if (inputLUFS != null && Number.isFinite(inputLUFS)) {
+      this.currentInputLUFS = inputLUFS;
+    } else if (!Number.isFinite(this.currentInputLUFS)) {
+      this.currentInputLUFS = -16;
+    }
     
     // Resume AudioContext if suspended (browser autoplay policy)
     if (this.audioContext!.state === 'suspended') {
@@ -485,75 +497,71 @@ export class RealtimeAudioPlayer {
       // === EQ Parameters (user profile adjustments) ===
       case 'lowShelfGain':
         if (params.lowShelfGain) {
-          params.lowShelfGain.setTargetAtTime(value, currentTime, rampTimeSeconds);
+          setTargetFinite(params.lowShelfGain, value, currentTime, rampTimeSeconds);
         }
         break;
       
       case 'midRangeGain':
         if (params.midRangeGain) {
-          params.midRangeGain.setTargetAtTime(value, currentTime, rampTimeSeconds);
+          setTargetFinite(params.midRangeGain, value, currentTime, rampTimeSeconds);
         }
         break;
       
       case 'highShelfGain':
         if (params.highShelfGain) {
-          params.highShelfGain.setTargetAtTime(value, currentTime, rampTimeSeconds);
+          setTargetFinite(params.highShelfGain, value, currentTime, rampTimeSeconds);
         }
         break;
       
       // === Stereo Width ===
       case 'stereoWidth':
         if (params.stereoWidth) {
-          params.stereoWidth.setTargetAtTime(value, currentTime, rampTimeSeconds);
+          setTargetFinite(params.stereoWidth, value, currentTime, rampTimeSeconds, 1);
         }
         break;
       
       // === Drive / Saturation ===
       case 'transformerDrive':
         if (params.transformerDrive) {
-          params.transformerDrive.setTargetAtTime(value, currentTime, rampTimeSeconds);
+          setTargetFinite(params.transformerDrive, value, currentTime, rampTimeSeconds);
         }
         break;
       
       case 'tapeDrive':
         if (params.tapeDrive) {
-          params.tapeDrive.setTargetAtTime(value, currentTime, rampTimeSeconds);
+          setTargetFinite(params.tapeDrive, value, currentTime, rampTimeSeconds);
         }
         break;
       
       // === SSL Compressor ===
       case 'sslThreshold':
         if (params.sslThreshold) {
-          params.sslThreshold.setTargetAtTime(value, currentTime, rampTimeSeconds);
+          setTargetFinite(params.sslThreshold, value, currentTime, rampTimeSeconds);
         }
         break;
 
       case 'sslRatio':
         if (params.sslRatio) {
-          params.sslRatio.setTargetAtTime(value, currentTime, rampTimeSeconds);
+          setTargetFinite(params.sslRatio, value, currentTime, rampTimeSeconds, 1);
         }
         break;
 
       case 'inputTrim':
         if (params.inputTrim) {
-          const linear = Math.pow(10, value / 20);
-          params.inputTrim.setTargetAtTime(linear, currentTime, rampTimeSeconds);
+          setTargetLinearFromDB(params.inputTrim, value, currentTime, rampTimeSeconds);
         }
         break;
 
       case 'outputTrim':
         if (params.outputTrim) {
-          const linear = Math.pow(10, value / 20);
-          params.outputTrim.setTargetAtTime(linear, currentTime, rampTimeSeconds);
+          setTargetLinearFromDB(params.outputTrim, value, currentTime, rampTimeSeconds);
         }
         break;
       
       // === Limiter ===
       case 'limiterMakeup':
         if (params.limiterMakeup) {
-          // Convert dB to linear gain
-          const linearGain = Math.pow(10, value / 20);
-          params.limiterMakeup.setTargetAtTime(linearGain, currentTime, rampTimeSeconds);
+          setTargetLinearFromDB(params.limiterMakeup, value, currentTime, rampTimeSeconds);
         }
         break;
       
@@ -576,8 +584,10 @@ export class RealtimeAudioPlayer {
     limiterCeilingOverride?: number,
     sslGlue?: 'auto' | 'gentle' | 'firm'
   ): Promise<void> {
-    if (inputLUFS !== undefined) {
+    if (inputLUFS != null && Number.isFinite(inputLUFS)) {
       this.currentInputLUFS = inputLUFS;
+    } else if (!Number.isFinite(this.currentInputLUFS)) {
+      this.currentInputLUFS = -16;
     }
     const wasPlaying = this.isPlaying;
     const currentPosition = this.getState().currentTime;

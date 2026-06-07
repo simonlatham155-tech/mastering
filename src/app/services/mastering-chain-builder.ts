@@ -26,6 +26,7 @@
 import type { ProcessingPlan } from '../data/preset-resolution';
 import type { ProcessingSettings } from './audio-processor';
 import type { QualityMode } from '../data/quality-profiles';
+import { finiteDB, finiteLinearGainFromDB } from '../utils/finite-audio';
 import { buildTransformerStage, getTransformerConfig } from './stages/transformer-stage';
 import { buildTapeStage, getTapeConfig } from './stages/tape-stage';
 import { buildMultibandStage } from './stages/multiband-stage';
@@ -362,7 +363,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   // === INPUT TRIM (always present for live pro control) ===
   const inputTrimGain = context.createGain();
   inputTrimGain.gain.value =
-    inputTrimDB != null ? Math.pow(10, inputTrimDB / 20) : 1.0;
+    inputTrimDB != null ? finiteLinearGainFromDB(inputTrimDB) : 1.0;
   chainInput.connect(inputTrimGain);
   currentNode = inputTrimGain;
   nodesToDispose.push(inputTrimGain);
@@ -402,7 +403,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
       bypassGainMatchDB != null && Number.isFinite(bypassGainMatchDB)
         ? bypassGainMatchDB
         : 0;
-    chainOutput.gain.value = Math.pow(10, bypassOutDB / 20);
+    chainOutput.gain.value = finiteLinearGainFromDB(bypassOutDB);
     chainOutput.connect(destination);
     console.log(
       bypassGainMatchDB != null
@@ -429,7 +430,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
 
   chainOutput.gain.value =
     outputTrimDB != null && outputTrimDB !== 0
-      ? Math.pow(10, outputTrimDB / 20)
+      ? finiteLinearGainFromDB(outputTrimDB)
       : 1.0;
 
   // PREVIEW/EXPORT PARITY: No quality-dependent DSP behavior.
@@ -768,7 +769,7 @@ function createMidSideProcessor(
   
   // Width control on Side channel
   const widthControl = context.createGain();
-  const requestedWidth = params.source.requestedWidth ?? 1.0;
+  const requestedWidth = finiteDB(params.source.requestedWidth ?? 1.0, 1.0);
   const widthAmount = Math.max(0, Math.min(2.0, requestedWidth));
   widthControl.gain.value = widthAmount;
   
@@ -871,15 +872,15 @@ function createLimiterStage(
     : Math.max(styleParams.type2KneeStart || 0.97, 0.97);  // PATCH: Gentle approach
   
   // === CEILING (from export preset, but loudnessStyle can't exceed it) ===
-  const exportCeiling = params.deliveryTargets.ceiling;
-  const styleCeiling = limParams.ceiling;
+  const exportCeiling = finiteDB(params.deliveryTargets.ceiling, -1);
+  const styleCeiling = finiteDB(limParams.ceiling, -1);
   const resolvedCeiling = Math.min(exportCeiling, styleCeiling);
-  const finalCeiling = limiterCeilingOverride ?? resolvedCeiling;
-  const ceilingLinear = Math.pow(10, finalCeiling / 20);
+  const finalCeiling = finiteDB(limiterCeilingOverride ?? resolvedCeiling, -1);
+  const ceilingLinear = finiteLinearGainFromDB(finalCeiling);
   
   // === MAKEUP GAIN (sole loudness authority) ===
-  const targetLUFS = params.deliveryTargets.targetLUFS;
-  const estimatedCurrentLUFS = inputLUFS ?? -16;
+  const targetLUFS = finiteDB(params.deliveryTargets.targetLUFS, -14);
+  const estimatedCurrentLUFS = finiteDB(inputLUFS ?? -16, -16);
   const requiredGainDB = targetLUFS - estimatedCurrentLUFS;
   
   // Clamp makeup by loudnessStyle's maxGR (prevents over-limiting)
@@ -890,7 +891,7 @@ function createLimiterStage(
   const flowMaxGR = Math.min(limParams.maxGR, 1.5); // Flow: max 1.5dB gain reduction
   const maxMakeupDB = isBrickwall ? 8 : flowMaxGR;
   const makeupGainDB = Math.max(-6, Math.min(requiredGainDB, maxMakeupDB));
-  const makeupGainLinear = Math.pow(10, makeupGainDB / 20);
+  const makeupGainLinear = finiteLinearGainFromDB(makeupGainDB);
   
   const makeupGain = context.createGain();
   makeupGain.gain.value = makeupGainLinear;
@@ -1029,20 +1030,20 @@ function createProfileEQ(
   const lowShelf = context.createBiquadFilter();
   lowShelf.type = 'lowshelf';
   lowShelf.frequency.value = 100;
-  lowShelf.gain.value = params.genreBehavior.bassTilt;
+  lowShelf.gain.value = finiteDB(params.genreBehavior.bassTilt);
   
   // Mid cut (mudCut) — peaking at 250Hz (the actual "mud" frequency)
   const midRange = context.createBiquadFilter();
   midRange.type = 'peaking';
   midRange.frequency.value = 250;   // Changed from 1kHz — 250Hz is where mud lives
   midRange.Q.value = 1.0;           // ~1.5 octave bandwidth
-  midRange.gain.value = params.genreBehavior.mudCut;
+  midRange.gain.value = finiteDB(params.genreBehavior.mudCut);
   
   // High shelf (airTilt)
   const highShelf = context.createBiquadFilter();
   highShelf.type = 'highshelf';
   highShelf.frequency.value = 10000;
-  highShelf.gain.value = params.genreBehavior.airTilt;
+  highShelf.gain.value = finiteDB(params.genreBehavior.airTilt);
   
   input.connect(lowShelf);
   lowShelf.connect(midRange);

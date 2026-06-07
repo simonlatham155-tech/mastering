@@ -10,8 +10,9 @@
  * 5. Send to WASM EQ with auto-gain compensation
  */
 
-import { SpectralAnalyzer, SpectralProfile, MatchingDelta } from './spectral-analyzer';
+import { finiteDB, sanitizeGainArray } from '../utils/finite-audio';
 import { ReferenceCurve } from '../data/reference-curves';
+import { SpectralAnalyzer, SpectralProfile, MatchingDelta } from './spectral-analyzer';
 import { isoBandsToArray, profileToIsoBands, profileToRelativeIsoShape, referenceCurveToRelativeShape } from '../utils/spectral-profile-iso';
 
 /**
@@ -108,8 +109,8 @@ export class ReferenceMatchingController {
     
     // Calculate gain for each band
     ISO_BANDS.forEach((band, index) => {
-      const refDb = referenceProfile[index];
-      const userDb = userProfileArray[index];
+      const refDb = finiteDB(referenceProfile[index]);
+      const userDb = finiteDB(userProfileArray[index]);
       
       // 1. Find the raw difference
       let delta = refDb - userDb;
@@ -125,7 +126,7 @@ export class ReferenceMatchingController {
       }
       
       // 4. Apply the "Strength" multiplier from UI
-      const finalGain = clampedDelta * strength;
+      const finalGain = finiteDB(clampedDelta * strength);
       
       gains.push(finalGain);
       
@@ -161,21 +162,23 @@ export class ReferenceMatchingController {
     // AUTO-GAIN COMPENSATION
     // If EQ adds 3dB total boost, output volume drops by 3dB
     // This prevents the user from being tricked by "louder = better"
-    const netGain = totalBoost - totalCut;
-    const autoGain = -netGain * 0.3; // Compensate 30% of net gain
+    const netGain = finiteDB(totalBoost - totalCut);
+    const autoGain = finiteDB(-netGain * 0.3);
     
     // Clamp auto-gain to reasonable range
     const clampedAutoGain = Math.max(-6, Math.min(6, autoGain));
     
+    const safeGains = sanitizeGainArray(gains);
+    
     console.log('📊 Matching Gains Calculated:');
-    console.log(`   Total Boost: +${totalBoost.toFixed(1)}dB`);
-    console.log(`   Total Cut: -${totalCut.toFixed(1)}dB`);
+    console.log(`   Total Boost: +${finiteDB(totalBoost).toFixed(1)}dB`);
+    console.log(`   Total Cut: -${finiteDB(totalCut).toFixed(1)}dB`);
     console.log(`   Net Gain: ${netGain > 0 ? '+' : ''}${netGain.toFixed(1)}dB`);
     console.log(`   Auto-Gain Compensation: ${autoGain.toFixed(1)}dB`);
     console.log(`   Strength Applied: ${(strength * 100).toFixed(0)}%`);
     
     return {
-      bands: gains,
+      bands: safeGains,
       autoGain: clampedAutoGain,
       warnings,
       deltaVisualization: deltaViz

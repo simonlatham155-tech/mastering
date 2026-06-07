@@ -15,6 +15,7 @@
 
 import { getGenrePreset, ENGINE_DEFAULTS, type GenrePreset } from './genre-presets';
 import { getExportPreset, type ExportPresetId } from './export-presets';
+import { finiteDB } from '../utils/finite-audio';
 
 /**
  * Processing plan: Final resolved values fed into DSP.
@@ -137,9 +138,9 @@ export function resolveProcessingPlan(input: ResolutionInput): ProcessingPlan {
   const widthClamped = effectiveWidth !== requestedWidth;
   
   // Other biases: genre default + user OFFSET (user value is additive, 0 = no change)
-  const bassTilt = genrePreset.biases.bassTilt + (userOverrides?.bassTilt ?? 0);
-  const airTilt = genrePreset.biases.airTilt + (userOverrides?.airTilt ?? 0);
-  const mudCut = genrePreset.biases.mudCut + (userOverrides?.mudCut ?? 0);
+  const bassTilt = finiteDB(genrePreset.biases.bassTilt + (userOverrides?.bassTilt ?? 0));
+  const airTilt = finiteDB(genrePreset.biases.airTilt + (userOverrides?.airTilt ?? 0));
+  const mudCut = finiteDB(genrePreset.biases.mudCut + (userOverrides?.mudCut ?? 0));
   const colorAmount = clamp(genrePreset.biases.colorAmount + (userOverrides?.colorAmount ?? 0), 0, 1);
   const monoBassHz = userOverrides?.monoBassHz ?? genrePreset.biases.monoBassHz;
   

@@ -177,17 +177,23 @@ export class SpectralAnalyzer {
     }
     
     // Average and convert to dB
+    const toBandDb = (energy: number) => {
+      const avg = energy / numWindows;
+      const db = 10 * Math.log10(Math.max(avg, 1e-10));
+      return Number.isFinite(db) ? db : -40;
+    };
+
     const bands = {
-      sub: 10 * Math.log10(bandAccumulators.sub / numWindows + 1e-10),
-      low: 10 * Math.log10(bandAccumulators.low / numWindows + 1e-10),
-      lowMid: 10 * Math.log10(bandAccumulators.lowMid / numWindows + 1e-10),
-      mid: 10 * Math.log10(bandAccumulators.mid / numWindows + 1e-10),
-      upperMid: 10 * Math.log10(bandAccumulators.upperMid / numWindows + 1e-10),
-      presence: 10 * Math.log10(bandAccumulators.presence / numWindows + 1e-10),
-      brilliance: 10 * Math.log10(bandAccumulators.brilliance / numWindows + 1e-10),
-      air: 10 * Math.log10(bandAccumulators.air / numWindows + 1e-10),
-      ultraHigh: 10 * Math.log10(bandAccumulators.ultraHigh / numWindows + 1e-10),
-      top: 10 * Math.log10(bandAccumulators.top / numWindows + 1e-10)
+      sub: toBandDb(bandAccumulators.sub),
+      low: toBandDb(bandAccumulators.low),
+      lowMid: toBandDb(bandAccumulators.lowMid),
+      mid: toBandDb(bandAccumulators.mid),
+      upperMid: toBandDb(bandAccumulators.upperMid),
+      presence: toBandDb(bandAccumulators.presence),
+      brilliance: toBandDb(bandAccumulators.brilliance),
+      air: toBandDb(bandAccumulators.air),
+      ultraHigh: toBandDb(bandAccumulators.ultraHigh),
+      top: toBandDb(bandAccumulators.top),
     };
     
     // Compute RMS and peak

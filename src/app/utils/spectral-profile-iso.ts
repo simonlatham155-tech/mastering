@@ -60,8 +60,9 @@ export function isoBandsToArray(bands: IsoSpectralBands): number[] {
  */
 export function toRelativeShape(values: number[]): number[] {
   if (values.length === 0) return [];
-  const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
-  return values.map((v) => v - mean);
+  const safe = values.map((v) => (Number.isFinite(v) ? v : 0));
+  const mean = safe.reduce((sum, v) => sum + v, 0) / safe.length;
+  return safe.map((v) => v - mean);
 }
 
 export function profileToRelativeIsoShape(profile: SpectralProfile): number[] {
