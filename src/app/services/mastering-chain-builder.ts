@@ -403,7 +403,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
       bypassGainMatchDB != null && Number.isFinite(bypassGainMatchDB)
         ? bypassGainMatchDB
         : 0;
-    chainOutput.gain.value = Math.pow(10, bypassOutDB / 20);
+    chainOutput.gain.value = finiteLinearGainFromDB(bypassOutDB);
     chainOutput.connect(destination);
     console.log(
       bypassGainMatchDB != null
@@ -769,7 +769,7 @@ function createMidSideProcessor(
   
   // Width control on Side channel
   const widthControl = context.createGain();
-  const requestedWidth = params.source.requestedWidth ?? 1.0;
+  const requestedWidth = finiteDB(params.source.requestedWidth ?? 1.0, 1.0);
   const widthAmount = Math.max(0, Math.min(2.0, requestedWidth));
   widthControl.gain.value = widthAmount;
   
@@ -872,15 +872,15 @@ function createLimiterStage(
     : Math.max(styleParams.type2KneeStart || 0.97, 0.97);  // PATCH: Gentle approach
   
   // === CEILING (from export preset, but loudnessStyle can't exceed it) ===
-  const exportCeiling = params.deliveryTargets.ceiling;
-  const styleCeiling = limParams.ceiling;
+  const exportCeiling = finiteDB(params.deliveryTargets.ceiling, -1);
+  const styleCeiling = finiteDB(limParams.ceiling, -1);
   const resolvedCeiling = Math.min(exportCeiling, styleCeiling);
-  const finalCeiling = limiterCeilingOverride ?? resolvedCeiling;
-  const ceilingLinear = Math.pow(10, finalCeiling / 20);
+  const finalCeiling = finiteDB(limiterCeilingOverride ?? resolvedCeiling, -1);
+  const ceilingLinear = finiteLinearGainFromDB(finalCeiling);
   
   // === MAKEUP GAIN (sole loudness authority) ===
-  const targetLUFS = params.deliveryTargets.targetLUFS;
-  const estimatedCurrentLUFS = inputLUFS ?? -16;
+  const targetLUFS = finiteDB(params.deliveryTargets.targetLUFS, -14);
+  const estimatedCurrentLUFS = finiteDB(inputLUFS ?? -16, -16);
   const requiredGainDB = targetLUFS - estimatedCurrentLUFS;
   
   // Clamp makeup by loudnessStyle's maxGR (prevents over-limiting)
@@ -891,7 +891,7 @@ function createLimiterStage(
   const flowMaxGR = Math.min(limParams.maxGR, 1.5); // Flow: max 1.5dB gain reduction
   const maxMakeupDB = isBrickwall ? 8 : flowMaxGR;
   const makeupGainDB = Math.max(-6, Math.min(requiredGainDB, maxMakeupDB));
-  const makeupGainLinear = Math.pow(10, makeupGainDB / 20);
+  const makeupGainLinear = finiteLinearGainFromDB(makeupGainDB);
   
   const makeupGain = context.createGain();
   makeupGain.gain.value = makeupGainLinear;

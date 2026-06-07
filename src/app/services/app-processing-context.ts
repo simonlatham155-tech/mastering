@@ -13,6 +13,7 @@ import type { ExportPresetId } from '../data/export-presets';
 import { getExportPreset } from '../data/export-presets';
 import { getGenrePreset } from '../data/genre-presets';
 import { resolveProcessingPlan, type ProcessingPlan, type UserOverrides } from '../data/preset-resolution';
+import { finiteDB } from '../utils/finite-audio';
 import type { ProcessingSettings } from '../services/audio-processor';
 import type { AIMasteringRecommendation } from '../services/ai-mastering-engine';
 import type { RealtimeAudioPlayer } from '../services/realtime-audio-player';
@@ -108,19 +109,19 @@ export function applyProfileAdjustmentsToPlayer(
 
   player.updateParameter(
     'lowShelfGain',
-    genre.biases.bassTilt + profileAdjustments.lowShelfBoost
+    finiteDB(genre.biases.bassTilt + profileAdjustments.lowShelfBoost)
   );
   player.updateParameter(
     'midRangeGain',
-    genre.biases.mudCut + profileAdjustments.midRangeAdjust
+    finiteDB(genre.biases.mudCut + profileAdjustments.midRangeAdjust)
   );
   player.updateParameter(
     'highShelfGain',
-    genre.biases.airTilt + profileAdjustments.highShelfBoost
+    finiteDB(genre.biases.airTilt + profileAdjustments.highShelfBoost)
   );
 
-  const widthOffset = (profileAdjustments.stereoWidth - 50) / 100 * 0.6;
-  player.updateParameter('stereoWidth', genre.biases.width + widthOffset);
+  const widthOffset = (finiteDB(profileAdjustments.stereoWidth, 50) - 50) / 100 * 0.6;
+  player.updateParameter('stereoWidth', finiteDB(genre.biases.width + widthOffset, 1));
 }
 
 export function applyProDynamicsToPlayer(
@@ -128,9 +129,9 @@ export function applyProDynamicsToPlayer(
   proDynamics: ProDynamicsSettings,
   autoInputTrimDB?: number
 ): void {
-  const inputTrim = proDynamics.inputTrimDB ?? autoInputTrimDB ?? 0;
+  const inputTrim = finiteDB(proDynamics.inputTrimDB ?? autoInputTrimDB ?? 0, 0);
   player.updateParameter('inputTrim', inputTrim);
-  player.updateParameter('outputTrim', proDynamics.outputTrimDB);
+  player.updateParameter('outputTrim', finiteDB(proDynamics.outputTrimDB, 0));
 
   if (proDynamics.sslGlue === 'gentle' || proDynamics.sslGlue === 'firm') {
     const preset = SSL_GLUE_PRESETS[proDynamics.sslGlue];
