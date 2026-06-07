@@ -28,6 +28,7 @@ import {
 import type { ProcessingPlan } from '../data/preset-resolution';
 import type { ProcessingSettings } from '../services/audio-processor';
 import { getExportPreset } from '../data/export-presets';
+import { CreatorAboutStrip } from '../components/creator-about-strip';
 
 type CompareMode = 'generic' | 'latham';
 
@@ -238,6 +239,7 @@ export default function DemoPage() {
             Upload a mix. Hear generic one-size-fits-all mastering next to a chain tuned for your
             genre — with verified BS.1770 loudness and true peak on the same meter path as export.
           </p>
+          <CreatorAboutStrip variant="compact" />
         </header>
 
         <AudioInputSection
