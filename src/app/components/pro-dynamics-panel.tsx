@@ -36,6 +36,7 @@ interface ProDynamicsPanelProps {
   autoInputTrimDB?: number;
   presetCeilingDBTP: number;
   outputMomentaryLUFS: number | null;
+  outputIntegratedLUFS: number | null;
   targetLUFS: number;
   isPlaying: boolean;
 }
@@ -55,6 +56,7 @@ export function ProDynamicsPanel({
   autoInputTrimDB,
   presetCeilingDBTP,
   outputMomentaryLUFS,
+  outputIntegratedLUFS,
   targetLUFS,
   isPlaying,
 }: ProDynamicsPanelProps) {
@@ -85,14 +87,20 @@ export function ProDynamicsPanel({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-[10px] font-mono uppercase tracking-wider">
+        <div className="flex flex-wrap items-center gap-3 text-[10px] font-mono uppercase tracking-wider">
           <Gauge className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-zinc-500">Output</span>
+          <span className="text-zinc-500">Out</span>
           <span className={`${isPlaying ? 'text-cyan-400' : 'text-zinc-600'}`}>
-            {outputMomentaryLUFS != null ? `${outputMomentaryLUFS.toFixed(1)} LUFS` : '—'}
+            M {outputMomentaryLUFS != null ? `${outputMomentaryLUFS.toFixed(1)}` : '—'}
+          </span>
+          <span className="text-zinc-700">·</span>
+          <span className={`${isPlaying ? 'text-yellow-400' : 'text-zinc-600'}`}>
+            I {outputIntegratedLUFS != null && Number.isFinite(outputIntegratedLUFS) && outputIntegratedLUFS !== -Infinity
+              ? `${outputIntegratedLUFS.toFixed(1)}`
+              : '—'}
           </span>
           <span className="text-zinc-700">/</span>
-          <span className="text-emerald-400">{targetLUFS} target</span>
+          <span className="text-emerald-400">{targetLUFS} tgt</span>
         </div>
       </div>
 

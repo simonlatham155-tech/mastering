@@ -30,7 +30,9 @@ import { buildMasteringChain, type MasteringChain } from './mastering-chain-buil
 import type { ProcessingSettings } from './audio-processor';
 import type { ProcessingPlan } from '../data/preset-resolution';
 import { OversamplingLimiterManager, type LimiterMeterData } from './oversampling-limiter-manager';
-import { estimateMomentaryLUFS } from '../utils/live-lufs-meter';
+import { LufsMeterManager, type LufsMeterData } from './lufs-meter-manager';
+
+export type { LufsMeterData };
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -68,13 +70,13 @@ export class RealtimeAudioPlayer {
   private currentInputLUFS: number = -16;
   private isSwitchingBypass: boolean = false;
   private limiterMeter = new OversamplingLimiterManager();
+  private lufsMeter = new LufsMeterManager();
   private hqModeEnabled = true;
   private sslMeterCallback: ((data: SSLMeterData) => void) | null = null;
+  private lufsMeterCallback: ((data: LufsMeterData) => void) | null = null;
   private meterPollId: number | null = null;
   private sslInputBuffer: Float32Array | null = null;
   private sslOutputBuffer: Float32Array | null = null;
-  private outputMeterBuffer: Float32Array | null = null;
-  private outputLevelCallback: ((lufs: number) => void) | null = null;
   private currentLimiterCeilingOverride: number | undefined = undefined;
   private currentSslGlue: 'auto' | 'gentle' | 'firm' = 'auto';
   
@@ -113,11 +115,20 @@ export class RealtimeAudioPlayer {
     }
   }
 
+  setLufsMeterCallback(callback: ((data: LufsMeterData) => void) | null): void {
+    this.lufsMeterCallback = callback;
+    this.lufsMeter.setMeterCallback(callback);
+  }
+
+  /** @deprecated Use setLufsMeterCallback — kept for compatibility */
   setOutputLevelCallback(callback: ((lufs: number) => void) | null): void {
-    this.outputLevelCallback = callback;
-    if (this.masteringChain) {
-      this.wireLiveMeters(this.masteringChain);
-    }
+    this.setLufsMeterCallback(
+      callback
+        ? (data) => {
+            if (Number.isFinite(data.momentary)) callback(data.momentary);
+          }
+        : null
+    );
   }
 
   setHQMode(enabled: boolean): void {
@@ -149,16 +160,12 @@ export class RealtimeAudioPlayer {
       chain.sslInputAnalyser &&
       chain.sslOutputAnalyser &&
       this.sslMeterCallback;
-    const hasOutput = chain.outputAnalyser && this.outputLevelCallback;
 
-    if (!hasSSL && !hasOutput) return;
+    if (!hasSSL) return;
 
     if (hasSSL) {
       this.sslInputBuffer = new Float32Array(chain.sslInputAnalyser!.fftSize);
       this.sslOutputBuffer = new Float32Array(chain.sslOutputAnalyser!.fftSize);
-    }
-    if (hasOutput) {
-      this.outputMeterBuffer = new Float32Array(chain.outputAnalyser!.fftSize);
     }
 
     const poll = () => {
@@ -185,15 +192,6 @@ export class RealtimeAudioPlayer {
         });
       }
 
-      if (
-        this.outputLevelCallback &&
-        this.masteringChain.outputAnalyser &&
-        this.outputMeterBuffer
-      ) {
-        this.masteringChain.outputAnalyser.getFloatTimeDomainData(this.outputMeterBuffer);
-        this.outputLevelCallback(estimateMomentaryLUFS(this.outputMeterBuffer));
-      }
-
       this.meterPollId = requestAnimationFrame(poll);
     };
 
@@ -213,13 +211,17 @@ export class RealtimeAudioPlayer {
       throw new Error('No audio context');
     }
 
+    const lufsNode = await this.lufsMeter.initialize(this.audioContext);
     const meterNode = await this.limiterMeter.initialize(this.audioContext);
+    lufsNode.connect(meterNode);
     this.limiterMeter.connectToDestination(this.audioContext.destination);
+    this.lufsMeter.setMeterCallback(this.lufsMeterCallback);
+    this.lufsMeter.reset();
     this.syncMeterParams(plan, limiterCeilingOverride);
 
     const chain = buildMasteringChain({
       context: this.audioContext,
-      destination: meterNode,
+      destination: lufsNode,
       params: plan,
       settings,
       quality: 'preview',
@@ -693,6 +695,7 @@ export class RealtimeAudioPlayer {
     }
 
     this.limiterMeter.dispose();
+    this.lufsMeter.dispose();
 
     if (this.audioContext) {
       this.audioContext.close();

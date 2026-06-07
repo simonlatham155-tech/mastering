@@ -20,6 +20,7 @@ import { TruePeakIndicator } from './components/true-peak-indicator';
 import { DamageReportPanel } from './components/damage-report-panel';
 import { HQModeToggle } from './components/hq-mode-toggle';
 import { InterSamplePeakMeter } from './components/inter-sample-peak-meter';
+import { CompactLufsMeter } from './components/compact-lufs-meter';
 import { ProfileAdjustmentsPanel, ProfileAdjustments } from './components/profile-adjustments';
 import { ProDynamicsPanel } from './components/pro-dynamics-panel';
 import { getExportPreset } from './data/export-presets';
@@ -41,7 +42,12 @@ import { analyzeAudioFile as analyzeInputAudio, AudioAnalysisResult } from './ut
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
 import { MasteringWorkflow } from './components/mastering-workflow';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
-import { RealtimeAudioPlayer } from './services/realtime-audio-player';
+import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
+import {
+  buildExportQualityReport,
+  measureBufferLoudness,
+  measureSamplePeakDBFS,
+} from './utils/measure-buffer-loudness';
 import { PlaybackControls } from './components/playback-controls';
 import { motion } from 'motion/react';
 
@@ -170,7 +176,8 @@ export default function App() {
   });
 
   const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
-  const [outputMomentaryLUFS, setOutputMomentaryLUFS] = useState<number | null>(null);
+  const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
+  const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
 
   const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
   const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
@@ -246,14 +253,14 @@ export default function App() {
       if (Number.isFinite(data.inputLevelDB)) setInputLevel(data.inputLevelDB);
     });
 
-    player.setOutputLevelCallback((lufs) => {
-      if (Number.isFinite(lufs)) setOutputMomentaryLUFS(lufs);
+    player.setLufsMeterCallback((data) => {
+      setOutputLufs(data);
     });
 
     return () => {
       player.setMeterCallback(null);
       player.setSSLMeterCallback(null);
-      player.setOutputLevelCallback(null);
+      player.setLufsMeterCallback(null);
     };
   }, [isReady]);
 
@@ -586,7 +593,36 @@ export default function App() {
       URL.revokeObjectURL(url);
 
       const preset = getExportPreset(presetId);
-      toast.success(`${presetId.toUpperCase()} master exported (${preset.lufs} LUFS)`);
+
+      toast.info('Measuring integrated loudness (BS.1770)...');
+      const lufs = await measureBufferLoudness(finalBuffer);
+      const samplePeak = measureSamplePeakDBFS(finalBuffer);
+      const report = buildExportQualityReport(
+        lufs,
+        samplePeak,
+        preset.lufs,
+        preset.ceiling
+      );
+      setLastExportReport(report);
+
+      const lufsStr =
+        report.integratedLUFS !== -Infinity
+          ? `${report.integratedLUFS.toFixed(1)} LUFS integrated`
+          : 'LUFS measure pending';
+
+      if (report.onTarget && report.peakOk) {
+        toast.success(
+          `${presetId.toUpperCase()} master exported — ${lufsStr}, peak ${samplePeak.toFixed(1)} dBFS (on target)`
+        );
+      } else if (!report.peakOk) {
+        toast.warning(
+          `${presetId.toUpperCase()} exported — ${lufsStr}. Peak ${samplePeak.toFixed(1)} dBFS exceeds ceiling ${preset.ceiling} dBTP.`
+        );
+      } else {
+        toast.success(
+          `${presetId.toUpperCase()} exported — ${lufsStr} (target ${preset.lufs}, Δ ${report.lufsDelta >= 0 ? '+' : ''}${report.lufsDelta.toFixed(1)} LU)`
+        );
+      }
     } catch (error) {
       console.error('Export failed:', error);
       toast.error('Failed to export audio');
@@ -1072,7 +1108,25 @@ export default function App() {
                 gearProfile={gearProfile}
                 autoInputTrimDB={autoInputTrimDB}
                 presetCeilingDBTP={getExportPreset(exportPreset).ceiling}
-                outputMomentaryLUFS={outputMomentaryLUFS}
+                outputMomentaryLUFS={
+                  outputLufs?.momentary != null && Number.isFinite(outputLufs.momentary)
+                    ? outputLufs.momentary
+                    : null
+                }
+                outputIntegratedLUFS={
+                  outputLufs?.integrated != null && Number.isFinite(outputLufs.integrated)
+                    ? outputLufs.integrated
+                    : null
+                }
+                targetLUFS={getExportPreset(exportPreset).lufs}
+                isPlaying={playbackState.isPlaying}
+              />
+            </div>
+
+            {/* BS.1770 loudness meter (live) */}
+            <div className="mb-6">
+              <CompactLufsMeter
+                lufs={outputLufs}
                 targetLUFS={getExportPreset(exportPreset).lufs}
                 isPlaying={playbackState.isPlaying}
               />
@@ -1257,6 +1311,28 @@ export default function App() {
               />
             </div>
             
+            {/* Last export quality report (BS.1770 verified) */}
+            {lastExportReport && lastExportReport.integratedLUFS !== -Infinity && (
+              <div
+                className={`mb-4 px-4 py-3 rounded-lg border text-sm font-mono ${
+                  lastExportReport.onTarget && lastExportReport.peakOk
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                }`}
+              >
+                Last export:{' '}
+                <strong>{lastExportReport.integratedLUFS.toFixed(1)} LUFS</strong> integrated
+                {' '}(target {lastExportReport.targetLUFS},{' '}
+                {lastExportReport.lufsDelta >= 0 ? '+' : ''}
+                {lastExportReport.lufsDelta.toFixed(1)} LU)
+                {' · '}
+                peak {lastExportReport.samplePeakDBFS.toFixed(1)} dBFS
+                {lastExportReport.onTarget && lastExportReport.peakOk
+                  ? ' — passes quality gate'
+                  : ' — review levels before delivery'}
+              </div>
+            )}
+
             {/* Export Panel */}
             <ExportPanel 
               onExport={handleExport} 
