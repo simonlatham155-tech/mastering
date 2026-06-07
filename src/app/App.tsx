@@ -813,7 +813,7 @@ export default function App() {
                   <span className="text-white text-lg"> AI MASTERING SUITE</span>
                 </h1>
                 <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
-                  Algorithmic Mastering Chain • Intelligent Signal Processing
+                  Latham Audio product line · Algorithmic mastering chain
                   {' · '}
                   <a
                     href="#/demo"

@@ -232,8 +232,8 @@ export default function DemoPage() {
             Full mastering suite
           </a>
           <h1 className="text-2xl font-mono font-bold tracking-tight">
-            <span className="text-cyan-400">Black box</span> vs{' '}
-            <span className="text-white">genre-aware</span>
+            <span className="text-cyan-400">Latham Audio</span>
+            <span className="text-zinc-500 font-normal text-lg"> — black box vs genre-aware</span>
           </h1>
           <p className="text-sm text-zinc-400 leading-relaxed max-w-xl">
             Upload a mix. Hear generic one-size-fits-all mastering next to a chain tuned for your
@@ -286,7 +286,7 @@ export default function DemoPage() {
                 <div className="flex items-center gap-2 mb-2">
                   <Sparkles className="w-4 h-4 text-cyan-400" />
                   <span className="text-xs font-mono uppercase tracking-wider text-cyan-300">
-                    Latham · {recommendation.gearProfile}
+                    Latham Audio · {recommendation.gearProfile}
                   </span>
                 </div>
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
