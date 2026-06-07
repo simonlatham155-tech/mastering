@@ -717,8 +717,7 @@ export default function App() {
     if (!selectedFile) return;
 
     setIsProcessing(true);
-    setIsAnalyzing(true);
-    toast.info('Analyzing audio file...');
+    toast.info('Decoding audio file...');
 
     try {
       await audioProcessor.loadAudioFile(selectedFile);
@@ -728,6 +727,9 @@ export default function App() {
         throw new Error('Failed to decode audio file');
       }
       setOriginalBuffer(original);
+
+      setIsAnalyzing(true);
+      toast.info('Analyzing audio file...');
 
       console.log('📊 Original buffer stored:', {
         channels: original.numberOfChannels,
@@ -741,6 +743,15 @@ export default function App() {
       setInputAnalysis(inputResult);
       setAnalysis(analysisResult);
       setIsAnalyzing(false);
+
+      void audioProcessor.refineAnalysisLoudnessBS1770().then((refined) => {
+        if (!refined) return;
+        setAnalysis(refined);
+        setInputAnalysis(buildInputAnalysisFromProcessor(original, refined));
+        setMixSetup((prev) =>
+          prev ? { ...prev, inputLufs: refined.lufs } : prev
+        );
+      });
 
       const recommendation = AIMasteringEngine.recommend(inputResult);
 

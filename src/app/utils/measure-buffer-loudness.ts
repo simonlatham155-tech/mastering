@@ -15,6 +15,17 @@ export interface MeasureBufferLoudnessOptions {
   maxDurationSec?: number;
   /** Abort offline render and fall back to RMS if exceeded. */
   renderTimeoutMs?: number;
+  /** Abort worklet module load if exceeded. */
+  moduleLoadTimeoutMs?: number;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms);
+    }),
+  ]);
 }
 
 const EMPTY_LUFS: LufsMeterData = {
@@ -60,9 +71,14 @@ export async function measureBufferLoudness(
 
   const offline = new OfflineAudioContext(channels, length, sampleRate);
   const renderTimeoutMs = options.renderTimeoutMs ?? 30_000;
+  const moduleLoadTimeoutMs = options.moduleLoadTimeoutMs ?? 5_000;
 
   try {
-    await offline.audioWorklet.addModule(workletUrl());
+    await withTimeout(
+      offline.audioWorklet.addModule(workletUrl()),
+      moduleLoadTimeoutMs,
+      'LUFS worklet load'
+    );
   } catch (err) {
     console.warn('LUFS worklet unavailable for offline measure:', err);
     return { ...EMPTY_BUFFER_LUFS };

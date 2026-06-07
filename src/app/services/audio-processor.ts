@@ -10,7 +10,32 @@ import {
   resolveIntegratedLUFS,
   INPUT_ANALYSIS_MAX_SECONDS,
 } from '../utils/measure-buffer-loudness';
-import { measureTruePeakLinearDBTP } from '../utils/measure-buffer-true-peak';
+
+/** Scan sample peak; decimate on very long files to keep upload responsive. */
+function scanSamplePeakLinear(buffer: AudioBuffer): number {
+  let peak = 0;
+  const step =
+    buffer.length > buffer.sampleRate * 120
+      ? 8
+      : buffer.length > buffer.sampleRate * 30
+        ? 4
+        : 1;
+
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    const data = buffer.getChannelData(ch);
+    for (let i = 0; i < data.length; i += step) {
+      peak = Math.max(peak, Math.abs(data[i]));
+    }
+  }
+  return peak;
+}
+
+/** Rough true-peak estimate from sample peak (input path — export uses worklet). */
+function estimateTruePeakDBTPFromSamplePeak(peakLevelDB: number): number {
+  if (peakLevelDB > -0.1) return peakLevelDB + 0.3;
+  if (peakLevelDB > -3) return peakLevelDB + 0.15;
+  return peakLevelDB;
+}
 
 export interface AudioAnalysis {
   lufs: number;
@@ -166,6 +191,10 @@ export class AudioProcessor {
   /**
    * Analyze audio file for LUFS, dynamic range, peaks
    */
+  /**
+   * Fast upload analysis — sync peaks/RMS/genre staging (no offline worklet).
+   * Call refineAnalysisLoudnessBS1770() afterward for gated integrated LUFS.
+   */
   async analyzeAudio(): Promise<AudioAnalysis> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
@@ -174,28 +203,11 @@ export class AudioProcessor {
     const sampleRate = this.audioBuffer.sampleRate;
     const numChannels = this.audioBuffer.numberOfChannels;
 
-    const loudness = await measureBufferLoudness(this.audioBuffer, {
-      maxDurationSec: INPUT_ANALYSIS_MAX_SECONDS,
-    });
-    
-    // === CRITICAL FIX (2026-02-16): ACCURATE PEAK DETECTION ===
-    // Peak must scan EVERY sample on ALL channels (not just channel 0 with step=10)
-    // Missing the true peak causes over-normalization → brickwalling
-    
-    // Calculate sample peak across ALL channels (step = 1, no decimation)
-    let truePeak = 0;
-    for (let ch = 0; ch < numChannels; ch++) {
-      const channelData = this.audioBuffer.getChannelData(ch);
-      for (let i = 0; i < channelData.length; i++) {
-        truePeak = Math.max(truePeak, Math.abs(channelData[i]));
-      }
-    }
-    
-    // Calculate RMS (Root Mean Square) for loudness
-    // RMS can use decimation for speed (peak analysis cannot)
+    const truePeak = scanSamplePeakLinear(this.audioBuffer);
+
     const channelData = this.audioBuffer.getChannelData(0);
-    const step = channelData.length > 500000 ? 10 : 1; // Decimate RMS only, not peak
-    
+    const step = channelData.length > 500000 ? 10 : 1;
+
     let sumSquares = 0;
     let sampleCount = 0;
     for (let ch = 0; ch < numChannels; ch++) {
@@ -207,19 +219,15 @@ export class AudioProcessor {
     }
     const rms = Math.sqrt(sumSquares / sampleCount);
 
-    const rmsFallbackLUFS = -0.691 + 10 * Math.log10(rms * rms);
-    const integratedLUFS = resolveIntegratedLUFS(loudness, rmsFallbackLUFS);
+    const rmsFallbackLUFS = -0.691 + 10 * Math.log10(Math.max(rms * rms, 1e-24));
+    const integratedLUFS = rmsFallbackLUFS;
     const lufs = integratedLUFS;
-    const momentaryMaxLUFS =
-      Number.isFinite(loudness.maxMomentary) && loudness.maxMomentary !== -Infinity
-        ? loudness.maxMomentary
-        : integratedLUFS;
+    const momentaryMaxLUFS = integratedLUFS;
 
-    // Calculate Dynamic Range (simplified crest factor approach)
-    const dynamicRange = 20 * Math.log10(truePeak / rms);
+    const dynamicRange = 20 * Math.log10(Math.max(truePeak / rms, 1e-12));
 
     const peakLevel = 20 * Math.log10(Math.max(truePeak, 1e-12));
-    const truePeakDBTP = measureTruePeakLinearDBTP(this.audioBuffer);
+    const truePeakDBTP = estimateTruePeakDBTPFromSamplePeak(peakLevel);
 
     // === SSL "AUTO" RELEASE - DUAL-INTEGRATOR CIRCUIT ===
     // Crest Factor: Peak-to-RMS ratio (measures transient vs. sustained content)
@@ -309,6 +317,41 @@ export class AudioProcessor {
       sslAutoReleaseTime,
       material,
       duration: this.audioBuffer.duration, // Track duration in seconds
+    };
+
+    return this.analysis;
+  }
+
+  /**
+   * Background BS.1770 refine after fast analyzeAudio() — never blocks upload UI.
+   */
+  async refineAnalysisLoudnessBS1770(): Promise<AudioAnalysis | null> {
+    if (!this.audioBuffer || !this.analysis) return null;
+
+    const loudness = await measureBufferLoudness(this.audioBuffer, {
+      maxDurationSec: INPUT_ANALYSIS_MAX_SECONDS,
+      renderTimeoutMs: 8_000,
+      moduleLoadTimeoutMs: 4_000,
+    });
+
+    const integratedLUFS = resolveIntegratedLUFS(loudness, this.analysis.lufs);
+    if (!Number.isFinite(integratedLUFS) || integratedLUFS === -Infinity) {
+      return null;
+    }
+    if (Math.abs(integratedLUFS - this.analysis.lufs) < 0.05) {
+      return null;
+    }
+
+    const momentaryMaxLUFS =
+      Number.isFinite(loudness.maxMomentary) && loudness.maxMomentary !== -Infinity
+        ? loudness.maxMomentary
+        : integratedLUFS;
+
+    this.analysis = {
+      ...this.analysis,
+      lufs: integratedLUFS,
+      integratedLUFS,
+      momentaryMaxLUFS,
     };
 
     return this.analysis;
