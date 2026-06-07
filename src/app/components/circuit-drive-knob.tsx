@@ -5,9 +5,17 @@ interface CircuitDriveKnobProps {
   value: number;
   onChange: (value: number) => void;
   logicMode?: 'brickwall' | 'dynamics';
+  recommendedValue?: number | null;
+  onResetRecommended?: () => void;
 }
 
-export function CircuitDriveKnob({ value, onChange, logicMode = 'dynamics' }: CircuitDriveKnobProps) {
+export function CircuitDriveKnob({
+  value,
+  onChange,
+  logicMode = 'dynamics',
+  recommendedValue = null,
+  onResetRecommended,
+}: CircuitDriveKnobProps) {
   const [isDragging, setIsDragging] = useState(false);
   const knobRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef<number>(0);
@@ -43,6 +51,11 @@ export function CircuitDriveKnob({ value, onChange, logicMode = 'dynamics' }: Ci
   }, [isDragging, onChange]);
 
   const rotation = (value / 100) * 270 - 135; // -135deg to +135deg
+  const recommendedRotation =
+    recommendedValue != null ? (recommendedValue / 100) * 270 - 135 : null;
+  const showRecommendedMarker = recommendedValue != null;
+  const differsFromRecommended =
+    recommendedValue != null && Math.abs(value - recommendedValue) >= 2;
 
   // Color scheme changes based on logic mode
   const ledColorScheme = logicMode === 'brickwall' 
@@ -97,6 +110,23 @@ export function CircuitDriveKnob({ value, onChange, logicMode = 'dynamics' }: Ci
 
       {/* LED Ring - Increased by 20% */}
       <div className="relative w-48 h-48">
+        {/* AI recommended THD marker on outer ring */}
+        {showRecommendedMarker && recommendedRotation != null && (
+          <div
+            className="absolute inset-0 pointer-events-none z-10"
+            aria-hidden
+          >
+            <div
+              className="absolute left-1/2 top-1/2 w-1 h-10 -translate-x-1/2 origin-bottom rounded-full bg-cyan-400"
+              style={{
+                transform: `translateX(-50%) rotate(${recommendedRotation}deg)`,
+                transformOrigin: 'center 96px',
+                boxShadow: '0 0 6px rgba(34, 211, 238, 0.9), 0 0 12px rgba(34, 211, 238, 0.4)',
+              }}
+            />
+          </div>
+        )}
+
         {/* LED segments background */}
         <svg className="absolute inset-0 w-full h-full" viewBox="0 0 192 192">
           {Array.from({ length: 41 }).map((_, i) => {
@@ -229,6 +259,25 @@ export function CircuitDriveKnob({ value, onChange, logicMode = 'dynamics' }: Ci
           {value.toString().padStart(3, '0')}
         </div>
       </div>
+
+      {/* Recommended marker legend + reset */}
+      {showRecommendedMarker && (
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex items-center gap-2 text-[10px] font-mono text-cyan-400/90 uppercase tracking-wider">
+            <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.8)]" />
+            Recommended {recommendedValue}%
+          </div>
+          {differsFromRecommended && onResetRecommended && (
+            <button
+              type="button"
+              onClick={onResetRecommended}
+              className="px-3 py-1 rounded border border-cyan-500/30 bg-cyan-950/30 text-[10px] font-mono text-cyan-300 hover:bg-cyan-900/40 transition-colors uppercase tracking-wider"
+            >
+              Reset to recommended
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Silkscreen labels */}
       <div className="flex justify-between w-48 text-xs text-zinc-400 uppercase tracking-widest font-mono">
