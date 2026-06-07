@@ -131,23 +131,21 @@ export function buildMultibandStage(
     band4_HP2.Q.value = 0.707;
 
     const band1Compressor = context.createDynamicsCompressor();
-    band1Compressor.threshold.value = -12;
-    band1Compressor.knee.value = 6;
-    band1Compressor.ratio.value = 4;
-    band1Compressor.attack.value = 0.01;
-    band1Compressor.release.value = 0.1;
+    band1Compressor.threshold.value = -14;
+    band1Compressor.knee.value = 8;
+    band1Compressor.ratio.value = 2.5;
+    band1Compressor.attack.value = 0.015;
+    band1Compressor.release.value = 0.12;
 
     const band1Saturation = context.createWaveShaper();
     const band1Curve = new Float32Array(65536);
     for (let i = 0; i < 65536; i++) {
       const x = (i * 2 - 65536) / 65536;
-      const saturated = Math.tanh(x * 1.5);
-      const secondHarmonic = 0.15 * x * Math.abs(x);
-      band1Curve[i] = saturated + secondHarmonic;
+      band1Curve[i] = Math.tanh(x * 1.2);
     }
     normalizeCurve(band1Curve);
     band1Saturation.curve = band1Curve;
-    band1Saturation.oversample = 'none';
+    band1Saturation.oversample = '2x';
 
     const band1Post = context.createGain();
     band1Post.gain.value = 1.0;
@@ -167,7 +165,7 @@ export function buildMultibandStage(
     }
     normalizeCurve(band2Curve);
     band2Saturation.curve = band2Curve;
-    band2Saturation.oversample = 'none';
+    band2Saturation.oversample = '2x';
 
     const band2Post = context.createGain();
     band2Post.gain.value = 1.0;
@@ -189,7 +187,7 @@ export function buildMultibandStage(
     }
     normalizeCurve(band3Curve);
     band3Saturation.curve = band3Curve;
-    band3Saturation.oversample = 'none';
+    band3Saturation.oversample = '2x';
 
     const band3Post = context.createGain();
     band3Post.gain.value = 1.0;
@@ -218,7 +216,7 @@ export function buildMultibandStage(
     }
     normalizeCurve(band4Curve);
     band4Saturation.curve = band4Curve;
-    band4Saturation.oversample = 'none';
+    band4Saturation.oversample = '2x';
 
     const band4Post = context.createGain();
     band4Post.gain.value = 1.0;

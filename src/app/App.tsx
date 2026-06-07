@@ -81,6 +81,7 @@ function syncProfileAdjustmentsForGear(
 
 export default function App() {
   const [circuitDrive, setCircuitDrive] = useState(50);
+  const [recommendedCircuitDrive, setRecommendedCircuitDrive] = useState<number | null>(null);
   const [logicMode, setLogicMode] = useState<LogicMode>('dynamics');
   const [gearProfile, setGearProfile] = useState<GearProfileId>('deephouse');
   const [exportPreset, setExportPreset] = useState<ExportPresetId>('spotify'); // DEFAULT: Spotify Standard (-14 LUFS) - safe for beginners
@@ -201,6 +202,7 @@ export default function App() {
       setAnalysis(null);
       setProcessedBuffer(null);
       setIsWaveformRendering(false);
+      setRecommendedCircuitDrive(null);
       setMeterValues({ peak: 0, lra: 0 });
     }
   }, [selectedFile]);
@@ -222,7 +224,7 @@ export default function App() {
     realtimePlayerRef.current?.setHQMode(hqMode);
   }, [hqMode]);
 
-  // Wire live meter updates from the oversampling limiter worklet tap
+  // Wire live meter updates from the in-chain limiter worklet
   useEffect(() => {
     const player = realtimePlayerRef.current;
     if (!player || !isReady) return;
@@ -238,7 +240,15 @@ export default function App() {
       }));
     });
 
-    return () => player.setMeterCallback(null);
+    player.setSSLMeterCallback((data) => {
+      if (Number.isFinite(data.gainReductionDB)) setGainReduction(data.gainReductionDB);
+      if (Number.isFinite(data.inputLevelDB)) setInputLevel(data.inputLevelDB);
+    });
+
+    return () => {
+      player.setMeterCallback(null);
+      player.setSSLMeterCallback(null);
+    };
   }, [isReady]);
 
   // Sync profile adjustments when gear profile changes
@@ -332,6 +342,7 @@ export default function App() {
     const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
 
     setCircuitDrive(applied.circuitDrive);
+    setRecommendedCircuitDrive(applied.circuitDrive);
     setLogicMode(applied.logicMode);
     setGearProfile(applied.gearProfile);
     setExportPreset(applied.exportPreset);
@@ -791,7 +802,17 @@ export default function App() {
 
               {/* 3-column grid layout - ORIGINAL */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <CircuitDriveKnob value={circuitDrive} onChange={setCircuitDrive} logicMode={logicMode} />
+                <CircuitDriveKnob
+                  value={circuitDrive}
+                  onChange={setCircuitDrive}
+                  logicMode={logicMode}
+                  recommendedValue={recommendedCircuitDrive}
+                  onResetRecommended={
+                    recommendedCircuitDrive != null
+                      ? () => setCircuitDrive(recommendedCircuitDrive)
+                      : undefined
+                  }
+                />
                 <LogicToggle mode={logicMode} onChange={setLogicMode} />
                 <GearSelector selectedProfile={gearProfile} onChange={setGearProfile} />
               </div>
@@ -811,6 +832,14 @@ export default function App() {
                 </div>
                 <div className="flex flex-wrap items-center gap-6">
                   <GainReductionMeterCompact gainReductionDB={gainReductionDB} />
+                  {gainReduction > 0.1 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[8px] font-mono text-zinc-500">SSL:</span>
+                      <span className="text-xs font-mono font-bold text-amber-400">
+                        {gainReduction.toFixed(1)} dB
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <span className="text-[8px] font-mono text-zinc-500">TP:</span>
                     <span className={`text-xs font-mono font-bold ${

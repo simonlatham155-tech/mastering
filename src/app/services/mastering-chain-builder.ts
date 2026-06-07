@@ -31,6 +31,8 @@ import type { QualityMode } from '../data/quality-profiles';
 import { buildTransformerStage, getTransformerConfig } from './stages/transformer-stage';
 import { buildTapeStage, getTapeConfig } from './stages/tape-stage';
 import { buildMultibandStage } from './stages/multiband-stage';
+import { createTruePeakLimiterNode, disposeTruePeakLimiterNode } from './limiter-worklet';
+import { buildClipperStage } from './stages/clipper-stage';
 import { smoothParam } from './stages/stage-utils';
 
 // Re-export types
@@ -45,13 +47,21 @@ export interface MasteringChainConfig {
   useMinimalMaster: boolean;
   dryBypass?: boolean;
   inputTrimDB?: number;
-  inputLUFS?: number; // Measured integrated LUFS for makeup gain calculation
+  inputLUFS?: number;
+  /** Pre-created true-peak limiter worklet (replaces Type2 waveshaper) */
+  truePeakLimiterNode?: AudioWorkletNode | null;
+  /** Create and wire true-peak limiter worklet automatically (async build only) */
+  useTruePeakWorklet?: boolean;
 }
 
 export interface MasteringChain {
   input: AudioNode;
   output: AudioNode;
   parameters: ChainParameters;
+  sslInputAnalyser: AnalyserNode | null;
+  sslOutputAnalyser: AnalyserNode | null;
+  truePeakLimiterNode: AudioWorkletNode | null;
+  limiterCeilingDBTP: number;
   dispose: () => void;
 }
 
@@ -188,7 +198,43 @@ const LOUDNESS_STYLE_PARAMS: Record<string, LoudnessStyleParams> = {
 };
 
 /**
- * Build the complete 6-stage mastering chain
+ * Build mastering chain with optional async true-peak worklet creation.
+ */
+export async function buildMasteringChainAsync(
+  config: MasteringChainConfig
+): Promise<MasteringChain> {
+  let truePeakLimiterNode = config.truePeakLimiterNode ?? null;
+
+  if (config.useTruePeakWorklet && !truePeakLimiterNode && !config.dryBypass) {
+    const loudnessStyle = config.params.genreBehavior.loudnessStyle;
+    const styleParams = LOUDNESS_STYLE_PARAMS[loudnessStyle] || LOUDNESS_STYLE_PARAMS.balanced;
+    const isBrickwall = config.settings.logicMode === 'brickwall';
+    const limParams = isBrickwall
+      ? LOUDNESS_STYLE_PARAMS.aggressive.limiter
+      : styleParams.limiter;
+    const finalCeiling = Math.min(
+      config.params.deliveryTargets.ceiling,
+      limParams.ceiling
+    );
+
+    truePeakLimiterNode = await createTruePeakLimiterNode(config.context, {
+      monitorOnly: false,
+      hqMode: true,
+      ceiling: finalCeiling,
+      threshold: finalCeiling - 3,
+      attack: limParams.attack,
+      release: limParams.release,
+    });
+  }
+
+  return buildMasteringChain({
+    ...config,
+    truePeakLimiterNode,
+  });
+}
+
+/**
+ * Build the complete mastering chain
  * 
  * Chain order:
  * 0. Profile EQ (genre biases: bassTilt, airTilt, mudCut)
@@ -200,7 +246,18 @@ const LOUDNESS_STYLE_PARAMS: Record<string, LoudnessStyleParams> = {
  * 6. Limiter (peak management + loudness targeting — loudnessStyle controls behavior)
  */
 export function buildMasteringChain(config: MasteringChainConfig): MasteringChain {
-  const { context, destination, params, settings, quality, useMinimalMaster, dryBypass = false, inputTrimDB, inputLUFS } = config;
+  const {
+    context,
+    destination,
+    params,
+    settings,
+    quality,
+    useMinimalMaster,
+    dryBypass = false,
+    inputTrimDB,
+    inputLUFS,
+    truePeakLimiterNode = null,
+  } = config;
   
   const loudnessStyle = params.genreBehavior.loudnessStyle;
   const styleParams = LOUDNESS_STYLE_PARAMS[loudnessStyle] || LOUDNESS_STYLE_PARAMS.balanced;
@@ -251,6 +308,9 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   
   // Track nodes for cleanup
   const nodesToDispose: AudioNode[] = [chainInput, chainOutput];
+  let sslInputAnalyser: AnalyserNode | null = null;
+  let sslOutputAnalyser: AnalyserNode | null = null;
+  let limiterCeilingDBTP = params.deliveryTargets.ceiling;
   
   // === DRY BYPASS (A/B original) ===
   if (dryBypass) {
@@ -262,11 +322,15 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
       input: chainInput,
       output: chainOutput,
       parameters,
+      sslInputAnalyser: null,
+      sslOutputAnalyser: null,
+      truePeakLimiterNode: null,
+      limiterCeilingDBTP,
       dispose: () => {
         nodesToDispose.forEach(node => {
           try { node.disconnect(); } catch (e) { /* ignore */ }
         });
-      }
+      },
     };
   }
 
@@ -335,6 +399,8 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   parameters.sslRatio = ssl.ratio;
   parameters.sslAttack = ssl.attack;
   parameters.sslRelease = ssl.release;
+  sslInputAnalyser = ssl.inputAnalyser;
+  sslOutputAnalyser = ssl.outputAnalyser;
   nodesToDispose.push(ssl.input, ssl.output);
   
   // === STAGE 5: MID-SIDE PROCESSING ===
@@ -349,16 +415,42 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   } else {
     console.log('   [5] M/S Processing: BYPASSED');
   }
+
+  // === STAGE 5b: CLIPPER (genre toggle — before limiter) ===
+  // Clipper disabled for now — stacked waveshaping was rattling the low end in preview.
+  // Re-enable once limiter path is stable.
+  const useClipper = false && params.genreBehavior.useClipper && !useMinimalMaster;
+  if (useClipper) {
+    console.log('   [5b] Clipper: ACTIVE');
+    const clipper = buildClipperStage(context, settings, params, quality);
+    currentNode.connect(clipper.input);
+    currentNode = clipper.output;
+    nodesToDispose.push(clipper.input, clipper.output);
+  } else {
+    console.log('   [5b] Clipper: BYPASSED');
+  }
   
-  // === STAGE 6: LIMITER (loudnessStyle-aware, dual-stage WaveShaper) ===
+  // === STAGE 6: LIMITER ===
   console.log(`   [6] Limiter: ACTIVE (${loudnessStyle}, ${settings.logicMode})`);
-  const limiter = createLimiterStage(context, settings, params, styleParams, quality, inputLUFS);
+  const limiter = createLimiterStage(
+    context,
+    settings,
+    params,
+    styleParams,
+    quality,
+    inputLUFS,
+    truePeakLimiterNode
+  );
+  limiterCeilingDBTP = limiter.ceilingDBTP;
   currentNode.connect(limiter.input);
   currentNode = limiter.output;
   parameters.limiterThreshold = limiter.threshold;
   parameters.limiterMakeup = limiter.makeup;
   parameters.limiterCeiling = limiter.ceiling;
   nodesToDispose.push(limiter.input, limiter.output);
+  if (limiter.truePeakNode) {
+    nodesToDispose.push(limiter.truePeakNode);
+  }
   
   // Connect final output to destination
   currentNode.connect(chainOutput);
@@ -370,11 +462,16 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     input: chainInput,
     output: chainOutput,
     parameters,
+    sslInputAnalyser,
+    sslOutputAnalyser,
+    truePeakLimiterNode: limiter.truePeakNode,
+    limiterCeilingDBTP,
     dispose: () => {
+      disposeTruePeakLimiterNode(limiter.truePeakNode);
       nodesToDispose.forEach(node => {
         try { node.disconnect(); } catch (e) { /* ignore */ }
       });
-    }
+    },
   };
 }
 
@@ -415,16 +512,24 @@ function createSSLCompressor(
   ratio: AudioParam;
   attack: AudioParam;
   release: AudioParam;
+  inputAnalyser: AnalyserNode;
+  outputAnalyser: AnalyserNode;
 } {
   const input = context.createGain();
   const output = context.createGain();
   
-  // Sidechain HPF — prevents kick/bass from triggering compression
-  // This is what gives SSL its legendary "punch"
+  const inputAnalyser = context.createAnalyser();
+  inputAnalyser.fftSize = 256;
+  inputAnalyser.smoothingTimeConstant = 0.65;
+
+  const outputAnalyser = context.createAnalyser();
+  outputAnalyser.fftSize = 256;
+  outputAnalyser.smoothingTimeConstant = 0.65;
+
   const sidechainHPF = context.createBiquadFilter();
   sidechainHPF.type = 'highpass';
-  sidechainHPF.frequency.value = 100; // SSL 9000K specification
-  sidechainHPF.Q.value = 0.707;       // Butterworth
+  sidechainHPF.frequency.value = 100;
+  sidechainHPF.Q.value = 0.707;
   
   const compressor = context.createDynamicsCompressor();
   
@@ -479,11 +584,10 @@ function createSSLCompressor(
     `attack=${(compressor.attack.value * 1000).toFixed(1)}ms, release=${(compressor.release.value * 1000).toFixed(0)}ms, ` +
     `knee=${compressor.knee.value}dB`);
   
-  // Chain: input → HPF (sidechain) → compressor → output
-  // Note: WebAudio DynamicsCompressor doesn't support external sidechain
-  // HPF is inline — it prevents bass from hitting the detector
-  input.connect(compressor);
-  compressor.connect(output);
+  input.connect(inputAnalyser);
+  inputAnalyser.connect(compressor);
+  compressor.connect(outputAnalyser);
+  outputAnalyser.connect(output);
   
   return {
     input,
@@ -492,6 +596,8 @@ function createSSLCompressor(
     ratio: compressor.ratio,
     attack: compressor.attack,
     release: compressor.release,
+    inputAnalyser,
+    outputAnalyser,
   };
 }
 
@@ -596,13 +702,16 @@ function createLimiterStage(
   params: ProcessingPlan,
   styleParams: LoudnessStyleParams,
   quality: QualityMode,
-  inputLUFS?: number
+  inputLUFS?: number,
+  truePeakLimiterNode?: AudioWorkletNode | null
 ): {
   input: AudioNode;
   output: AudioNode;
   threshold: AudioParam;
   makeup: AudioParam;
   ceiling: AudioParam;
+  truePeakNode: AudioWorkletNode | null;
+  ceilingDBTP: number;
 } {
   const input = context.createGain();
   const output = context.createGain();
@@ -732,29 +841,32 @@ function createLimiterStage(
   }
   
   type2Shaper.curve = type2Curve;
-  // PARITY: 2x minimum (true peak safety must be accurate in preview too)
   type2Shaper.oversample = quality === 'export' ? '4x' : '2x';
   
-  // === CHAIN: input → makeup → lookahead → limiter → type1 → type2 → output ===
+  const truePeakNode = truePeakLimiterNode ?? null;
+  const ceilingNode = truePeakNode ?? type2Shaper;
+
   input.connect(makeupGain);
   makeupGain.connect(lookAheadDelay);
   lookAheadDelay.connect(limiter);
   limiter.connect(type1Shaper);
-  type1Shaper.connect(type2Shaper);
-  type2Shaper.connect(output);
+  type1Shaper.connect(ceilingNode);
+  ceilingNode.connect(output);
   
   console.log(`   Limiter: ceiling=${finalCeiling.toFixed(1)}dBTP, ratio=${limParams.ratio}:1, ` +
     `attack=${(limParams.attack * 1000).toFixed(1)}ms, release=${(limParams.release * 1000).toFixed(0)}ms, ` +
     `maxGR=${limParams.maxGR}dB, makeup=${makeupGainDB.toFixed(1)}dB (from ${estimatedCurrentLUFS.toFixed(1)} → ${targetLUFS} LUFS)`);
   console.log(`   Type1: ${isType1Active ? 'ACTIVE' : 'BYPASS'} (threshold @ ${(type1ThresholdRatio * 100).toFixed(0)}% ceiling), ` +
-    `Type2: knee @ ${(type2KneeStart * 100).toFixed(0)}% ceiling`);
+    `TruePeak: ${truePeakNode ? 'WORKLET' : 'WAVESHAPER'} @ ${(type2KneeStart * 100).toFixed(0)}% ceiling`);
   
   return {
     input,
     output,
     threshold: limiter.threshold,
     makeup: makeupGain.gain,
-    ceiling: limiter.threshold, // Proxy — real ceiling is in WaveShaper curves
+    ceiling: limiter.threshold,
+    truePeakNode,
+    ceilingDBTP: finalCeiling,
   };
 }
 
