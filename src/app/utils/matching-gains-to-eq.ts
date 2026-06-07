@@ -1,8 +1,10 @@
 import type { ProfileAdjustments } from '../components/profile-adjustments';
 import type { MatchingGains } from '../services/reference-matching-controller';
+import { finiteDB } from './finite-audio';
 
 function clamp(v: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, v));
+  const x = finiteDB(v, 0);
+  return Math.max(min, Math.min(max, x));
 }
 
 /**
@@ -12,7 +14,7 @@ export function matchingGainsToProfileAdjustments(
   matching: MatchingGains,
   current: ProfileAdjustments
 ): ProfileAdjustments {
-  const g = matching.bands;
+  const g = matching.bands.map((v) => finiteDB(v, 0));
   const lowDelta = (g[0] + g[1] + g[2]) / 3;
   const midDelta = (g[3] + g[4] + g[5] + g[6]) / 4;
   const highDelta = (g[7] + g[8] + g[9]) / 3;

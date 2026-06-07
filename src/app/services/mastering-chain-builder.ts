@@ -26,6 +26,7 @@
 import type { ProcessingPlan } from '../data/preset-resolution';
 import type { ProcessingSettings } from './audio-processor';
 import type { QualityMode } from '../data/quality-profiles';
+import { finiteDB, finiteLinearGainFromDB } from '../utils/finite-audio';
 import { buildTransformerStage, getTransformerConfig } from './stages/transformer-stage';
 import { buildTapeStage, getTapeConfig } from './stages/tape-stage';
 import { buildMultibandStage } from './stages/multiband-stage';
@@ -362,7 +363,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   // === INPUT TRIM (always present for live pro control) ===
   const inputTrimGain = context.createGain();
   inputTrimGain.gain.value =
-    inputTrimDB != null ? Math.pow(10, inputTrimDB / 20) : 1.0;
+    inputTrimDB != null ? finiteLinearGainFromDB(inputTrimDB) : 1.0;
   chainInput.connect(inputTrimGain);
   currentNode = inputTrimGain;
   nodesToDispose.push(inputTrimGain);
@@ -429,7 +430,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
 
   chainOutput.gain.value =
     outputTrimDB != null && outputTrimDB !== 0
-      ? Math.pow(10, outputTrimDB / 20)
+      ? finiteLinearGainFromDB(outputTrimDB)
       : 1.0;
 
   // PREVIEW/EXPORT PARITY: No quality-dependent DSP behavior.
@@ -1029,20 +1030,20 @@ function createProfileEQ(
   const lowShelf = context.createBiquadFilter();
   lowShelf.type = 'lowshelf';
   lowShelf.frequency.value = 100;
-  lowShelf.gain.value = params.genreBehavior.bassTilt;
+  lowShelf.gain.value = finiteDB(params.genreBehavior.bassTilt);
   
   // Mid cut (mudCut) — peaking at 250Hz (the actual "mud" frequency)
   const midRange = context.createBiquadFilter();
   midRange.type = 'peaking';
   midRange.frequency.value = 250;   // Changed from 1kHz — 250Hz is where mud lives
   midRange.Q.value = 1.0;           // ~1.5 octave bandwidth
-  midRange.gain.value = params.genreBehavior.mudCut;
+  midRange.gain.value = finiteDB(params.genreBehavior.mudCut);
   
   // High shelf (airTilt)
   const highShelf = context.createBiquadFilter();
   highShelf.type = 'highshelf';
   highShelf.frequency.value = 10000;
-  highShelf.gain.value = params.genreBehavior.airTilt;
+  highShelf.gain.value = finiteDB(params.genreBehavior.airTilt);
   
   input.connect(lowShelf);
   lowShelf.connect(midRange);
