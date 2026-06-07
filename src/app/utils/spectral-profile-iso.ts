@@ -52,3 +52,49 @@ export function isoBandsToArray(bands: IsoSpectralBands): number[] {
     bands.hz16k,
   ];
 }
+
+/**
+ * Express band levels as deviation from the profile mean (spectral shape / tilt).
+ * Reference curves are relative dB offsets from flat; raw FFT band energies are
+ * absolute log-power (~-40 dB). Comparing without this step produces bogus ±30 dB deltas.
+ */
+export function toRelativeShape(values: number[]): number[] {
+  if (values.length === 0) return [];
+  const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+  return values.map((v) => v - mean);
+}
+
+export function profileToRelativeIsoShape(profile: SpectralProfile): number[] {
+  return toRelativeShape(isoBandsToArray(profileToIsoBands(profile)));
+}
+
+export function referenceCurveToRelativeShape(
+  bands: ReferenceCurveBands
+): number[] {
+  return toRelativeShape([
+    bands.hz31,
+    bands.hz63,
+    bands.hz125,
+    bands.hz250,
+    bands.hz500,
+    bands.hz1k,
+    bands.hz2k,
+    bands.hz4k,
+    bands.hz8k,
+    bands.hz16k,
+  ]);
+}
+
+/** ISO band keys on reference curves (matches ReferenceCurve.bands). */
+export type ReferenceCurveBands = {
+  hz31: number;
+  hz63: number;
+  hz125: number;
+  hz250: number;
+  hz500: number;
+  hz1k: number;
+  hz2k: number;
+  hz4k: number;
+  hz8k: number;
+  hz16k: number;
+};

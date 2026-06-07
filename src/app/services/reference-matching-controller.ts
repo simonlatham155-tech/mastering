@@ -12,7 +12,7 @@
 
 import { SpectralAnalyzer, SpectralProfile, MatchingDelta } from './spectral-analyzer';
 import { ReferenceCurve } from '../data/reference-curves';
-import { isoBandsToArray, profileToIsoBands } from '../utils/spectral-profile-iso';
+import { isoBandsToArray, profileToIsoBands, profileToRelativeIsoShape, referenceCurveToRelativeShape } from '../utils/spectral-profile-iso';
 
 /**
  * Safety limits for matching
@@ -102,22 +102,9 @@ export class ReferenceMatchingController {
       harsh: false
     };
     
-    // Reference profile (dB values at each ISO frequency)
-    const referenceProfile = [
-      referenceCurve.bands.hz31,
-      referenceCurve.bands.hz63,
-      referenceCurve.bands.hz125,
-      referenceCurve.bands.hz250,
-      referenceCurve.bands.hz500,
-      referenceCurve.bands.hz1k,
-      referenceCurve.bands.hz2k,
-      referenceCurve.bands.hz4k,
-      referenceCurve.bands.hz8k,
-      referenceCurve.bands.hz16k
-    ];
-    
-    // User profile (ISO bands derived from spectral analysis)
-    const userProfileArray = isoBandsToArray(profileToIsoBands(userProfile));
+    // Compare spectral shape (tilt), not absolute log-energy vs relative genre offsets.
+    const referenceProfile = referenceCurveToRelativeShape(referenceCurve.bands);
+    const userProfileArray = profileToRelativeIsoShape(userProfile);
     
     // Calculate gain for each band
     ISO_BANDS.forEach((band, index) => {
@@ -305,8 +292,8 @@ export class ReferenceMatchingController {
     referenceCurve: ReferenceCurve
   ): MatchingDelta {
     
-    const userArray = this.getAverageBands(userProfile);
-    const refArray = this.getReferenceProfile(referenceCurve);
+    const userArray = profileToRelativeIsoShape(userProfile);
+    const refArray = referenceCurveToRelativeShape(referenceCurve.bands);
     
     const deltas = refArray.map((ref, i) => ref - userArray[i]);
     
