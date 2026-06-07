@@ -327,6 +327,22 @@ export default function App() {
     rebuildAsync();
   }, [logicMode, gearProfile, exportPreset, circuitDrive, analysis]);
 
+  const applyRecommendationToState = (recommendation: AIMasteringRecommendation) => {
+    const applied = appliedRecommendationFromAI(recommendation);
+    const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
+
+    setCircuitDrive(applied.circuitDrive);
+    setLogicMode(applied.logicMode);
+    setGearProfile(applied.gearProfile);
+    setExportPreset(applied.exportPreset);
+    if (syncedProfile) {
+      setProfileAdjustments(syncedProfile);
+    }
+
+    setAIRecommendation(null);
+    return { applied, syncedProfile };
+  };
+
   const analyzeAudioFile = async () => {
     if (!selectedFile) return;
 
@@ -350,17 +366,8 @@ export default function App() {
       setInputAnalysis(inputResult);
 
       const recommendation = AIMasteringEngine.recommend(inputResult);
-      setAIRecommendation(recommendation);
 
-      const applied = appliedRecommendationFromAI(recommendation);
-      const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
-      if (syncedProfile) {
-        setProfileAdjustments(syncedProfile);
-      }
-      setCircuitDrive(applied.circuitDrive);
-      setLogicMode(applied.logicMode);
-      setGearProfile(applied.gearProfile);
-      setExportPreset(applied.exportPreset);
+      const { applied } = applyRecommendationToState(recommendation);
 
       toast.success(
         `Auto-configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
@@ -369,6 +376,7 @@ export default function App() {
       const analysisResult = await audioProcessor.analyzeAudio();
       setAnalysis(analysisResult);
 
+      const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
       const processingContext = buildProcessingContext(
         {
           gearProfile,
@@ -463,19 +471,8 @@ export default function App() {
     setIsApplyingAI(true);
     
     try {
-      const applied = appliedRecommendationFromAI(aiRecommendation);
-      const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile, applied.circuitDrive);
-
-      setCircuitDrive(applied.circuitDrive);
-      setLogicMode(applied.logicMode);
-      setGearProfile(applied.gearProfile);
-      setExportPreset(applied.exportPreset);
-      if (syncedProfile) {
-        setProfileAdjustments(syncedProfile);
-      }
-      
+      const { applied } = applyRecommendationToState(aiRecommendation);
       toast.success(`Settings applied: ${applied.circuitDrive}% warmth, ${applied.logicMode.toUpperCase()} mode, ${applied.gearProfile} profile`);
-      
     } catch (error) {
       console.error('Failed to apply AI recommendation:', error);
       toast.error('Failed to apply settings');
@@ -759,7 +756,7 @@ export default function App() {
                   circuitDrive={circuitDrive}
                   logicMode={logicMode}
                   gearProfile={gearProfile}
-                  targetLUFS={aiRecommendation?.targetLUFS || -14}
+                  targetLUFS={getExportPreset(exportPreset).lufs}
                 />
               </div>
             )}
