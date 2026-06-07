@@ -97,7 +97,7 @@ describe('Mono-Bass Dependency (Auto-Enable M/S)', () => {
     // M/S can remain enabled (it's not dependent on mono-bass)
     
     const plan = resolveProcessingPlan({
-      genreId: 'drumandbass',
+      genreId: 'dnb',
       exportPresetId: 'spotify',
       performanceMode: 'studio',
       logicMode: 'dynamics',

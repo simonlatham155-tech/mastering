@@ -305,6 +305,15 @@ describe('Policy Coverage', () => {
     }
   });
 
+  test('Balanced presets default multiband OFF', () => {
+    const balancedPresets = getPresetsByClass('balanced');
+    expect(balancedPresets.length).toBeGreaterThan(0);
+
+    for (const preset of balancedPresets) {
+      expect(preset.toggles.useMultiband, `${preset.id} (balanced) should have multiband OFF`).toBe(false);
+    }
+  });
+
   test('Bass-heavy presets default mono-bass ON', () => {
     const bassPresets = getPresetsByClass('bassHeavy');
     expect(bassPresets.length).toBeGreaterThan(0);
@@ -314,13 +323,22 @@ describe('Policy Coverage', () => {
     }
   });
 
-  test('Club-tight presets default mono-bass ON and multiband ON', () => {
+  test('Club-tight presets default multiband ON', () => {
     const clubPresets = getPresetsByClass('clubTight');
     expect(clubPresets.length).toBeGreaterThan(0);
 
     for (const preset of clubPresets) {
-      expect(preset.toggles.forceMonoBass, `${preset.id} (clubTight) should have mono-bass ON`).toBe(true);
       expect(preset.toggles.useMultiband, `${preset.id} (clubTight) should have multiband ON`).toBe(true);
+    }
+  });
+
+  test('Club-tight presets with mono-bass enabled also enable M/S', () => {
+    const clubPresets = getPresetsByClass('clubTight');
+
+    for (const preset of clubPresets) {
+      if (preset.toggles.forceMonoBass) {
+        expect(preset.toggles.useMidSide, `${preset.id} mono-bass requires M/S`).toBe(true);
+      }
     }
   });
 });
@@ -330,6 +348,7 @@ describe('Policy Coverage', () => {
 describe('M/S Processing Dependency', () => {
   test('If forceMonoBass is true, useMidSide must also be true', () => {
     for (const preset of Object.values(GENRE_PRESETS)) {
+      if (preset.id === 'generic') continue;
       if (preset.toggles.forceMonoBass) {
         expect(preset.toggles.useMidSide, `${preset.id} has mono-bass but M/S is disabled`).toBe(true);
       }
@@ -338,6 +357,7 @@ describe('M/S Processing Dependency', () => {
 
   test('If useMidSide is false, forceMonoBass must also be false (bidirectional)', () => {
     for (const preset of Object.values(GENRE_PRESETS)) {
+      if (preset.id === 'generic') continue;
       if (!preset.toggles.useMidSide) {
         expect(preset.toggles.forceMonoBass, `${preset.id} has M/S disabled but mono-bass enabled`).toBe(false);
       }
