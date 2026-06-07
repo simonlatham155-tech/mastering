@@ -271,10 +271,10 @@ export function AudioInputSection({
                   Peak Level
                 </div>
                 <div className={`text-lg font-mono ${
-                  analysisResult.truePeak > -0.3 ? 'text-red-400' :
-                  analysisResult.truePeak > -3 ? 'text-amber-400' : 'text-emerald-400'
+                  (analysisResult.digitalPeakDB ?? analysisResult.truePeak) > -0.3 ? 'text-red-400' :
+                  (analysisResult.digitalPeakDB ?? analysisResult.truePeak) > -3 ? 'text-amber-400' : 'text-emerald-400'
                 }`}>
-                  {analysisResult.truePeak.toFixed(1)} dBFS
+                  {(analysisResult.digitalPeakDB ?? analysisResult.truePeak).toFixed(1)} dBFS
                 </div>
               </div>
             </div>

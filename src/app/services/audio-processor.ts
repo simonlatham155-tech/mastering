@@ -5,6 +5,11 @@ import { resolveProcessingPlan } from '../data/preset-resolution';
 import { QualityMode, getQualityProfile } from '../data/quality-profiles';
 import { buildMasteringChain, buildOfflineMasteringChain, type MasteringChain } from './mastering-chain-builder';
 import { encodeWavBlob } from '../utils/wav-encode';
+import {
+  measureBufferLoudness,
+  measureBufferTruePeak,
+  resolveIntegratedLUFS,
+} from '../utils/measure-buffer-loudness';
 
 export interface AudioAnalysis {
   lufs: number;
@@ -167,12 +172,17 @@ export class AudioProcessor {
 
     const sampleRate = this.audioBuffer.sampleRate;
     const numChannels = this.audioBuffer.numberOfChannels;
+
+    const [loudness, peaks] = await Promise.all([
+      measureBufferLoudness(this.audioBuffer),
+      measureBufferTruePeak(this.audioBuffer),
+    ]);
     
     // === CRITICAL FIX (2026-02-16): ACCURATE PEAK DETECTION ===
     // Peak must scan EVERY sample on ALL channels (not just channel 0 with step=10)
     // Missing the true peak causes over-normalization → brickwalling
     
-    // Calculate TRUE PEAK across ALL channels (step = 1, no decimation)
+    // Calculate sample peak across ALL channels (step = 1, no decimation)
     let truePeak = 0;
     for (let ch = 0; ch < numChannels; ch++) {
       const channelData = this.audioBuffer.getChannelData(ch);
@@ -197,15 +207,22 @@ export class AudioProcessor {
     }
     const rms = Math.sqrt(sumSquares / sampleCount);
 
-    // Calculate LUFS (simplified ITU-R BS.1770 algorithm)
-    // This is a simplified version - professional tools use more complex gating
-    const lufs = -0.691 + 10 * Math.log10(rms * rms);
+    const rmsFallbackLUFS = -0.691 + 10 * Math.log10(rms * rms);
+    const integratedLUFS = resolveIntegratedLUFS(loudness, rmsFallbackLUFS);
+    const lufs = integratedLUFS;
+    const momentaryMaxLUFS =
+      Number.isFinite(loudness.maxMomentary) && loudness.maxMomentary !== -Infinity
+        ? loudness.maxMomentary
+        : integratedLUFS;
 
     // Calculate Dynamic Range (simplified crest factor approach)
     const dynamicRange = 20 * Math.log10(truePeak / rms);
 
-    // Peak level in dBFS
-    const peakLevel = 20 * Math.log10(truePeak);
+    // Peak level in dBFS (prefer worklet digital peak when available)
+    const peakLevel =
+      Number.isFinite(peaks.digitalPeakDB) ? peaks.digitalPeakDB : 20 * Math.log10(truePeak);
+
+    const truePeakDBTP = peaks.truePeakDBTP;
 
     // === SSL "AUTO" RELEASE - DUAL-INTEGRATOR CIRCUIT ===
     // Crest Factor: Peak-to-RMS ratio (measures transient vs. sustained content)
@@ -284,10 +301,10 @@ export class AudioProcessor {
 
     this.analysis = {
       lufs,
-      integratedLUFS: lufs, // Placeholder for integrated loudness
-      momentaryMaxLUFS: lufs, // Placeholder for peak momentary loudness
+      integratedLUFS,
+      momentaryMaxLUFS,
       truePeak,
-      truePeakDBTP: 20 * Math.log10(truePeak * 4), // 4x oversampled
+      truePeakDBTP,
       dynamicRange,
       rms,
       peakLevel,

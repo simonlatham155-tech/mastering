@@ -15,6 +15,16 @@ const EMPTY_LUFS: LufsMeterData = {
   totalBlocks: 0,
 };
 
+/** Offline loudness result — includes peak momentary over the full buffer. */
+export interface BufferLoudnessResult extends LufsMeterData {
+  maxMomentary: number;
+}
+
+const EMPTY_BUFFER_LUFS: BufferLoudnessResult = {
+  ...EMPTY_LUFS,
+  maxMomentary: -Infinity,
+};
+
 function workletUrl(): string {
   const base = import.meta.env.BASE_URL || '/';
   return `${base}worklets/lufs-metering-processor.js`;
@@ -24,8 +34,8 @@ function workletUrl(): string {
  * Measure integrated / momentary LUFS on a rendered AudioBuffer using the same
  * BS.1770 worklet as live playback (parity guaranteed).
  */
-export async function measureBufferLoudness(buffer: AudioBuffer): Promise<LufsMeterData> {
-  if (buffer.length === 0) return { ...EMPTY_LUFS };
+export async function measureBufferLoudness(buffer: AudioBuffer): Promise<BufferLoudnessResult> {
+  if (buffer.length === 0) return { ...EMPTY_BUFFER_LUFS };
 
   const channels = Math.min(2, buffer.numberOfChannels);
   const sampleRate = buffer.sampleRate;
@@ -37,10 +47,11 @@ export async function measureBufferLoudness(buffer: AudioBuffer): Promise<LufsMe
     await offline.audioWorklet.addModule(workletUrl());
   } catch (err) {
     console.warn('LUFS worklet unavailable for offline measure:', err);
-    return { ...EMPTY_LUFS };
+    return { ...EMPTY_BUFFER_LUFS };
   }
 
   let latest: LufsMeterData = { ...EMPTY_LUFS };
+  let maxMomentary = -Infinity;
 
   const meter = new AudioWorkletNode(offline, 'lufs-metering-processor', {
     numberOfInputs: 1,
@@ -51,6 +62,9 @@ export async function measureBufferLoudness(buffer: AudioBuffer): Promise<LufsMe
   meter.port.onmessage = (event) => {
     if (event.data?.type === 'lufs-update') {
       latest = event.data.data as LufsMeterData;
+      if (Number.isFinite(latest.momentary)) {
+        maxMomentary = Math.max(maxMomentary, latest.momentary);
+      }
     }
   };
 
@@ -80,7 +94,21 @@ export async function measureBufferLoudness(buffer: AudioBuffer): Promise<LufsMe
   meter.disconnect();
   source.disconnect();
 
-  return latest;
+  return {
+    ...latest,
+    maxMomentary: maxMomentary !== -Infinity ? maxMomentary : latest.momentary,
+  };
+}
+
+/** Resolve integrated LUFS with RMS fallback when the worklet is unavailable. */
+export function resolveIntegratedLUFS(
+  loudness: BufferLoudnessResult,
+  rmsFallbackLUFS: number
+): number {
+  if (Number.isFinite(loudness.integrated) && loudness.integrated !== -Infinity) {
+    return loudness.integrated;
+  }
+  return rmsFallbackLUFS;
 }
 
 export interface ExportQualityReport {
