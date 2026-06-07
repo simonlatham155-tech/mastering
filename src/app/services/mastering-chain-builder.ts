@@ -417,9 +417,11 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   }
 
   // === STAGE 5b: CLIPPER (genre toggle — before limiter) ===
-  // Clipper disabled for now — stacked waveshaping was rattling the low end in preview.
-  // Re-enable once limiter path is stable.
-  const useClipper = false && params.genreBehavior.useClipper && !useMinimalMaster;
+  // Clipper: Pressure mode + genre toggle only (Flow keeps sub clean)
+  const useClipper =
+    params.genreBehavior.useClipper &&
+    !useMinimalMaster &&
+    settings.logicMode === 'brickwall';
   if (useClipper) {
     console.log('   [5b] Clipper: ACTIVE');
     const clipper = buildClipperStage(context, settings, params, quality);

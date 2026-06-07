@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { CircuitDriveKnob } from './components/circuit-drive-knob';
 import { LogicToggle } from './components/logic-toggle';
-import { GearSelector, GearProfileId, gearProfiles } from './components/gear-selector';
+import { GearProfileId, gearProfiles } from './components/gear-selector';
 import { MeterDisplay } from './components/meter-display';
 import { GainStageVisualizer } from './components/gain-stage-visualizer';
 import { WaveformVisualizer } from './components/waveform-visualizer';
@@ -36,7 +36,7 @@ import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio
 import { analyzeAudioFile as analyzeInputAudio, AudioAnalysisResult } from './utils/audio-analyzer';
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
 import { MasteringWorkflow } from './components/mastering-workflow';
-import { AIRecommendationPanel } from './components/ai-recommendation-panel';
+import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer } from './services/realtime-audio-player';
 import { PlaybackControls } from './components/playback-controls';
 import { motion } from 'motion/react';
@@ -143,9 +143,8 @@ export default function App() {
     })();
   };
   
-  // AI Mastering Recommendation
-  const [aiRecommendation, setAIRecommendation] = useState<AIMasteringRecommendation | null>(null);
-  const [isApplyingAI, setIsApplyingAI] = useState(false);
+  // Mix analysis summary (shown in unified setup panel after upload)
+  const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
   
   // Performance mode removed (2026-02-16) - studio mastering only
   const [zeroLatencyMode, setZeroLatencyMode] = useState(false);
@@ -350,7 +349,6 @@ export default function App() {
       setProfileAdjustments(syncedProfile);
     }
 
-    setAIRecommendation(null);
     return { applied, syncedProfile };
   };
 
@@ -378,10 +376,17 @@ export default function App() {
 
       const recommendation = AIMasteringEngine.recommend(inputResult);
 
+      setMixSetup({
+        reasoning: recommendation.reasoning,
+        confidence: recommendation.confidence,
+        inputLufs: inputResult.lufs,
+        suggestedGenre: inputResult.suggestedGenre,
+      });
+
       const { applied } = applyRecommendationToState(recommendation);
 
       toast.success(
-        `Auto-configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
+        `Mix configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
       );
       
       const analysisResult = await audioProcessor.analyzeAudio();
@@ -473,27 +478,7 @@ export default function App() {
   const handleFileSelect = async (file: File) => {
     setSelectedFile(file);
     setInputAnalysis(null);
-    setAIRecommendation(null);
-  };
-
-  const handleApplyAIRecommendation = async () => {
-    if (!aiRecommendation) return;
-    
-    setIsApplyingAI(true);
-    
-    try {
-      const { applied } = applyRecommendationToState(aiRecommendation);
-      toast.success(`Settings applied: ${applied.circuitDrive}% warmth, ${applied.logicMode.toUpperCase()} mode, ${applied.gearProfile} profile`);
-    } catch (error) {
-      console.error('Failed to apply AI recommendation:', error);
-      toast.error('Failed to apply settings');
-    } finally {
-      setIsApplyingAI(false);
-    }
-  };
-
-  const handleDismissAIRecommendation = () => {
-    setAIRecommendation(null);
+    setMixSetup(null);
   };
 
   const handleClearFile = () => {
@@ -501,7 +486,7 @@ export default function App() {
     setIsProcessing(false);
     setShowHeritageAlert(false);
     setInputAnalysis(null);
-    setAIRecommendation(null);
+    setMixSetup(null);
     setAnalysis(null);
     waveformRenderGenRef.current += 1;
     setProcessedBuffer(null);
@@ -718,19 +703,19 @@ export default function App() {
             {!isReady && !isAnalyzing && (
               <div className="mb-6 text-center py-8 px-6 rounded-lg border border-zinc-800 bg-zinc-950/50">
                 <p className="text-sm text-zinc-400 font-mono">
-                  Upload a mix to begin — we&apos;ll detect genre, set warmth &amp; loudness targets, and prepare live preview.
+                  Upload a mix to begin — we&apos;ll analyze it, pick a gear profile, and set your loudness target automatically.
                 </p>
               </div>
             )}
 
             {isReady && (
               <>
-            {/* AI Recommendation Panel */}
-            <AIRecommendationPanel
-              recommendation={aiRecommendation}
-              onApply={handleApplyAIRecommendation}
-              onDismiss={handleDismissAIRecommendation}
-              isApplying={isApplyingAI}
+            <MixSetupPanel
+              summary={mixSetup}
+              gearProfile={gearProfile}
+              exportPreset={exportPreset}
+              onGearChange={setGearProfile}
+              onExportPresetChange={setExportPreset}
             />
 
             {/* Mastering Workflow: INPUT → GEAR → OUTPUT */}
@@ -800,8 +785,8 @@ export default function App() {
                 </div>
               ))}
 
-              {/* 3-column grid layout - ORIGINAL */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Core controls — warmth + dynamics mode */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-3xl mx-auto">
                 <CircuitDriveKnob
                   value={circuitDrive}
                   onChange={setCircuitDrive}
@@ -814,7 +799,6 @@ export default function App() {
                   }
                 />
                 <LogicToggle mode={logicMode} onChange={setLogicMode} />
-                <GearSelector selectedProfile={gearProfile} onChange={setGearProfile} />
               </div>
             </div>
 
@@ -1168,6 +1152,7 @@ export default function App() {
               onExport={handleExport} 
               disabled={!selectedFile || !analysis || isProcessing}
               currentTarget={getExportPreset(exportPreset).lufs}
+              selectedPreset={exportPreset}
             />
               </>
             )}
