@@ -7,8 +7,9 @@ export function CreatorAboutStrip({ variant = 'full' }: { variant?: 'full' | 'co
     return (
       <p className="text-[11px] font-mono text-zinc-500 leading-relaxed border-l-2 border-zinc-700 pl-3">
         <span className="text-zinc-400">Latham Audio</span> — Simon Latham (Soundsation with Pete
-        Lunn, Airport Route Recordings). Dance music since the 1990s. Documented DJ support includes
-        Pete Tong, Sasha, John Digweed, Dave Seaman, Armin van Buuren and Paul Oakenfold.
+        Lunn, Airport Route Recordings). This page is the Mastering Suite; VST plugins and other apps
+        are in development. Dance music since the 1990s. Documented DJ support includes Pete Tong,
+        Sasha, John Digweed, Dave Seaman, Armin van Buuren and Paul Oakenfold.
       </p>
     );
   }
@@ -26,12 +27,14 @@ export function CreatorAboutStrip({ variant = 'full' }: { variant?: 'full' | 'co
         </span>
       </div>
       <p className="mt-2 text-xs text-zinc-500 leading-relaxed max-w-4xl font-mono">
-        Latham Audio is Simon Latham&apos;s mastering product line. Producer and vocalist;
-        co-founded Soundsation with Pete Lunn in the 1990s progressive house era. Soundsation —{' '}
-        <span className="text-zinc-400">Do You Feel It?</span> (1996) — received support from John
-        Digweed, Sasha, Pete Tong and Dave Seaman; later reissued on Airport Route Recordings. Solo
-        releases include <span className="text-zinc-400">iBreathe</span> (2012). Subsequent work has
-        been supported by Armin van Buuren, Paul Oakenfold and others (Beatport artist profile).
+        Latham Audio is Simon Latham&apos;s audio software line. This site is the{' '}
+        <span className="text-zinc-400">Mastering Suite</span>; VST plugins and additional apps are
+        in development. Producer and vocalist; co-founded Soundsation with Pete Lunn in the 1990s
+        progressive house era. Soundsation — <span className="text-zinc-400">Do You Feel It?</span>{' '}
+        (1996) — received support from John Digweed, Sasha, Pete Tong and Dave Seaman; later reissued
+        on Airport Route Recordings. Solo releases include <span className="text-zinc-400">iBreathe</span>{' '}
+        (2012). Subsequent work has been supported by Armin van Buuren, Paul Oakenfold and others
+        (Beatport artist profile).
       </p>
     </div>
   );

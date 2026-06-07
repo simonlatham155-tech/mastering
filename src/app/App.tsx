@@ -810,10 +810,10 @@ export default function App() {
                 <h1 className="text-2xl mb-2 tracking-tight font-sans uppercase leading-none">
                   <span className="text-cyan-400 font-light">LATHAM</span>
                   <span className="text-white font-bold">AUDIO</span>
-                  <span className="text-white text-lg"> AI MASTERING SUITE</span>
+                  <span className="text-white text-lg"> MASTERING SUITE</span>
                 </h1>
                 <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
-                  Latham Audio product line · Algorithmic mastering chain
+                  Latham Audio · VST plugins and other apps in development
                   {' · '}
                   <a
                     href="#/demo"
