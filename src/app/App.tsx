@@ -109,6 +109,7 @@ export default function App() {
 
   // Real-time audio player (processes audio live during playback - NO pre-rendering!)
   const realtimePlayerRef = useRef<RealtimeAudioPlayer | null>(null);
+  const waveformRenderGenRef = useRef(0);
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
   const [bypassMode, setBypassMode] = useState(false); // A/B comparison: false = processed, true = original
   const [expertMode, setExpertMode] = useState(false);
@@ -119,6 +120,27 @@ export default function App() {
 
   const isReady = !!selectedFile && !!analysis;
   const measuredInputLUFS = analysis?.lufs ?? inputAnalysis?.lufs ?? -16;
+
+  const startWaveformPreviewRender = (settings: ReturnType<typeof buildAppProcessingSettings>) => {
+    const generation = ++waveformRenderGenRef.current;
+    setIsWaveformRendering(true);
+
+    (async () => {
+      try {
+        const waveformBuffer = await audioProcessor.renderWaveformPreview(settings, inputTrimDB);
+        if (generation !== waveformRenderGenRef.current) return;
+        setProcessedBuffer(waveformBuffer);
+      } catch (err) {
+        if (generation !== waveformRenderGenRef.current) return;
+        console.warn('Waveform preview failed (non-critical):', err);
+        setProcessedBuffer(null);
+      } finally {
+        if (generation === waveformRenderGenRef.current) {
+          setIsWaveformRendering(false);
+        }
+      }
+    })();
+  };
   
   // AI Mastering Recommendation
   const [aiRecommendation, setAIRecommendation] = useState<AIMasteringRecommendation | null>(null);
@@ -299,18 +321,7 @@ export default function App() {
       console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
       
       // Re-render processed waveform in background for visualization
-      (async () => {
-        try {
-          setIsWaveformRendering(true);
-          const waveformBuffer = await audioProcessor.renderExport(settings, inputTrimDB, { forVisualization: true });
-          setProcessedBuffer(waveformBuffer);
-          console.log('🎨 Processed waveform updated after settings change');
-        } catch (err) {
-          console.warn('Waveform re-render failed (non-critical):', err);
-        } finally {
-          setIsWaveformRendering(false);
-        }
-      })();
+      startWaveformPreviewRender(settings);
     };
     
     rebuildAsync();
@@ -420,19 +431,7 @@ export default function App() {
       
       toast.success('⚡ Preview ready — hit play for live mastering');
       
-      (async () => {
-        try {
-          setIsWaveformRendering(true);
-          console.log('🎨 Generating processed waveform for visualization...');
-          const waveformBuffer = await audioProcessor.renderExport(settings, inputTrimDB, { forVisualization: true });
-          setProcessedBuffer(waveformBuffer);
-          console.log('🎨 Processed waveform ready for visualization');
-        } catch (err) {
-          console.warn('Waveform render failed (non-critical):', err);
-        } finally {
-          setIsWaveformRendering(false);
-        }
-      })();
+      startWaveformPreviewRender(settings);
       
       // Set up playback state polling
       const pollInterval = setInterval(() => {
@@ -496,6 +495,7 @@ export default function App() {
     setInputAnalysis(null);
     setAIRecommendation(null);
     setAnalysis(null);
+    waveformRenderGenRef.current += 1;
     setProcessedBuffer(null);
     setIsWaveformRendering(false);
     setOriginalBuffer(null);

@@ -535,7 +535,6 @@ export class AudioProcessor {
 
     // Connect chain
     source.connect(chain.input);
-    chain.output.connect(offlineContext.destination);
 
     // Start source
     source.start(0);
@@ -562,7 +561,12 @@ export class AudioProcessor {
    * This is the old chunk-based preview system. Keep it for A/B comparison,
    * but real-time playback via startPlayback() is preferred.
    */
-  async renderPreviewChunk(settings: ProcessingSettings, chunkOffset: number = 0, chunkDuration: number = 30): Promise<AudioBuffer> {
+  async renderPreviewChunk(
+    settings: ProcessingSettings,
+    chunkOffset: number = 0,
+    chunkDuration: number = 30,
+    inputTrimDB?: number
+  ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
     }
@@ -600,6 +604,7 @@ export class AudioProcessor {
       settings,
       quality: 'preview',
       useMinimalMaster,
+      inputTrimDB,
       inputLUFS: this.analysis?.lufs ?? -16,
     });
 
@@ -623,7 +628,7 @@ export class AudioProcessor {
 
     // Connect chain
     source.connect(chain.input);
-    chain.output.connect(offlineContext.destination);
+    // chain.output is already wired to destination inside buildMasteringChain
 
     // Start and render
     source.start(0);
@@ -633,6 +638,40 @@ export class AudioProcessor {
     chain.dispose();
 
     return renderedBuffer;
+  }
+
+  /**
+   * Fast processed waveform preview — renders a short chunk only (not full track).
+   * Full-track mastering is heard via the realtime player; this is for the UI waveform.
+   */
+  async renderWaveformPreview(
+    settings: ProcessingSettings,
+    inputTrimDB?: number,
+    maxSeconds: number = 45
+  ): Promise<AudioBuffer> {
+    if (!this.audioBuffer) {
+      throw new Error('No audio buffer loaded');
+    }
+
+    const chunkSeconds = Math.min(maxSeconds, this.audioBuffer.duration);
+    const previewSettings: ProcessingSettings = {
+      ...settings,
+      userOverrides: {
+        ...settings.userOverrides,
+        // Multiband offline render is very slow on long files — skip for waveform viz
+        useMultiband: false,
+      },
+    };
+
+    console.log(`🎨 Waveform preview: rendering first ${chunkSeconds.toFixed(1)}s (fast path)`);
+
+    const timeoutMs = 25000;
+    const renderPromise = this.renderPreviewChunk(previewSettings, 0, chunkSeconds, inputTrimDB);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Waveform preview timed out')), timeoutMs);
+    });
+
+    return Promise.race([renderPromise, timeoutPromise]);
   }
 
   // ============================================================================
