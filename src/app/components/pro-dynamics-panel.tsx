@@ -18,6 +18,10 @@ export interface ProDynamicsSettings {
   sslGlue: SSLGlueMode;
   forceMonoBass: boolean | null;
   monoBassHz: number;
+  /** Iteratively trim output on export until integrated LUFS hits target */
+  autoStageOnExport: boolean;
+  /** Gently nudge output trim during playback toward target */
+  autoStageLive: boolean;
 }
 
 export const DEFAULT_PRO_DYNAMICS: ProDynamicsSettings = {
@@ -27,6 +31,8 @@ export const DEFAULT_PRO_DYNAMICS: ProDynamicsSettings = {
   sslGlue: 'auto',
   forceMonoBass: null,
   monoBassHz: 120,
+  autoStageOnExport: true,
+  autoStageLive: false,
 };
 
 interface ProDynamicsPanelProps {
@@ -36,6 +42,7 @@ interface ProDynamicsPanelProps {
   autoInputTrimDB?: number;
   presetCeilingDBTP: number;
   outputMomentaryLUFS: number | null;
+  outputIntegratedLUFS: number | null;
   targetLUFS: number;
   isPlaying: boolean;
 }
@@ -55,6 +62,7 @@ export function ProDynamicsPanel({
   autoInputTrimDB,
   presetCeilingDBTP,
   outputMomentaryLUFS,
+  outputIntegratedLUFS,
   targetLUFS,
   isPlaying,
 }: ProDynamicsPanelProps) {
@@ -85,14 +93,20 @@ export function ProDynamicsPanel({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-[10px] font-mono uppercase tracking-wider">
+        <div className="flex flex-wrap items-center gap-3 text-[10px] font-mono uppercase tracking-wider">
           <Gauge className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-zinc-500">Output</span>
+          <span className="text-zinc-500">Out</span>
           <span className={`${isPlaying ? 'text-cyan-400' : 'text-zinc-600'}`}>
-            {outputMomentaryLUFS != null ? `${outputMomentaryLUFS.toFixed(1)} LUFS` : '—'}
+            M {outputMomentaryLUFS != null ? `${outputMomentaryLUFS.toFixed(1)}` : '—'}
+          </span>
+          <span className="text-zinc-700">·</span>
+          <span className={`${isPlaying ? 'text-yellow-400' : 'text-zinc-600'}`}>
+            I {outputIntegratedLUFS != null && Number.isFinite(outputIntegratedLUFS) && outputIntegratedLUFS !== -Infinity
+              ? `${outputIntegratedLUFS.toFixed(1)}`
+              : '—'}
           </span>
           <span className="text-zinc-700">/</span>
-          <span className="text-emerald-400">{targetLUFS} target</span>
+          <span className="text-emerald-400">{targetLUFS} tgt</span>
         </div>
       </div>
 
@@ -147,6 +161,34 @@ export function ProDynamicsPanel({
             accentClassName="accent-cyan-500"
             onChange={(v) => onChange(update(settings, 'outputTrimDB', v))}
           />
+          <div className="mt-2 flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.autoStageOnExport}
+                onChange={(e) =>
+                  onChange(update(settings, 'autoStageOnExport', e.target.checked))
+                }
+                className="rounded border-zinc-700"
+              />
+              <span className="text-[10px] font-mono text-zinc-400">
+                Auto-stage on export
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.autoStageLive}
+                onChange={(e) =>
+                  onChange(update(settings, 'autoStageLive', e.target.checked))
+                }
+                className="rounded border-zinc-700"
+              />
+              <span className="text-[10px] font-mono text-zinc-400">
+                Auto-stage while playing
+              </span>
+            </label>
+          </div>
         </div>
 
         {/* Limiter ceiling */}
