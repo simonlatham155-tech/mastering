@@ -16,18 +16,11 @@ export interface AudioAnalysisResult {
   tempo?: number;          // BPM detection (optional)
 }
 
-export async function analyzeAudioFile(file: File): Promise<AudioAnalysisResult> {
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-  
-  try {
-    // Decode audio file
-    const arrayBuffer = await file.arrayBuffer();
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    
-    // Get channel data (use left channel or mix to mono)
-    const channelData = audioBuffer.getChannelData(0);
-    const sampleRate = audioBuffer.sampleRate;
-    const numSamples = channelData.length;
+/** Analyze an already-decoded buffer (avoids a second full-file decode on upload). */
+export function analyzeAudioBuffer(audioBuffer: AudioBuffer): AudioAnalysisResult {
+  const channelData = audioBuffer.getChannelData(0);
+  const sampleRate = audioBuffer.sampleRate;
+  const numSamples = channelData.length;
     
     // Calculate RMS and True Peak
     let sumSquares = 0;
@@ -59,16 +52,24 @@ export async function analyzeAudioFile(file: File): Promise<AudioAnalysisResult>
     // Heritage content detection
     const isHeritage = dynamicRange > 12;
     
-    return {
-      lufs,
-      truePeak: truePeakDb,
-      dynamicRange,
-      rms: rmsDb,
-      spectralBalance,
-      suggestedGenre,
-      isHeritage
-    };
-    
+  return {
+    lufs,
+    truePeak: truePeakDb,
+    dynamicRange,
+    rms: rmsDb,
+    spectralBalance,
+    suggestedGenre,
+    isHeritage,
+  };
+}
+
+export async function analyzeAudioFile(file: File): Promise<AudioAnalysisResult> {
+  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    return analyzeAudioBuffer(audioBuffer);
   } finally {
     await audioContext.close();
   }

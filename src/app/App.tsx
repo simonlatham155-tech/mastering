@@ -38,7 +38,7 @@ import {
 } from './services/app-processing-context';
 import { toast, Toaster } from 'sonner';
 import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio-processor';
-import { analyzeAudioFile as analyzeInputAudio, AudioAnalysisResult } from './utils/audio-analyzer';
+import { analyzeAudioBuffer, AudioAnalysisResult } from './utils/audio-analyzer';
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
 import { MasteringWorkflow } from './components/mastering-workflow';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
@@ -370,6 +370,12 @@ export default function App() {
     }
   }, [selectedFile]);
 
+  // Reference tonal balance — run after core analysis so it never blocks upload.
+  useEffect(() => {
+    if (!originalBuffer || !analysis) return;
+    void analyzeSpectralProfile(originalBuffer);
+  }, [originalBuffer, analysis, analyzeSpectralProfile]);
+
   // Auto-process when performance mode is selected after analysis
   // REMOVED: Performance Mode is a separate tool, not required for main processing
   
@@ -671,19 +677,27 @@ export default function App() {
 
     try {
       await audioProcessor.loadAudioFile(selectedFile);
-      
+
       const original = audioProcessor.getOriginalBuffer();
+      if (!original) {
+        throw new Error('Failed to decode audio file');
+      }
       setOriginalBuffer(original);
-      void analyzeSpectralProfile(original ?? null);
-      
+
       console.log('📊 Original buffer stored:', {
-        channels: original?.numberOfChannels,
-        duration: original?.duration.toFixed(2),
-        sampleRate: original?.sampleRate
+        channels: original.numberOfChannels,
+        duration: original.duration.toFixed(2),
+        sampleRate: original.sampleRate,
       });
 
-      const inputResult = await analyzeInputAudio(selectedFile);
+      const [inputResult, analysisResult] = await Promise.all([
+        Promise.resolve(analyzeAudioBuffer(original)),
+        audioProcessor.analyzeAudio(),
+      ]);
+
       setInputAnalysis(inputResult);
+      setAnalysis(analysisResult);
+      setIsAnalyzing(false);
 
       const recommendation = AIMasteringEngine.recommend(inputResult);
 
@@ -699,9 +713,6 @@ export default function App() {
       toast.success(
         `Mix configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
       );
-      
-      const analysisResult = await audioProcessor.analyzeAudio();
-      setAnalysis(analysisResult);
 
       const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile);
       const processingContext = buildProcessingContext(
@@ -738,11 +749,16 @@ export default function App() {
     processingContext?: AppProcessingContext
   ) => {
     console.log('⚡ Initializing real-time preview player (NO pre-rendering!)');
-    
+
     const currentAnalysis = analysisData || analysis;
-    
-    if (!selectedFile || !currentAnalysis) {
-      console.log('❌ Early return - missing requirements:', { hasFile: !!selectedFile, hasAnalysis: !!currentAnalysis });
+    const buffer = sourceBuffer ?? originalBuffer ?? audioProcessor.getOriginalBuffer();
+
+    if (!selectedFile || !currentAnalysis || !buffer) {
+      console.log('❌ Early return - missing requirements:', {
+        hasFile: !!selectedFile,
+        hasAnalysis: !!currentAnalysis,
+        hasBuffer: !!buffer,
+      });
       return;
     }
 
@@ -760,8 +776,8 @@ export default function App() {
       if (!realtimePlayerRef.current) {
         realtimePlayerRef.current = new RealtimeAudioPlayer();
       }
-      
-      await realtimePlayerRef.current.loadAudio(selectedFile);
+
+      realtimePlayerRef.current.loadBuffer(buffer);
       
       console.log('✅ Real-time player ready! Audio will be processed live during playback');
       console.log('   No pre-rendering! Instant start! 🚀');

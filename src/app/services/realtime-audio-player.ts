@@ -91,14 +91,28 @@ export class RealtimeAudioPlayer {
    * Load audio file for playback
    */
   async loadAudio(file: File): Promise<void> {
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = await this.ensureContext().decodeAudioData(arrayBuffer);
+    this.setLoadedBuffer(buffer);
+  }
+
+  /** Reuse an already-decoded buffer (avoids a third full-file decode on upload). */
+  loadBuffer(buffer: AudioBuffer): void {
+    this.setLoadedBuffer(buffer);
+  }
+
+  private ensureContext(): AudioContext {
     if (!this.audioContext) {
       this.audioContext = new AudioContext();
     }
-    
-    const arrayBuffer = await file.arrayBuffer();
-    this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-    
-    console.log(`🎵 Loaded audio: ${this.audioBuffer.duration.toFixed(1)}s, ${this.audioBuffer.numberOfChannels}ch`);
+    return this.audioContext;
+  }
+
+  private setLoadedBuffer(buffer: AudioBuffer): void {
+    this.audioBuffer = buffer;
+    console.log(
+      `🎵 Loaded audio: ${buffer.duration.toFixed(1)}s, ${buffer.numberOfChannels}ch`
+    );
   }
   
   /**
