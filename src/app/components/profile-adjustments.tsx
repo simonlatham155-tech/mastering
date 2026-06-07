@@ -5,9 +5,6 @@ export interface ProfileAdjustments {
   midRangeAdjust: number;      // -6 to +6 dB
   highShelfBoost: number;      // -6 to +6 dB
   stereoWidth: number;         // 0 to 100%
-  saturationAmount: number;    // 0 to 100%
-  // REMOVED: compressionRatio (derived from loudnessStyle)
-  // REMOVED: targetLUFS (comes from export preset)
 }
 
 interface ProfileAdjustmentsProps {
@@ -152,39 +149,12 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
             />
           </div>
         </div>
-
-        {/* SATURATION */}
-        <div>
-          <div className="text-xs font-mono text-amber-500/60 uppercase tracking-wider mb-2">
-            Saturation
-          </div>
-          <p className="text-[10px] font-mono text-zinc-600 mb-2">
-            Rebuilds the chain when changed (transformer/tape drive).
-          </p>
-          <div>
-            <div className="flex justify-between items-baseline mb-1">
-              <span className="text-sm font-mono text-orange-400">{adjustments.saturationAmount}%</span>
-              <span className="text-xs font-mono text-zinc-600">0-100%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={adjustments.saturationAmount}
-              onChange={(e) => updateValue('saturationAmount', parseFloat(e.target.value))}
-              className="w-full h-2 rounded-full appearance-none cursor-pointer"
-              style={{
-                background: `linear-gradient(to right, 
-                  #0a0a0a 0%, 
-                  #fb923c ${adjustments.saturationAmount}%, 
-                  #27272a ${adjustments.saturationAmount}%, 
-                  #27272a 100%)`
-              }}
-            />
-          </div>
-        </div>
       </div>
+
+      <p className="text-[10px] font-mono text-zinc-600 mt-3 leading-relaxed">
+        Harmonic color is controlled by the <span className="text-amber-400">THD knob</span> on the main rack.
+        EQ and width update live during playback.
+      </p>
 
       <style>{`
         input[type="range"]::-webkit-slider-thumb {
