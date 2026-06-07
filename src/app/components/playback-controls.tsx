@@ -184,6 +184,8 @@ export function PlaybackControls({
 
         let amplitude = 0.02;
         let useProcessedShape = false;
+        const inPreviewZone =
+          !bypass && !!processed && !!original && timeStart < processedCover;
 
         if (bypass && original) {
           amplitude = barAmplitude(original, timeStart, timeEnd);
@@ -202,6 +204,18 @@ export function PlaybackControls({
         const barHeight = Math.max(3, amplitude * (height / 2));
         const y = height / 2 - barHeight / 2;
         const isPlayed = timeStart < t;
+
+        if (inPreviewZone) {
+          const origAmp = barAmplitude(
+            original!,
+            timeStart,
+            Math.min(timeEnd, processedCover)
+          );
+          const origHeight = Math.max(3, origAmp * (height / 2));
+          const origY = height / 2 - origHeight / 2;
+          ctx.fillStyle = isPlayed ? 'rgba(63, 63, 70, 0.85)' : 'rgba(39, 39, 42, 0.9)';
+          ctx.fillRect(x, origY, barWidth, origHeight);
+        }
 
         if (isPlayed) {
           // Playhead highlight follows playback across the full track
@@ -326,7 +340,7 @@ export function PlaybackControls({
           </Button>
           {!bypassMode && processedBuffer && processedBuffer.duration < duration && (
             <span className="text-[9px] font-mono text-zinc-500">
-              Cyan = mastered preview (first {Math.round(processedBuffer.duration)}s)
+              Cyan = staged master · zinc ghost = original (first {Math.round(processedBuffer.duration)}s)
             </span>
           )}
         </div>
