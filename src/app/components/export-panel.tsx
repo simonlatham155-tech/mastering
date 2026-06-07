@@ -16,10 +16,15 @@ export function ExportPanel({ onExport, disabled, currentTarget, selectedPreset 
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs font-mono text-zinc-500 tracking-[0.3em] uppercase">Export Optimization</div>
-          <div className="text-xs font-mono text-zinc-700 mt-1">
-            {currentTarget 
-              ? `Current Target: ${currentTarget} LUFS` 
-              : 'Export presets set target LUFS'}
+          <div className="text-[10px] font-mono text-zinc-600 mt-1 max-w-xl leading-relaxed">
+            {currentTarget != null ? (
+              <>
+                Live preview follows Mix Setup ({currentTarget} LUFS). Each button renders a
+                one-off master at that preset — independent of the live target.
+              </>
+            ) : (
+              'One-off render per preset — live chain uses Mix Setup delivery target.'
+            )}
           </div>
         </div>
       </div>

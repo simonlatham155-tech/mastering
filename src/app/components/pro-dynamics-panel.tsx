@@ -1,4 +1,4 @@
-import { Gauge, SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import {
   RangeSliderWithSuggested,
   SuggestedButtonGroup,
@@ -41,10 +41,6 @@ interface ProDynamicsPanelProps {
   gearProfile: GearProfileId;
   autoInputTrimDB?: number;
   presetCeilingDBTP: number;
-  outputMomentaryLUFS: number | null;
-  outputIntegratedLUFS: number | null;
-  targetLUFS: number;
-  isPlaying: boolean;
 }
 
 function update<K extends keyof ProDynamicsSettings>(
@@ -61,10 +57,6 @@ export function ProDynamicsPanel({
   gearProfile,
   autoInputTrimDB,
   presetCeilingDBTP,
-  outputMomentaryLUFS,
-  outputIntegratedLUFS,
-  targetLUFS,
-  isPlaying,
 }: ProDynamicsPanelProps) {
   const suggested = getSuggestedProDynamics(gearProfile, presetCeilingDBTP, autoInputTrimDB);
   const effectiveInputTrim = settings.inputTrimDB ?? autoInputTrimDB ?? 0;
@@ -72,41 +64,16 @@ export function ProDynamicsPanel({
   const effectiveForceMonoBass = settings.forceMonoBass ?? suggested.forceMonoBass;
 
   return (
-    <div
-      className="border rounded-lg p-4"
-      style={{
-        background: 'linear-gradient(180deg, #0f0f0f, #0a0a0a)',
-        borderColor: '#2a2a2a',
-        boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.5)',
-      }}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
-        <div className="flex items-center gap-2">
-          <SlidersHorizontal className="w-4 h-4 text-purple-400" />
-          <div>
-            <div className="text-sm font-mono text-zinc-300 uppercase tracking-[0.2em]">
-              Pro Dynamics
-            </div>
-            <div className="text-[10px] font-mono text-zinc-600 mt-0.5">
-              Level staging + bus glue + ceiling
-            </div>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 mb-4">
+        <SlidersHorizontal className="w-4 h-4 text-purple-400" />
+        <div>
+          <div className="text-sm font-mono text-zinc-300 uppercase tracking-[0.2em]">
+            Level &amp; dynamics
           </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 text-[10px] font-mono uppercase tracking-wider">
-          <Gauge className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-zinc-500">Out</span>
-          <span className={`${isPlaying ? 'text-cyan-400' : 'text-zinc-600'}`}>
-            M {outputMomentaryLUFS != null ? `${outputMomentaryLUFS.toFixed(1)}` : '—'}
-          </span>
-          <span className="text-zinc-700">·</span>
-          <span className={`${isPlaying ? 'text-yellow-400' : 'text-zinc-600'}`}>
-            I {outputIntegratedLUFS != null && Number.isFinite(outputIntegratedLUFS) && outputIntegratedLUFS !== -Infinity
-              ? `${outputIntegratedLUFS.toFixed(1)}`
-              : '—'}
-          </span>
-          <span className="text-zinc-700">/</span>
-          <span className="text-emerald-400">{targetLUFS} tgt</span>
+          <div className="text-[10px] font-mono text-zinc-600 mt-0.5">
+            Staging, bus glue, ceiling override — loudness meters are above
+          </div>
         </div>
       </div>
 

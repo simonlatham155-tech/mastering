@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { CircuitDriveKnob } from './components/circuit-drive-knob';
 import { LogicToggle } from './components/logic-toggle';
 import { GearProfileId, gearProfiles } from './components/gear-selector';
-import { MeterDisplay } from './components/meter-display';
+import { ProRackSection } from './components/pro-rack-section';
+import { ProOutputMeters } from './components/pro-output-meters';
 import { GainStageVisualizer } from './components/gain-stage-visualizer';
 import { WaveformVisualizer } from './components/waveform-visualizer';
 import { SpectralAnalyzer } from './components/spectral-analyzer';
@@ -15,12 +16,6 @@ import { PerformanceClipMeter } from './components/performance-clip-meter';
 import { ChunkSelector } from './components/chunk-selector';
 import { SignalChainVisualizer } from './components/signal-chain-visualizer';
 import { GenreProfileInfo } from './components/genre-profile-info';
-import { GainReductionMeter, GainReductionMeterCompact } from './components/gain-reduction-meter';
-import { TruePeakIndicator } from './components/true-peak-indicator';
-import { DamageReportPanel } from './components/damage-report-panel';
-import { HQModeToggle } from './components/hq-mode-toggle';
-import { InterSamplePeakMeter } from './components/inter-sample-peak-meter';
-import { CompactLufsMeter } from './components/compact-lufs-meter';
 import { ProfileAdjustmentsPanel, ProfileAdjustments } from './components/profile-adjustments';
 import { ProDynamicsPanel } from './components/pro-dynamics-panel';
 import { getExportPreset } from './data/export-presets';
@@ -43,7 +38,6 @@ import { toast, Toaster } from 'sonner';
 import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio-processor';
 import { analyzeAudioBuffer, AudioAnalysisResult } from './utils/audio-analyzer';
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
-import { MasteringWorkflow } from './components/mastering-workflow';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
 import { buildExportQualityReport } from './utils/measure-buffer-loudness';
@@ -1490,82 +1484,34 @@ export default function App() {
 
             {expertMode && (
               <>
-            {inputAnalysis && (
-              <div 
-                className="relative border-2 rounded-lg p-6 mb-6"
-                style={{
-                  borderColor: '#2a2a2a',
-                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                  boxShadow: `
-                    inset 0 2px 4px rgba(0,0,0,0.6),
-                    inset 0 -1px 2px rgba(255,255,255,0.05),
-                    0 8px 16px rgba(0,0,0,0.5)
-                  `
-                }}
-              >
-                {[0, 1, 2, 3].map((i) => (
-                  <div 
-                    key={i}
-                    className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                    style={{
-                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                    }}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-2 h-0.5 bg-zinc-900"></div>
-                    </div>
-                  </div>
-                ))}
-
-                <MasteringWorkflow
-                  inputAnalysis={inputAnalysis}
-                  circuitDrive={circuitDrive}
-                  logicMode={logicMode}
-                  gearProfile={gearProfile}
-                  targetLUFS={getExportPreset(exportPreset).lufs}
-                />
-              </div>
-            )}
-
-            <div
-              className="relative border-2 rounded-lg px-6 py-4 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-              }}
+            <ProRackSection
+              title="Output meters"
+              subtitle="Live loudness, peaks, and limiter gain reduction — play to measure."
             >
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
-                  Live Output
-                </div>
-                <div className="flex flex-wrap items-center gap-6">
-                  <GainReductionMeterCompact gainReductionDB={gainReductionDB} />
-                  {gainReduction > 0.1 && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[8px] font-mono text-zinc-500">SSL:</span>
-                      <span className="text-xs font-mono font-bold text-amber-400">
-                        {gainReduction.toFixed(1)} dB
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <span className="text-[8px] font-mono text-zinc-500">TP:</span>
-                    <span className={`text-xs font-mono font-bold ${
-                      truePeakDBTP > -1 ? 'text-red-400' : truePeakDBTP > -3 ? 'text-yellow-400' : 'text-green-400'
-                    }`}>
-                      {Number.isFinite(truePeakDBTP) ? truePeakDBTP.toFixed(1) : '—'} dBTP
-                    </span>
-                  </div>
-                  {hqMode && ispDifference > 0.3 && (
-                    <span className="text-[9px] font-mono text-purple-400">
-                      ISP +{ispDifference.toFixed(1)} dB
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
+              <ProOutputMeters
+                hqMode={hqMode}
+                onHqToggle={setHQMode}
+                cpuUsage={cpuUsage}
+                truePeakDBTP={truePeakDBTP}
+                digitalPeakDB={digitalPeakDB}
+                limiterGainReductionDB={gainReductionDB}
+                sslGainReductionDB={gainReduction}
+                ispDifference={ispDifference}
+                ceilingDBTP={getExportPreset(exportPreset).ceiling}
+                lufs={outputLufs}
+                targetLUFS={getExportPreset(exportPreset).lufs}
+                isPlaying={playbackState.isPlaying}
+                logicMode={logicMode}
+                isProcessing={isProcessing}
+                meterValue={logicMode === 'brickwall' ? meterValues.peak : meterValues.lra}
+                damageReport={analysis?.damageReport}
+              />
+            </ProRackSection>
 
-            <div className="mb-6">
+            <ProRackSection
+              title="Tonal shaping"
+              subtitle="Match strength adjusts profile EQ live — manual EQ sliders below edit the same bands."
+            >
               <ReferenceMatchPanel
                 userProfile={spectralProfile}
                 referenceCurve={referenceCurve}
@@ -1577,328 +1523,63 @@ export default function App() {
                 isAnalyzing={isSpectralAnalyzing}
                 gearLabel={gearProfiles.find((p) => p.id === gearProfile)?.name}
               />
-            </div>
-
-            {/* Meter Display - separate panel */}
-            <div 
-              className="relative border-2 rounded-lg p-8 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-4' : 'bottom-4'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <MeterDisplay 
-                mode={logicMode === 'brickwall' ? 'peak' : 'lra'} 
-                isProcessing={isProcessing}
-                value={logicMode === 'brickwall' ? meterValues.peak : meterValues.lra}
+              <ProfileAdjustmentsPanel
+                adjustments={profileAdjustments}
+                onChange={setProfileAdjustments}
+                gearProfile={gearProfile}
               />
-            </div>
+            </ProRackSection>
 
-            {/* Reference-Grade DSP Section - NEW! */}
-            {selectedFile && (
-              <div 
-                className="relative border-2 rounded-lg p-6 mb-6"
-                style={{
-                  borderColor: '#2a2a2a',
-                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                  boxShadow: `
-                    inset 0 2px 4px rgba(0,0,0,0.6),
-                    inset 0 -1px 2px rgba(255,255,255,0.05),
-                    0 8px 16px rgba(0,0,0,0.5)
-                  `
-                }}
-              >
-                {/* Rack screws */}
-                {[0, 1, 2, 3].map((i) => (
-                  <div 
-                    key={i}
-                    className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                    style={{
-                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                    }}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-2 h-0.5 bg-zinc-900"></div>
-                    </div>
-                  </div>
-                ))}
-
-                <div className="space-y-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
-                    <h2 className="text-xs font-mono text-purple-400 uppercase tracking-wider">
-                      Reference-Grade DSP
-                    </h2>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* HQ Mode Toggle */}
-                    <HQModeToggle
-                      enabled={hqMode}
-                      onToggle={setHQMode}
-                      cpuUsage={cpuUsage}
-                    />
-
-                    {/* True Peak Indicator */}
-                    <TruePeakIndicator
-                      truePeakDBTP={truePeakDBTP}
-                      ceiling={getExportPreset(exportPreset).ceiling}
-                      enabled={hqMode}
-                    />
-
-                    {/* Gain Reduction Meter */}
-                    <GainReductionMeter
-                      gainReductionDB={gainReductionDB}
-                      lookaheadMS={5}
-                      showGhost={hqMode}
-                    />
-                  </div>
-
-                  {/* Inter-Sample Peak Meter (full width when ISP detected) */}
-                  {hqMode && (
-                    <InterSamplePeakMeter
-                      digitalPeakDB={digitalPeakDB}
-                      truePeakDBTP={truePeakDBTP}
-                      ispDifference={ispDifference}
-                      hqMode={hqMode}
-                    />
-                  )}
-                  
-                  {/* Damage Report Panel - Quality Guardrails (2026-02-16) */}
-                  {analysis?.damageReport && (
-                    <div className="mt-6">
-                      <DamageReportPanel damageReport={analysis.damageReport} />
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Pro Dynamics — level staging + bus glue */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
+            <ProRackSection
+              title="Level & dynamics"
+              subtitle="Staging, bus glue, and ceiling — independent of Mix Setup delivery target until you override."
             >
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
               <ProDynamicsPanel
                 settings={proDynamics}
                 onChange={setProDynamics}
                 gearProfile={gearProfile}
                 autoInputTrimDB={autoInputTrimDB}
                 presetCeilingDBTP={getExportPreset(exportPreset).ceiling}
-                outputMomentaryLUFS={
-                  outputLufs?.momentary != null && Number.isFinite(outputLufs.momentary)
-                    ? outputLufs.momentary
-                    : null
-                }
-                outputIntegratedLUFS={
-                  outputLufs?.integrated != null && Number.isFinite(outputLufs.integrated)
-                    ? outputLufs.integrated
-                    : null
-                }
-                targetLUFS={getExportPreset(exportPreset).lufs}
-                isPlaying={playbackState.isPlaying}
               />
-            </div>
+            </ProRackSection>
 
-            {/* BS.1770 loudness meter (live) */}
-            <div className="mb-6">
-              <CompactLufsMeter
-                lufs={outputLufs}
-                targetLUFS={getExportPreset(exportPreset).lufs}
-                isPlaying={playbackState.isPlaying}
-              />
-            </div>
-
-            {/* Profile Adjustments Panel - separate rack unit */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
+            <ProRackSection
+              title="Chain reference"
+              subtitle="Signal path and genre characteristics for the active gear profile."
             >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <ProfileAdjustmentsPanel
-                adjustments={profileAdjustments}
-                onChange={setProfileAdjustments}
-                gearProfile={gearProfile}
-              />
-            </div>
-
-            {/* Signal Chain Visualizer - separate rack unit */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <SignalChainVisualizer
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <SignalChainVisualizer
+                  isProcessing={isProcessing}
+                  gearProfile={gearProfile}
+                />
+                <GenreProfileInfo gearProfile={gearProfile} />
+              </div>
+              <GainStageVisualizer
                 isProcessing={isProcessing}
-                gearProfile={gearProfile}
-              />
-            </div>
-
-            {/* Genre Profile Info - separate rack unit */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <GenreProfileInfo gearProfile={gearProfile} />
-            </div>
-
-            {/* Gain Stage Visualizer - expert only */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <GainStageVisualizer 
-                isProcessing={isProcessing} 
                 circuitDrive={circuitDrive}
                 gearProfile={gearProfile}
                 hasProcessedAudio={!!selectedFile && !!analysis}
               />
-            </div>
+            </ProRackSection>
 
-            <ExportPanel 
-              onExport={handleExport} 
-              disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
-              currentTarget={getExportPreset(exportPreset).lufs}
-              selectedPreset={exportPreset}
-            />
-            <BatchExportPanel
-              disabled={isProcessing}
-              isExporting={isBatchExporting}
-              progress={batchExportProgress}
-              selectedPreset={exportPreset}
-              onBatchExport={handleBatchExport}
-            />
+            <ProRackSection
+              title="Export"
+              subtitle="Single tracks or album batch — each preset renders independently."
+            >
+              <ExportPanel
+                onExport={handleExport}
+                disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
+                currentTarget={getExportPreset(exportPreset).lufs}
+                selectedPreset={exportPreset}
+              />
+              <BatchExportPanel
+                disabled={isProcessing}
+                isExporting={isBatchExporting}
+                progress={batchExportProgress}
+                selectedPreset={exportPreset}
+                onBatchExport={handleBatchExport}
+              />
+            </ProRackSection>
               </>
             )}
               </>
