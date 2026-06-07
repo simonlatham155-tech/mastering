@@ -11,7 +11,7 @@
 - `loudnessStyle` wired in `mastering-chain-builder.ts` (SSL + limiter)
 - BS.1770 live/export metering, auto-staging, export true-peak
 - Pro Dynamics, Mix Setup, suggested markers, `#/demo` A/B page
-- **117 automated tests passing** (`npm test`)
+- **150+ automated tests** (`npm test`)
 
 ---
 
@@ -33,7 +33,7 @@ Manual checklist: [`LISTEN_QA.md`](./LISTEN_QA.md)
 
 ## Next (after listen QA sign-off)
 
-1. Reference track matching in main UI (`reference-matching-controller.ts` exists)
+1. ~~Reference track matching in main UI~~ — **shipped** (genre curves → profile EQ; custom upload + Faust 10-band later)
 2. Album / batch export
 3. Product nav (Mastering Suite · plugins · apps)
 4. Bundle cleanup (TensorFlow dead chunk, unused Radix)

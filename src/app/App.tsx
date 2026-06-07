@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { CircuitDriveKnob } from './components/circuit-drive-knob';
 import { LogicToggle } from './components/logic-toggle';
 import { GearProfileId, gearProfiles } from './components/gear-selector';
@@ -49,7 +49,14 @@ import { renderWaveformPreviewWithAutoStaging } from './services/waveform-previe
 import { computeBypassGainMatchDB } from './utils/gain-match';
 import { computeStagingTrimStep } from './utils/auto-staging';
 import { PlaybackControls } from './components/playback-controls';
-import { CreatorAboutStrip } from './components/creator-about-strip';
+import { ReferenceMatchPanel } from './components/reference-match-panel';
+import { ReferenceMatchingController } from './services/reference-matching-controller';
+import type { SpectralProfile } from './services/spectral-analyzer';
+import { getReferenceCurveForGear } from './utils/gear-reference-map';
+import {
+  matchingAutoGainToOutputTrimDelta,
+  matchingGainsToProfileAdjustments,
+} from './utils/matching-gains-to-eq';
 import { motion } from 'motion/react';
 
 type LogicMode = 'brickwall' | 'dynamics';
@@ -129,6 +136,11 @@ export default function App() {
   /** Ozone-style level-matched A/B — boosts bypass to processed loudness (export unchanged). */
   const [gainMatchEnabled, setGainMatchEnabled] = useState(false);
   const [bypassGainMatchDB, setBypassGainMatchDB] = useState(0);
+
+  const [spectralProfile, setSpectralProfile] = useState<SpectralProfile | null>(null);
+  const [matchStrength, setMatchStrength] = useState(50);
+  const [isSpectralAnalyzing, setIsSpectralAnalyzing] = useState(false);
+  const referenceMatchControllerRef = useRef<ReferenceMatchingController | null>(null);
   
   // Audio Input Analysis
   const [inputAnalysis, setInputAnalysis] = useState<AudioAnalysisResult | null>(null);
@@ -210,6 +222,85 @@ export default function App() {
       gainMatchEnabled ? bypassGainMatchDB : null
     );
   }, [proDynamics.outputTrimDB, gainMatchEnabled, bypassGainMatchDB]);
+
+  const referenceCurve = useMemo(
+    () => (isReady ? getReferenceCurveForGear(gearProfile) : null),
+    [isReady, gearProfile]
+  );
+
+  const previewMatchingGains = useMemo(() => {
+    if (!spectralProfile || !referenceCurve) return null;
+    if (!referenceMatchControllerRef.current) {
+      referenceMatchControllerRef.current = new ReferenceMatchingController(
+        new AudioContext()
+      );
+    }
+    return referenceMatchControllerRef.current.calculateMatchingGains(
+      spectralProfile,
+      referenceCurve,
+      matchStrength / 100
+    );
+  }, [spectralProfile, referenceCurve, matchStrength]);
+
+  const analyzeSpectralProfile = useCallback(async (buffer: AudioBuffer | null) => {
+    if (!buffer) {
+      setSpectralProfile(null);
+      return;
+    }
+    setIsSpectralAnalyzing(true);
+    try {
+      if (!referenceMatchControllerRef.current) {
+        referenceMatchControllerRef.current = new ReferenceMatchingController(
+          new AudioContext()
+        );
+      }
+      const profile = await referenceMatchControllerRef.current.analyzeTrack(buffer);
+      setSpectralProfile(profile);
+    } catch (err) {
+      console.warn('Spectral profile analysis failed:', err);
+      setSpectralProfile(null);
+    } finally {
+      setIsSpectralAnalyzing(false);
+    }
+  }, []);
+
+  const handleApplyReferenceMatch = () => {
+    if (!previewMatchingGains) return;
+
+    const nextProfile = matchingGainsToProfileAdjustments(
+      previewMatchingGains,
+      profileAdjustments
+    );
+    setProfileAdjustments(nextProfile);
+
+    const trimDelta = matchingAutoGainToOutputTrimDelta(previewMatchingGains.autoGain);
+    if (Math.abs(trimDelta) >= 0.05) {
+      setProDynamics((prev) => {
+        const nextTrim = Math.max(-6, Math.min(6, prev.outputTrimDB + trimDelta));
+        realtimePlayerRef.current?.updateParameter('outputTrim', nextTrim);
+        return { ...prev, outputTrimDB: nextTrim };
+      });
+    }
+
+    const player = realtimePlayerRef.current;
+    if (player) {
+      applyProfileAdjustmentsToPlayer(player, gearProfile, nextProfile);
+    }
+
+    const ctx = buildProcessingContext({
+      gearProfile,
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      profileAdjustments: nextProfile,
+      proDynamics,
+    });
+    startWaveformPreviewRender(buildAppProcessingSettings(ctx));
+
+    toast.success(
+      `Reference match applied at ${matchStrength}% — profile EQ updated`
+    );
+  };
   
   // Mix analysis summary (shown in unified setup panel after upload)
   const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
@@ -573,6 +664,7 @@ export default function App() {
       
       const original = audioProcessor.getOriginalBuffer();
       setOriginalBuffer(original);
+      void analyzeSpectralProfile(original ?? null);
       
       console.log('📊 Original buffer stored:', {
         channels: original?.numberOfChannels,
@@ -703,6 +795,7 @@ export default function App() {
     setProcessedBuffer(null);
     setIsWaveformRendering(false);
     setOriginalBuffer(null);
+    setSpectralProfile(null);
     setMeterValues({ peak: 0, lra: 0 });
   };
 
@@ -1173,6 +1266,21 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {isReady && (
+              <div className="mb-6">
+                <ReferenceMatchPanel
+                  userProfile={spectralProfile}
+                  referenceCurve={referenceCurve}
+                  matchingGains={previewMatchingGains}
+                  matchStrength={matchStrength}
+                  onMatchStrengthChange={setMatchStrength}
+                  onApplyMatching={handleApplyReferenceMatch}
+                  isAnalyzing={isSpectralAnalyzing}
+                  gearLabel={gearProfiles.find((p) => p.id === gearProfile)?.name}
+                />
+              </div>
+            )}
 
             {/* Expert controls toggle */}
             <div className="mb-6 flex justify-center">
