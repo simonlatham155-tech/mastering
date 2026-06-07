@@ -100,6 +100,9 @@ export function PlaybackControls({
   };
   
   const displayTime = isDragging ? dragTime : currentTime;
+  const interactionRef = useRef({ isPlaying, isDragging, dragTime });
+  interactionRef.current = { isPlaying, isDragging, dragTime };
+
   const playbackRef = useRef({
     displayTime,
     duration,
@@ -142,9 +145,8 @@ export function PlaybackControls({
         processedBuffer: processed,
       } = playbackRef.current;
 
-      const liveTime =
-        isPlaying && !isDragging && getPlaybackTime ? getPlaybackTime() : scrubTime;
-      const t = liveTime;
+      const { isDragging: dragging, dragTime: drag } = interactionRef.current;
+      const t = dragging ? drag : getPlaybackTime?.() ?? scrubTime;
 
       if (!timeline || dur <= 0) return;
 
@@ -229,17 +231,16 @@ export function PlaybackControls({
 
     drawWaveform();
 
-    if (!isPlaying) return;
-
     let rafId = 0;
     const tick = () => {
       drawWaveform();
-      rafId = requestAnimationFrame(tick);
+      if (interactionRef.current.isPlaying) {
+        rafId = requestAnimationFrame(tick);
+      }
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, [
-    isPlaying,
     timelineBuffer,
     originalBuffer,
     processedBuffer,
@@ -247,7 +248,6 @@ export function PlaybackControls({
     duration,
     bypassMode,
     getPlaybackTime,
-    isDragging,
   ]);
 
   return (
