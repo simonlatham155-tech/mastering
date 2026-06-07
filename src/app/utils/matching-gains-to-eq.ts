@@ -6,8 +6,7 @@ function clamp(v: number, min: number, max: number): number {
 }
 
 /**
- * Fold 10-band ISO corrections into the live 3-band profile EQ sliders.
- * Adds on top of current slider values (genre defaults + user tweaks).
+ * Fold 10-band ISO corrections into user EQ offsets (added on top of genre defaults).
  */
 export function matchingGainsToProfileAdjustments(
   matching: MatchingGains,

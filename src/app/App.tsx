@@ -31,6 +31,7 @@ import {
   buildAppProcessingPlan,
   buildAppProcessingSettings,
   DEFAULT_PRO_DYNAMICS,
+  NEUTRAL_PROFILE_ADJUSTMENTS,
   resolveEffectiveInputTrimDB,
   resolveLimiterCeilingOverride,
   type AppProcessingContext,
@@ -96,17 +97,10 @@ function buildProcessingContext(
 }
 
 function syncProfileAdjustmentsForGear(
-  gearProfile: GearProfileId
-): ProfileAdjustments | null {
-  const profile = gearProfiles.find(p => p.id === gearProfile);
-  if (!profile) return null;
-
-  return {
-    lowShelfBoost: profile.lowShelfBoost,
-    midRangeAdjust: profile.midRangeAdjust,
-    highShelfBoost: profile.highShelfBoost,
-    stereoWidth: profile.stereoWidth,
-  };
+  _gearProfile: GearProfileId
+): ProfileAdjustments {
+  // Sliders are offsets from genre defaults — reset tweaks when gear changes.
+  return { ...NEUTRAL_PROFILE_ADJUSTMENTS };
 }
 
 export default function App() {
@@ -154,12 +148,9 @@ export default function App() {
   const isReady = !!selectedFile && !!analysis;
   const measuredInputLUFS = analysis?.lufs ?? inputAnalysis?.lufs ?? -16;
 
-  const [profileAdjustments, setProfileAdjustments] = useState<ProfileAdjustments>({
-    lowShelfBoost: 2.5,
-    midRangeAdjust: -0.5,
-    highShelfBoost: 1.0,
-    stereoWidth: 85,
-  });
+  const [profileAdjustments, setProfileAdjustments] = useState<ProfileAdjustments>(
+    NEUTRAL_PROFILE_ADJUSTMENTS
+  );
 
   const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
   const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
@@ -425,17 +416,9 @@ export default function App() {
     };
   }, [isReady]);
 
-  // Sync profile adjustments when gear profile changes
+  // Reset user EQ/width offsets when gear profile changes (genre defaults stay in the chain).
   useEffect(() => {
-    const profile = gearProfiles.find(p => p.id === gearProfile);
-    if (profile) {
-      setProfileAdjustments({
-        lowShelfBoost: profile.lowShelfBoost,
-        midRangeAdjust: profile.midRangeAdjust,
-        highShelfBoost: profile.highShelfBoost,
-        stereoWidth: profile.stereoWidth,
-      });
-    }
+    setProfileAdjustments({ ...NEUTRAL_PROFILE_ADJUSTMENTS });
   }, [gearProfile]);
 
   // === LIVE PARAMETER UPDATES (PATCH 2026-05-25: Viktor) ===

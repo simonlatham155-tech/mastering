@@ -153,7 +153,8 @@ export function ProfileAdjustmentsPanel({
 
       <p className="text-[10px] font-mono text-zinc-600 mt-3 leading-relaxed">
         <span className="inline-block w-0.5 h-2.5 bg-cyan-400 rounded-full align-middle mr-1.5" />
-        Cyan tick = genre default · Harmonic color is on the <span className="text-amber-400">THD knob</span>
+        0 dB = genre default · Cyan tick = no extra tweak · Harmonic color is on the{' '}
+        <span className="text-amber-400">THD knob</span>
       </p>
 
       <style>{`
