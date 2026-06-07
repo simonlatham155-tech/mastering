@@ -813,7 +813,7 @@ export default function App() {
                   <span className="text-white text-lg"> MASTERING SUITE</span>
                 </h1>
                 <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
-                  Latham Audio · VST plugins and other apps in development
+                  Latham Audio · Plugins and other apps in development
                   {' · '}
                   <a
                     href="#/demo"
