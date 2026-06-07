@@ -1,14 +1,8 @@
 import type { LufsMeterData } from '../services/lufs-meter-manager';
 import {
-  measureBufferTruePeak,
-  measureSamplePeakDBFS,
-  type TruePeakMeasurement,
-} from './measure-buffer-true-peak';
-import { INPUT_ANALYSIS_MAX_SECONDS, sliceBufferHead } from './analysis-buffer-slice';
-
-export { measureSamplePeakDBFS, measureTruePeakLinearDBTP, measureBufferTruePeak };
-export type { TruePeakMeasurement };
-export { INPUT_ANALYSIS_MAX_SECONDS, sliceBufferHead };
+  ensureLufsMeterWorkletModule,
+  preloadLufsMeterWorkletScript,
+} from '../services/lufs-meter-worklet';
 
 export interface MeasureBufferLoudnessOptions {
   /** Cap offline render length (upload path). Default: full buffer. */
@@ -45,10 +39,7 @@ const EMPTY_BUFFER_LUFS: BufferLoudnessResult = {
   maxMomentary: -Infinity,
 };
 
-function workletUrl(): string {
-  const base = import.meta.env.BASE_URL || '/';
-  return `${base}worklets/lufs-metering-processor.js`;
-}
+export { preloadLufsMeterWorkletScript };
 
 /**
  * Measure integrated / momentary LUFS on a rendered AudioBuffer using the same
@@ -71,16 +62,15 @@ export async function measureBufferLoudness(
 
   const offline = new OfflineAudioContext(channels, length, sampleRate);
   const renderTimeoutMs = options.renderTimeoutMs ?? 30_000;
-  const moduleLoadTimeoutMs = options.moduleLoadTimeoutMs ?? 5_000;
+  const moduleLoadTimeoutMs = options.moduleLoadTimeoutMs ?? 15_000;
 
   try {
-    await withTimeout(
-      offline.audioWorklet.addModule(workletUrl()),
+    await ensureLufsMeterWorkletModule(offline, {
       moduleLoadTimeoutMs,
-      'LUFS worklet load'
-    );
+      retries: 1,
+    });
   } catch (err) {
-    console.warn('LUFS worklet unavailable for offline measure:', err);
+    console.warn('LUFS worklet unavailable for offline measure (using RMS estimate):', err);
     return { ...EMPTY_BUFFER_LUFS };
   }
 

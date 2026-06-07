@@ -2,18 +2,13 @@
  * BS.1770-4 loudness metering via AudioWorklet (passthrough, does not color audio).
  */
 
+import { ensureLufsMeterWorkletModule } from './lufs-meter-worklet';
+
 export interface LufsMeterData {
   momentary: number;
   shortTerm: number;
   integrated: number;
   totalBlocks: number;
-}
-
-let moduleLoadedForContext = new WeakMap<BaseAudioContext, boolean>();
-
-function workletUrl(): string {
-  const base = import.meta.env.BASE_URL || '/';
-  return `${base}worklets/lufs-metering-processor.js`;
 }
 
 export class LufsMeterManager {
@@ -30,10 +25,7 @@ export class LufsMeterManager {
     this.dispose();
     this.audioContext = context;
 
-    if (!moduleLoadedForContext.get(context)) {
-      await context.audioWorklet.addModule(workletUrl());
-      moduleLoadedForContext.set(context, true);
-    }
+    await ensureLufsMeterWorkletModule(context);
 
     this.workletNode = new AudioWorkletNode(context, 'lufs-metering-processor', {
       numberOfInputs: 1,
