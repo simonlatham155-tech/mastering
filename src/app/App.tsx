@@ -1095,7 +1095,7 @@ export default function App() {
       
       {/* Professional VST Rack Housing - Brushed Aluminum */}
       <div 
-        className="min-h-screen p-8"
+        className="min-h-screen p-4 md:p-6"
         style={{
           background: `
             linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%),
@@ -1111,9 +1111,9 @@ export default function App() {
       >
         <div className="max-w-7xl mx-auto">
           {/* Main Content - rack panel */}
-          <main className="max-w-7xl mx-auto px-12 py-8">
+          <main className="max-w-7xl mx-auto px-4 md:px-8 py-6">
             {/* Header - VST Professional Typography */}
-            <header className="text-left mb-12">
+            <header className="text-left mb-8">
               <div>
                 <h1 className="text-2xl mb-2 tracking-tight font-sans uppercase leading-none">
                   <span className="text-cyan-400 font-light">LATHAM</span>
@@ -1133,7 +1133,6 @@ export default function App() {
               </div>
             </header>
 
-            <CreatorAboutStrip />
             <ProductNav />
 
             {/* Heritage Alert */}
@@ -1228,46 +1227,56 @@ export default function App() {
               onExportPresetChange={setExportPreset}
             />
 
-            {/* Mastering Workflow: INPUT → GEAR → OUTPUT */}
-            {inputAnalysis && (
-              <div 
-                className="relative border-2 rounded-lg p-6 mb-6"
-                style={{
-                  borderColor: '#2a2a2a',
-                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                  boxShadow: `
-                    inset 0 2px 4px rgba(0,0,0,0.6),
-                    inset 0 -1px 2px rgba(255,255,255,0.05),
-                    0 8px 16px rgba(0,0,0,0.5)
-                  `
-                }}
-              >
-                {/* Rack screws */}
-                {[0, 1, 2, 3].map((i) => (
-                  <div 
-                    key={i}
-                    className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                    style={{
-                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                    }}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-2 h-0.5 bg-zinc-900"></div>
-                    </div>
+            {/* Playback — primary beginner action (listen before tweaking) */}
+            <div 
+              className="relative border-2 rounded-lg p-6 mb-6"
+              style={{
+                borderColor: '#2a2a2a',
+                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
+                boxShadow: `
+                  inset 0 2px 4px rgba(0,0,0,0.6),
+                  inset 0 -1px 2px rgba(255,255,255,0.05),
+                  0 8px 16px rgba(0,0,0,0.5)
+                `
+              }}
+            >
+              {[0, 1, 2, 3].map((i) => (
+                <div 
+                  key={i}
+                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
+                  style={{
+                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
+                  }}
+                >
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-2 h-0.5 bg-zinc-900"></div>
                   </div>
-                ))}
+                </div>
+              ))}
 
-                <MasteringWorkflow
-                  inputAnalysis={inputAnalysis}
-                  circuitDrive={circuitDrive}
-                  logicMode={logicMode}
-                  gearProfile={gearProfile}
-                  targetLUFS={getExportPreset(exportPreset).lufs}
-                />
-              </div>
-            )}
+              <PlaybackControls
+                playbackState={playbackState}
+                onPlay={handlePlay}
+                onPause={handlePause}
+                onSeek={handleSeek}
+                onJumpTo={handleJumpTo}
+                bypassMode={bypassMode}
+                onBypassToggle={handleBypassToggle}
+                gainMatchEnabled={gainMatchEnabled}
+                onGainMatchToggle={() => setGainMatchEnabled((v) => !v)}
+                bypassGainMatchDB={bypassGainMatchDB}
+                onHqWaveformPreview={expertMode ? handleHqWaveformPreview : undefined}
+                originalBuffer={originalBuffer}
+                processedBuffer={processedBuffer}
+                isWaveformRendering={isWaveformRendering}
+                showGainTrace={!bypassMode}
+                gainReductionDB={gainReductionDB}
+                outputTrimDB={proDynamics.outputTrimDB}
+                getPlaybackTime={getPlaybackTime}
+              />
+            </div>
 
-            {/* Main Control Panel - single rack unit */}
+            {/* Core controls — warmth + dynamics mode */}
             <div 
               className="relative border-2 rounded-lg p-8 mb-6"
               style={{
@@ -1312,7 +1321,120 @@ export default function App() {
               </div>
             </div>
 
-            {/* Live output meters (compact) */}
+            {lastExportReport && lastExportReport.integratedLUFS !== -Infinity && (
+              <div
+                className={`mb-4 px-4 py-3 rounded-lg border text-sm font-mono ${
+                  lastExportReport.onTarget && lastExportReport.peakOk
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                }`}
+              >
+                Last export:{' '}
+                <strong>{lastExportReport.integratedLUFS.toFixed(1)} LUFS</strong> integrated
+                {' '}(target {lastExportReport.targetLUFS},{' '}
+                {lastExportReport.lufsDelta >= 0 ? '+' : ''}
+                {lastExportReport.lufsDelta.toFixed(1)} LU)
+                {' · '}
+                true peak {lastExportReport.truePeakDBTP.toFixed(1)} dBTP
+                {lastExportReport.ispDifference > 0.2 && (
+                  <span className="text-purple-400">
+                    {' '}(ISP +{lastExportReport.ispDifference.toFixed(1)} dB)
+                  </span>
+                )}
+                {lastExportStaging?.iterations != null && lastExportStaging.iterations > 1 && (
+                  <>
+                    {' · '}
+                    staged to {lastExportStaging.outputTrimDB >= 0 ? '+' : ''}
+                    {lastExportStaging.outputTrimDB.toFixed(1)} dB
+                  </>
+                )}
+                {lastExportReport.onTarget && lastExportReport.peakOk
+                  ? ' — passes quality gate'
+                  : ' — review levels before delivery'}
+              </div>
+            )}
+
+            {!expertMode && (
+              <div
+                className="relative border-2 rounded-lg p-6 mb-6"
+                style={{
+                  borderColor: '#2a2a2a',
+                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
+                }}
+              >
+                <div className="text-xs font-mono text-zinc-500 tracking-[0.3em] uppercase mb-2">
+                  Export
+                </div>
+                <p className="text-[10px] font-mono text-zinc-600 mb-4 max-w-xl">
+                  Uses your delivery target from Mix Setup ({getExportPreset(exportPreset).name},{' '}
+                  {getExportPreset(exportPreset).lufs} LUFS). Listen first, then download.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleExport(exportPreset)}
+                  disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
+                  className="w-full sm:w-auto px-6 py-3 rounded-lg font-mono text-sm uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: 'linear-gradient(180deg, #10b981, #059669)',
+                    color: '#fff',
+                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                  }}
+                >
+                  Download mastered WAV
+                </button>
+              </div>
+            )}
+
+            {/* Expert controls toggle */}
+            <div className="mb-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setExpertMode(prev => !prev)}
+                className="px-4 py-2 rounded-lg border border-zinc-700 bg-zinc-900 text-xs font-mono text-zinc-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
+              >
+                {expertMode ? '▲ Hide expert rack' : '▼ Expert: meters, tonal match, album export, EQ…'}
+              </button>
+            </div>
+
+            {expertMode && (
+              <>
+            {inputAnalysis && (
+              <div 
+                className="relative border-2 rounded-lg p-6 mb-6"
+                style={{
+                  borderColor: '#2a2a2a',
+                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
+                  boxShadow: `
+                    inset 0 2px 4px rgba(0,0,0,0.6),
+                    inset 0 -1px 2px rgba(255,255,255,0.05),
+                    0 8px 16px rgba(0,0,0,0.5)
+                  `
+                }}
+              >
+                {[0, 1, 2, 3].map((i) => (
+                  <div 
+                    key={i}
+                    className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
+                    style={{
+                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
+                    }}
+                  >
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-2 h-0.5 bg-zinc-900"></div>
+                    </div>
+                  </div>
+                ))}
+
+                <MasteringWorkflow
+                  inputAnalysis={inputAnalysis}
+                  circuitDrive={circuitDrive}
+                  logicMode={logicMode}
+                  gearProfile={gearProfile}
+                  targetLUFS={getExportPreset(exportPreset).lufs}
+                />
+              </div>
+            )}
+
             <div
               className="relative border-2 rounded-lg px-6 py-4 mb-6"
               style={{
@@ -1351,34 +1473,19 @@ export default function App() {
               </div>
             </div>
 
-            {isReady && (
-              <div className="mb-6">
-                <ReferenceMatchPanel
-                  userProfile={spectralProfile}
-                  referenceCurve={referenceCurve}
-                  matchingGains={previewMatchingGains}
-                  matchStrength={matchStrength}
-                  onMatchStrengthChange={setMatchStrength}
-                  onApplyMatching={handleApplyReferenceMatch}
-                  isAnalyzing={isSpectralAnalyzing}
-                  gearLabel={gearProfiles.find((p) => p.id === gearProfile)?.name}
-                />
-              </div>
-            )}
-
-            {/* Expert controls toggle */}
-            <div className="mb-6 flex justify-center">
-              <button
-                type="button"
-                onClick={() => setExpertMode(prev => !prev)}
-                className="px-4 py-2 rounded-lg border border-zinc-700 bg-zinc-900 text-xs font-mono text-zinc-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
-              >
-                {expertMode ? '▲ Hide expert rack' : '▼ Show expert rack (EQ, chain, meters…)'}
-              </button>
+            <div className="mb-6">
+              <ReferenceMatchPanel
+                userProfile={spectralProfile}
+                referenceCurve={referenceCurve}
+                matchingGains={previewMatchingGains}
+                matchStrength={matchStrength}
+                onMatchStrengthChange={setMatchStrength}
+                onApplyMatching={handleApplyReferenceMatch}
+                isAnalyzing={isSpectralAnalyzing}
+                gearLabel={gearProfiles.find((p) => p.id === gearProfile)?.name}
+              />
             </div>
 
-            {expertMode && (
-              <>
             {/* Meter Display - separate panel */}
             <div 
               className="relative border-2 rounded-lg p-8 mb-6"
@@ -1685,94 +1792,7 @@ export default function App() {
                 hasProcessedAudio={!!selectedFile && !!analysis}
               />
             </div>
-              </>
-            )}
 
-            {/* Audio Player with Real-Time Processing */}
-            <div 
-              className="relative border-2 rounded-lg p-6 mb-6"
-              style={{
-                borderColor: '#2a2a2a',
-                background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                boxShadow: `
-                  inset 0 2px 4px rgba(0,0,0,0.6),
-                  inset 0 -1px 2px rgba(255,255,255,0.05),
-                  0 8px 16px rgba(0,0,0,0.5)
-                `
-              }}
-            >
-              {/* Rack screws */}
-              {[0, 1, 2, 3].map((i) => (
-                <div 
-                  key={i}
-                  className={`absolute ${i < 2 ? 'top-3' : 'bottom-3'} ${i % 2 === 0 ? 'left-4' : 'right-4'} w-3 h-3 rounded-full bg-zinc-800 border border-zinc-700`}
-                  style={{
-                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-zinc-900"></div>
-                  </div>
-                </div>
-              ))}
-
-              <PlaybackControls
-                playbackState={playbackState}
-                onPlay={handlePlay}
-                onPause={handlePause}
-                onSeek={handleSeek}
-                onJumpTo={handleJumpTo}
-                bypassMode={bypassMode}
-                onBypassToggle={handleBypassToggle}
-                gainMatchEnabled={gainMatchEnabled}
-                onGainMatchToggle={() => setGainMatchEnabled((v) => !v)}
-                bypassGainMatchDB={bypassGainMatchDB}
-                onHqWaveformPreview={expertMode ? handleHqWaveformPreview : undefined}
-                originalBuffer={originalBuffer}
-                processedBuffer={processedBuffer}
-                isWaveformRendering={isWaveformRendering}
-                showGainTrace={!bypassMode}
-                gainReductionDB={gainReductionDB}
-                outputTrimDB={proDynamics.outputTrimDB}
-                getPlaybackTime={getPlaybackTime}
-              />
-            </div>
-            
-            {/* Last export quality report (BS.1770 verified) */}
-            {lastExportReport && lastExportReport.integratedLUFS !== -Infinity && (
-              <div
-                className={`mb-4 px-4 py-3 rounded-lg border text-sm font-mono ${
-                  lastExportReport.onTarget && lastExportReport.peakOk
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                    : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                }`}
-              >
-                Last export:{' '}
-                <strong>{lastExportReport.integratedLUFS.toFixed(1)} LUFS</strong> integrated
-                {' '}(target {lastExportReport.targetLUFS},{' '}
-                {lastExportReport.lufsDelta >= 0 ? '+' : ''}
-                {lastExportReport.lufsDelta.toFixed(1)} LU)
-                {' · '}
-                true peak {lastExportReport.truePeakDBTP.toFixed(1)} dBTP
-                {lastExportReport.ispDifference > 0.2 && (
-                  <span className="text-purple-400">
-                    {' '}(ISP +{lastExportReport.ispDifference.toFixed(1)} dB)
-                  </span>
-                )}
-                {lastExportStaging?.iterations != null && lastExportStaging.iterations > 1 && (
-                  <>
-                    {' · '}
-                    staged to {lastExportStaging.outputTrimDB >= 0 ? '+' : ''}
-                    {lastExportStaging.outputTrimDB.toFixed(1)} dB
-                  </>
-                )}
-                {lastExportReport.onTarget && lastExportReport.peakOk
-                  ? ' — passes quality gate'
-                  : ' — review levels before delivery'}
-              </div>
-            )}
-
-            {/* Export Panel */}
             <ExportPanel 
               onExport={handleExport} 
               disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
@@ -1788,6 +1808,10 @@ export default function App() {
             />
               </>
             )}
+              </>
+            )}
+
+            <CreatorAboutStrip variant="compact" />
           </main>
         </div>
       </div>

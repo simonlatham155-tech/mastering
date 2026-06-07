@@ -53,7 +53,9 @@ export function ReferenceMatchPanel({
 
       {!ready && (
         <div className="text-xs font-mono text-zinc-500 py-6 text-center border border-dashed border-zinc-800 rounded">
-          {isAnalyzing ? 'Analyzing spectral balance…' : 'Upload a track to analyze tonal balance'}
+          {isAnalyzing
+            ? 'Analyzing spectral balance…'
+            : 'Spectral balance will appear here after upload analysis completes.'}
         </div>
       )}
 
