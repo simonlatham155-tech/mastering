@@ -7,9 +7,10 @@ import { buildMasteringChain, buildOfflineMasteringChain, type MasteringChain } 
 import { encodeWavBlob } from '../utils/wav-encode';
 import {
   measureBufferLoudness,
-  measureBufferTruePeak,
   resolveIntegratedLUFS,
+  INPUT_ANALYSIS_MAX_SECONDS,
 } from '../utils/measure-buffer-loudness';
+import { measureTruePeakLinearDBTP } from '../utils/measure-buffer-true-peak';
 
 export interface AudioAnalysis {
   lufs: number;
@@ -173,10 +174,9 @@ export class AudioProcessor {
     const sampleRate = this.audioBuffer.sampleRate;
     const numChannels = this.audioBuffer.numberOfChannels;
 
-    const [loudness, peaks] = await Promise.all([
-      measureBufferLoudness(this.audioBuffer),
-      measureBufferTruePeak(this.audioBuffer),
-    ]);
+    const loudness = await measureBufferLoudness(this.audioBuffer, {
+      maxDurationSec: INPUT_ANALYSIS_MAX_SECONDS,
+    });
     
     // === CRITICAL FIX (2026-02-16): ACCURATE PEAK DETECTION ===
     // Peak must scan EVERY sample on ALL channels (not just channel 0 with step=10)
@@ -218,11 +218,8 @@ export class AudioProcessor {
     // Calculate Dynamic Range (simplified crest factor approach)
     const dynamicRange = 20 * Math.log10(truePeak / rms);
 
-    // Peak level in dBFS (prefer worklet digital peak when available)
-    const peakLevel =
-      Number.isFinite(peaks.digitalPeakDB) ? peaks.digitalPeakDB : 20 * Math.log10(truePeak);
-
-    const truePeakDBTP = peaks.truePeakDBTP;
+    const peakLevel = 20 * Math.log10(Math.max(truePeak, 1e-12));
+    const truePeakDBTP = measureTruePeakLinearDBTP(this.audioBuffer);
 
     // === SSL "AUTO" RELEASE - DUAL-INTEGRATOR CIRCUIT ===
     // Crest Factor: Peak-to-RMS ratio (measures transient vs. sustained content)
