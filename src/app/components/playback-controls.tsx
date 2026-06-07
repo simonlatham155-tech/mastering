@@ -20,8 +20,9 @@ interface PlaybackControlsProps {
   onJumpTo: (timeSeconds: number) => void;
   bypassMode?: boolean;
   onBypassToggle?: () => void;
-  originalBuffer?: AudioBuffer | null; // For waveform visualization
-  processedBuffer?: AudioBuffer | null; // For waveform visualization (placeholder)
+  originalBuffer?: AudioBuffer | null;
+  processedBuffer?: AudioBuffer | null;
+  isWaveformRendering?: boolean;
 }
 
 export function PlaybackControls({
@@ -34,6 +35,7 @@ export function PlaybackControls({
   onBypassToggle,
   originalBuffer,
   processedBuffer,
+  isWaveformRendering = false,
 }: PlaybackControlsProps) {
   const { isPlaying, currentTime, duration } = playbackState;
   
@@ -47,8 +49,8 @@ export function PlaybackControls({
   // Current buffer (bypass mode determines which one to show)
   // PATCH 2026-05-25: Show processed waveform when in processed mode (was always showing original)
   const currentBuffer = bypassMode
-    ? originalBuffer                                    // A/B = Original → show original waveform
-    : (processedBuffer || originalBuffer || null);      // A/B = Processed → show processed waveform (fallback to original if not rendered yet)
+    ? originalBuffer
+    : processedBuffer ?? null;
   
   // Handle slider change (while dragging)
   const handleSliderChange = (value: number[]) => {
@@ -213,7 +215,11 @@ export function PlaybackControls({
           />
           {!currentBuffer && (
             <div className="absolute inset-0 flex items-center justify-center text-xs text-white/40">
-              Loading waveform...
+              {!bypassMode && isWaveformRendering
+                ? 'Rendering mastered waveform…'
+                : bypassMode
+                  ? 'Loading original…'
+                  : 'Mastered waveform pending — play for live preview'}
             </div>
           )}
         </div>

@@ -456,12 +456,19 @@ export class AudioProcessor {
    * This is the high-quality offline render for final export.
    * Uses OfflineAudioContext with full oversampling and integrated LUFS.
    */
-  async renderExport(settings: ProcessingSettings, inputTrimDB?: number): Promise<AudioBuffer> {
+  async renderExport(
+    settings: ProcessingSettings,
+    inputTrimDB?: number,
+    options?: { forVisualization?: boolean }
+  ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
       throw new Error('No audio buffer loaded');
     }
 
-    console.log('💎 EXPORT MODE: Full quality offline render');
+    const forVisualization = options?.forVisualization ?? false;
+    console.log(forVisualization
+      ? '🎨 WAVEFORM PREVIEW: Full chain render (matches live preview)'
+      : '💎 EXPORT MODE: Full quality offline render');
 
     // Build processing plan
     const plan = resolveProcessingPlan({
@@ -472,7 +479,7 @@ export class AudioProcessor {
       userOverrides: settings.userOverrides
     });
 
-    // Determine minimal master mode
+    // Determine minimal master mode — skip for waveform viz (must match live preview)
     const inputLUFS = this.analysis?.lufs ?? -16;
     const inputPeakDBFS = this.analysis?.peakLevel ?? -1;
     const inputCrestDBFS = this.analysis?.crestFactor ?? 12;
@@ -482,7 +489,9 @@ export class AudioProcessor {
     const isHotPeaks = inputPeakDBFS >= -1.5;
     const isCompressed = inputCrestDBFS < 8.0;
     const isCloseToTarget = requiredLoudnessChange <= 3.0;
-    const useMinimalMaster = isHotPeaks && isCompressed && isCloseToTarget;
+    const useMinimalMaster = forVisualization
+      ? false
+      : isHotPeaks && isCompressed && isCloseToTarget;
 
     // Create OfflineAudioContext for full track
     const sampleRate = this.audioBuffer.sampleRate;
@@ -495,13 +504,13 @@ export class AudioProcessor {
       sampleRate
     );
 
-    // Build mastering chain (export quality)
+    // Build mastering chain (export quality for download, preview for waveform viz)
     const chain = buildMasteringChain({
       context: offlineContext,
       destination: offlineContext.destination,
       params: plan,
       settings,
-      quality: 'export',
+      quality: forVisualization ? 'preview' : 'export',
       useMinimalMaster,
       inputTrimDB,
       inputLUFS: this.analysis?.lufs ?? -16,

@@ -90,6 +90,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
   const [processedBuffer, setProcessedBuffer] = useState<AudioBuffer | null>(null);
   const [originalBuffer, setOriginalBuffer] = useState<AudioBuffer | null>(null);
+  const [isWaveformRendering, setIsWaveformRendering] = useState(false);
   const [meterValues, setMeterValues] = useState({ peak: 0, lra: 0 });
   const [heritageProfile, setHeritageProfile] = useState<HeritageProfile>('none');
   
@@ -177,6 +178,7 @@ export default function App() {
       setShowHeritageAlert(false);
       setAnalysis(null);
       setProcessedBuffer(null);
+      setIsWaveformRendering(false);
       setMeterValues({ peak: 0, lra: 0 });
     }
   }, [selectedFile]);
@@ -299,11 +301,14 @@ export default function App() {
       // Re-render processed waveform in background for visualization
       (async () => {
         try {
-          const waveformBuffer = await audioProcessor.renderExport(settings, inputTrimDB);
+          setIsWaveformRendering(true);
+          const waveformBuffer = await audioProcessor.renderExport(settings, inputTrimDB, { forVisualization: true });
           setProcessedBuffer(waveformBuffer);
           console.log('🎨 Processed waveform updated after settings change');
         } catch (err) {
           console.warn('Waveform re-render failed (non-critical):', err);
+        } finally {
+          setIsWaveformRendering(false);
         }
       })();
     };
@@ -417,12 +422,15 @@ export default function App() {
       
       (async () => {
         try {
+          setIsWaveformRendering(true);
           console.log('🎨 Generating processed waveform for visualization...');
-          const waveformBuffer = await audioProcessor.renderExport(settings, inputTrimDB);
+          const waveformBuffer = await audioProcessor.renderExport(settings, inputTrimDB, { forVisualization: true });
           setProcessedBuffer(waveformBuffer);
           console.log('🎨 Processed waveform ready for visualization');
         } catch (err) {
           console.warn('Waveform render failed (non-critical):', err);
+        } finally {
+          setIsWaveformRendering(false);
         }
       })();
       
@@ -489,6 +497,7 @@ export default function App() {
     setAIRecommendation(null);
     setAnalysis(null);
     setProcessedBuffer(null);
+    setIsWaveformRendering(false);
     setOriginalBuffer(null);
     setMeterValues({ peak: 0, lra: 0 });
   };
@@ -1124,6 +1133,7 @@ export default function App() {
                 onBypassToggle={handleBypassToggle}
                 originalBuffer={originalBuffer}
                 processedBuffer={processedBuffer}
+                isWaveformRendering={isWaveformRendering}
               />
             </div>
             
