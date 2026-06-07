@@ -45,6 +45,7 @@ import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-pane
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
 import { buildExportQualityReport } from './utils/measure-buffer-loudness';
 import { renderExportWithAutoStaging } from './services/export-auto-staging';
+import { renderWaveformPreviewWithAutoStaging } from './services/waveform-preview-staging';
 import { computeStagingTrimStep } from './utils/auto-staging';
 import { PlaybackControls } from './components/playback-controls';
 import { CreatorAboutStrip } from './components/creator-about-strip';
@@ -119,6 +120,8 @@ export default function App() {
   // Real-time audio player (processes audio live during playback - NO pre-rendering!)
   const realtimePlayerRef = useRef<RealtimeAudioPlayer | null>(null);
   const waveformRenderGenRef = useRef(0);
+  const waveformSkipTrimRerenderRef = useRef(false);
+  const waveformDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
   const [bypassMode, setBypassMode] = useState(false); // A/B comparison: false = processed, true = original
   const [expertMode, setExpertMode] = useState(false);
@@ -134,18 +137,38 @@ export default function App() {
     const generation = ++waveformRenderGenRef.current;
     setIsWaveformRendering(true);
 
+    const preset = getExportPreset(exportPreset);
+    const ceilingDBTP = limiterCeilingOverride ?? preset.ceiling;
+
     (async () => {
       try {
-        const waveformBuffer = await audioProcessor.renderWaveformPreview(
+        const previewResult = await renderWaveformPreviewWithAutoStaging(
           settings,
           effectiveInputTrimDB,
-          45,
-          limiterCeilingOverride,
-          proDynamics.outputTrimDB,
-          proDynamics.sslGlue
+          {
+            limiterCeilingOverride,
+            sslGlue: proDynamics.sslGlue,
+            initialOutputTrimDB: proDynamics.outputTrimDB,
+            targetLUFS: preset.lufs,
+            ceilingDBTP,
+            autoStage: proDynamics.autoStageOnExport,
+          }
         );
         if (generation !== waveformRenderGenRef.current) return;
-        setProcessedBuffer(waveformBuffer);
+        setProcessedBuffer(previewResult.buffer);
+
+        // Input headroom trim lowers level pre-chain; sync compensating output trim to live + UI.
+        if (previewResult.staged && proDynamics.autoStageOnExport) {
+          waveformSkipTrimRerenderRef.current = true;
+          setProDynamics((prev) => ({
+            ...prev,
+            outputTrimDB: previewResult.outputTrimDB,
+          }));
+          realtimePlayerRef.current?.updateParameter(
+            'outputTrim',
+            previewResult.outputTrimDB
+          );
+        }
       } catch (err) {
         if (generation !== waveformRenderGenRef.current) return;
         console.warn('Waveform preview failed (non-critical):', err);
@@ -442,6 +465,54 @@ export default function App() {
     proDynamics.monoBassHz,
     proDynamics.sslGlue,
     analysis,
+  ]);
+
+  // Re-render waveform when EQ / trim sliders move (live audio updates instantly; viz needs a pass).
+  useEffect(() => {
+    if (!analysis || !realtimePlayerRef.current) return;
+
+    if (waveformSkipTrimRerenderRef.current) {
+      waveformSkipTrimRerenderRef.current = false;
+      return;
+    }
+
+    if (waveformDebounceRef.current) {
+      clearTimeout(waveformDebounceRef.current);
+    }
+
+    waveformDebounceRef.current = setTimeout(() => {
+      const ctx = buildProcessingContext({
+        gearProfile,
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments,
+        proDynamics,
+      });
+      startWaveformPreviewRender(buildAppProcessingSettings(ctx));
+    }, 400);
+
+    return () => {
+      if (waveformDebounceRef.current) {
+        clearTimeout(waveformDebounceRef.current);
+      }
+    };
+  }, [
+    analysis,
+    gearProfile,
+    exportPreset,
+    logicMode,
+    circuitDrive,
+    profileAdjustments.lowShelfBoost,
+    profileAdjustments.midRangeAdjust,
+    profileAdjustments.highShelfBoost,
+    profileAdjustments.stereoWidth,
+    effectiveInputTrimDB,
+    proDynamics.outputTrimDB,
+    proDynamics.inputTrimDB,
+    proDynamics.autoStageOnExport,
+    proDynamics.sslGlue,
+    proDynamics.limiterCeilingDBTP,
   ]);
 
   const applyRecommendationToState = (recommendation: AIMasteringRecommendation) => {
