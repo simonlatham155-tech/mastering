@@ -158,6 +158,9 @@ export function ProfileAdjustmentsPanel({ adjustments, onChange }: ProfileAdjust
           <div className="text-xs font-mono text-amber-500/60 uppercase tracking-wider mb-2">
             Saturation
           </div>
+          <p className="text-[10px] font-mono text-zinc-600 mb-2">
+            Rebuilds the chain when changed (transformer/tape drive).
+          </p>
           <div>
             <div className="flex justify-between items-baseline mb-1">
               <span className="text-sm font-mono text-orange-400">{adjustments.saturationAmount}%</span>

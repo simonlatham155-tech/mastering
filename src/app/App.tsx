@@ -23,10 +23,10 @@ import { InterSamplePeakMeter } from './components/inter-sample-peak-meter';
 import { AdvancedCompressorControls, AdvancedCompressorSettings } from './components/advanced-compressor-controls';
 import { AudioPlayer } from './components/audio-player';
 import { ProfileAdjustmentsPanel, ProfileAdjustments } from './components/profile-adjustments';
-import { getGenrePreset } from './data/genre-presets';
 import { getExportPreset } from './data/export-presets';
 import {
   appliedRecommendationFromAI,
+  applyProfileAdjustmentsToPlayer,
   buildAppProcessingPlan,
   buildAppProcessingSettings,
   type AppProcessingContext,
@@ -278,20 +278,16 @@ export default function App() {
   useEffect(() => {
     const player = realtimePlayerRef.current;
     if (!player) return;
-    
-    const genre = getGenrePreset(gearProfile);
-    if (!genre) return;
-    
-    // EQ: genre default + slider offset (slider 0 = genre default, +3 = genre + 3dB)
-    player.updateParameter('lowShelfGain', genre.biases.bassTilt + profileAdjustments.lowShelfBoost);
-    player.updateParameter('midRangeGain', genre.biases.mudCut + profileAdjustments.midRangeAdjust);
-    player.updateParameter('highShelfGain', genre.biases.airTilt + profileAdjustments.highShelfBoost);
-    
-    // Stereo Width: genre default + offset (50% = genre default, 0% = -0.3, 100% = +0.3)
-    const widthOffset = (profileAdjustments.stereoWidth - 50) / 100 * 0.6;
-    player.updateParameter('stereoWidth', genre.biases.width + widthOffset);
-  }, [profileAdjustments.lowShelfBoost, profileAdjustments.midRangeAdjust, 
-      profileAdjustments.highShelfBoost, profileAdjustments.stereoWidth, gearProfile]);
+
+    applyProfileAdjustmentsToPlayer(player, gearProfile, profileAdjustments);
+  }, [
+    profileAdjustments.lowShelfBoost,
+    profileAdjustments.midRangeAdjust,
+    profileAdjustments.highShelfBoost,
+    profileAdjustments.stereoWidth,
+    profileAdjustments.saturationAmount,
+    gearProfile,
+  ]);
   
   // Logic Mode / Genre / Export Preset → full chain rebuild (changes DSP topology)
   // Uses a ref to track previous values so we only rebuild on actual changes,
@@ -326,7 +322,8 @@ export default function App() {
       const plan = buildAppProcessingPlan(ctx);
       const settings = buildAppProcessingSettings(ctx);
       
-      player.rebuildChain(settings, plan, bypassMode, inputTrimDB, false, measuredInputLUFS);
+      await player.rebuildChain(settings, plan, bypassMode, inputTrimDB, false, measuredInputLUFS);
+      applyProfileAdjustmentsToPlayer(player, gearProfile, profileAdjustments);
       console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
       
       // Re-render processed waveform in background for visualization
@@ -334,7 +331,14 @@ export default function App() {
     };
     
     rebuildAsync();
-  }, [logicMode, gearProfile, exportPreset, circuitDrive, analysis]);
+  }, [
+    logicMode,
+    gearProfile,
+    exportPreset,
+    circuitDrive,
+    profileAdjustments.saturationAmount,
+    analysis,
+  ]);
 
   const applyRecommendationToState = (recommendation: AIMasteringRecommendation) => {
     const applied = appliedRecommendationFromAI(recommendation);
@@ -559,6 +563,7 @@ export default function App() {
     const settings = buildAppProcessingSettings(ctx);
     
     await realtimePlayerRef.current.play(settings, plan, bypassMode, inputTrimDB, false, measuredInputLUFS);
+    applyProfileAdjustmentsToPlayer(realtimePlayerRef.current, gearProfile, profileAdjustments);
   };
   
   const handlePause = () => {
