@@ -19,7 +19,7 @@
  * - Genre multipliers baked into config
  */
 
-import type { QualityMode } from '../quality-profiles';
+import type { QualityMode } from '../../data/quality-profiles';
 import { tapeCompFromPreGainDB, dbToLinear, linearToDb, getCompProfile, smoothParam } from './stage-utils';
 
 export type TapeConfig = {

@@ -30,6 +30,7 @@ import type { ProcessingSettings } from './audio-processor';
 import type { QualityMode } from '../data/quality-profiles';
 import { buildTransformerStage, getTransformerConfig } from './stages/transformer-stage';
 import { buildTapeStage, getTapeConfig } from './stages/tape-stage';
+import { buildMultibandStage } from './stages/multiband-stage';
 import { smoothParam } from './stages/stage-utils';
 
 // Re-export types
@@ -42,6 +43,7 @@ export interface MasteringChainConfig {
   settings: ProcessingSettings;
   quality: QualityMode;
   useMinimalMaster: boolean;
+  dryBypass?: boolean;
   inputTrimDB?: number; // Auto input trim (negative = attenuate). Applied before any processing.
 }
 
@@ -197,7 +199,7 @@ const LOUDNESS_STYLE_PARAMS: Record<string, LoudnessStyleParams> = {
  * 6. Limiter (peak management + loudness targeting — loudnessStyle controls behavior)
  */
 export function buildMasteringChain(config: MasteringChainConfig): MasteringChain {
-  const { context, destination, params, settings, quality, useMinimalMaster, inputTrimDB } = config;
+  const { context, destination, params, settings, quality, useMinimalMaster, dryBypass = false, inputTrimDB } = config;
   
   const loudnessStyle = params.genreBehavior.loudnessStyle;
   const styleParams = LOUDNESS_STYLE_PARAMS[loudnessStyle] || LOUDNESS_STYLE_PARAMS.balanced;
@@ -249,6 +251,24 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   // Track nodes for cleanup
   const nodesToDispose: AudioNode[] = [chainInput, chainOutput];
   
+  // === DRY BYPASS (A/B original) ===
+  if (dryBypass) {
+    chainInput.connect(chainOutput);
+    chainOutput.connect(destination);
+    console.log('✅ Mastering chain: DRY BYPASS (original audio)');
+
+    return {
+      input: chainInput,
+      output: chainOutput,
+      parameters,
+      dispose: () => {
+        nodesToDispose.forEach(node => {
+          try { node.disconnect(); } catch (e) { /* ignore */ }
+        });
+      }
+    };
+  }
+
   // PREVIEW/EXPORT PARITY: No quality-dependent DSP behavior.
   // Only oversampling factor changes (handled inside each stage).
   // Multiband, SSL, limiter, look-ahead — all identical in both modes.
@@ -359,18 +379,13 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
 
 /**
  * STAGE 3: Multiband Processing
- * TODO: Port full implementation from audio-processor.ts
  */
 function createMultibandStage(
   context: BaseAudioContext,
   settings: ProcessingSettings,
   quality: QualityMode
 ): { input: AudioNode; output: AudioNode } {
-  const input = context.createGain();
-  const output = context.createGain();
-  input.connect(output);
-  console.warn('   ⚠️  Multiband stage is a passthrough (TODO: port full implementation)');
-  return { input, output };
+  return buildMultibandStage(context, settings, quality);
 }
 
 /**

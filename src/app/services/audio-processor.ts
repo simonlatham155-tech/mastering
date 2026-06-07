@@ -340,13 +340,13 @@ export class AudioProcessor {
 
     // Build chain if not already built (or if settings changed)
     if (!this.realtimeChain) {
-      console.log('🔧 Building real-time mastering chain (draft quality)');
+      console.log('🔧 Building real-time mastering chain (preview quality)');
       this.realtimeChain = buildMasteringChain({
         context: this.audioContext,
         destination: this.audioContext.destination,
         params: plan,
         settings,
-        quality: 'draft',
+        quality: 'preview',
         useMinimalMaster,
       });
     }
@@ -587,7 +587,7 @@ export class AudioProcessor {
       destination: offlineContext.destination,
       params: plan,
       settings,
-      quality: 'draft', // Use draft quality for preview
+      quality: 'preview', // Preview quality for realtime monitoring
       useMinimalMaster,
     });
 

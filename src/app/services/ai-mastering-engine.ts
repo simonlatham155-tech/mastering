@@ -111,6 +111,15 @@ export class AIMasteringEngine {
     }
 
     // BASS MUSIC (dubstep, dnb, trap, future bass)
+    if (
+      genre.includes('drum & bass') ||
+      genre.includes('drum and bass') ||
+      genre.includes('dnb') ||
+      (genre.includes('drum') && genre.includes('bass'))
+    ) {
+      return 'dnb';
+    }
+
     if (genre.includes('dubstep') || bass > 50) {
       if (tempo > 160) return 'dnb'; // Fast, sub-bass
       if (mids > 40) return 'dubstep'; // Wobble clarity
@@ -118,9 +127,9 @@ export class AIMasteringEngine {
       return 'trap'; // 808 dominance
     }
 
-    if (genre.includes('drum') || genre.includes('dnb') || genre.includes('bass')) {
+    if (genre.includes('drum') || genre.includes('bass')) {
       if (tempo > 160) return 'dnb';
-      if (bass > 45) return 'trap';
+      if (bass > 45 && !genre.includes('drum')) return 'trap';
       return 'futurebass';
     }
 
