@@ -1,0 +1,66 @@
+From 857b77e78f13caf230eba730865ae8c3dd403d7a Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 8 Jun 2026 19:12:25 +0000
+Subject: [PATCH] Fix JUCE playhead API compatibility for Xcode build
+
+Use CurrentPositionInfo instead of Optional PositionInfo accessors that
+fail to compile when JUCE module versions return plain bool/double types.
+---
+ Source/PluginProcessor.cpp | 34 +++++++++++++---------------------
+ 1 file changed, 13 insertions(+), 21 deletions(-)
+
+diff --git a/Source/PluginProcessor.cpp b/Source/PluginProcessor.cpp
+index c8f3b15..92b90c5 100644
+--- a/Source/PluginProcessor.cpp
++++ b/Source/PluginProcessor.cpp
+@@ -206,34 +206,26 @@ void RhythmicSpaceAudioProcessor::updateHostTransportState()
+ 
+     if (auto* playHead = getPlayHead())
+     {
+-        if (auto position = playHead->getPosition())
++        juce::AudioPlayHead::CurrentPositionInfo pos;
++
++        if (playHead->getCurrentPosition (pos))
+         {
+-            if (position->getBpm().hasValue())
++            if (pos.bpm > 0.0 && pos.bpm != bpm.load())
+             {
+-                const double hostBpm = *position->getBpm();
+-
+-                if (hostBpm != bpm.load())
+-                {
+-                    bpm.store(hostBpm);
+-                    stepSequencer.setBPM(hostBpm);
+-                }
++                bpm.store(pos.bpm);
++                stepSequencer.setBPM(pos.bpm);
+             }
+ 
+-            if (position->getIsPlaying().hasValue())
+-                playing.store(*position->getIsPlaying());
++            playing.store(pos.isPlaying);
+ 
+-            if (position->getPpqPosition().hasValue())
+-            {
+-                const double hostPpq = *position->getPpqPosition();
+-                const bool hostPlaying = playing.load();
+-                const bool hostJumped = lastHostPpq < 0.0
+-                                     || std::abs(hostPpq - lastHostPpq) > 0.25;
++            const double hostPpq = pos.ppqPosition;
++            const bool hostJumped = lastHostPpq < 0.0
++                                 || std::abs(hostPpq - lastHostPpq) > 0.25;
+ 
+-                if (hostPlaying || hostJumped)
+-                    stepSequencer.syncToHostPpq(hostPpq);
++            if (pos.isPlaying || hostJumped)
++                stepSequencer.syncToHostPpq(hostPpq);
+ 
+-                lastHostPpq = hostPpq;
+-            }
++            lastHostPpq = hostPpq;
+         }
+     }
+ }
+-- 
+2.43.0
+
