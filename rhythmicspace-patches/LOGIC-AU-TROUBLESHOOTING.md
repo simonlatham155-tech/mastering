@@ -169,9 +169,11 @@ Confirm type in Info.plist: `"type" => "aumf"`.
 
 **Pass** on the first section = macOS can see and open the plugin.
 
+**Initialize: -10868** on a Release build = bus layout code issue. Apply patch `0007`, rebuild Release, reinstall.
+
 **Initialize: -10868** with JUCE leak-detector messages = you installed a **Debug** build. Rebuild **Release**, copy again, and revalidate.
 
-**Fail** at open = note the error and rebuild with the latest code (see patch `0006`).
+**Fail** at open = note the error and rebuild with the latest code (see patches `0006` and `0007`).
 
 ## 6. Remove old duplicates
 
