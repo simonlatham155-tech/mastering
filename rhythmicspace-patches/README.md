@@ -58,3 +58,27 @@ git push -u origin cursor/fix-production-readiness-a9cf
 1. Build **Release** in Xcode (open `RhythmicSpace.jucer` → Save and Open in IDE)
 2. Smoke-test in Logic or Reaper (session recall, SYNC, presets)
 3. Tag **v1.0.1** and update GitHub releases when ready
+
+---
+
+## Website redesign (download page)
+
+Redesigned `docs/index.html` to match the Latham Audio promotional style — dark navy layout, cyan accents, plugin UI mockup, feature grid, and download CTA with VST3 / AU / Standalone links.
+
+### Quick apply
+
+```bash
+cd /path/to/RhythmicSpace
+bash /path/to/mastering/rhythmicspace-patches/apply-website.sh
+```
+
+Opens PR branch `cursor/website-redesign-a9cf` → `main`.
+
+### Manual copy
+
+Copy `rhythmicspace-patches/docs/index.html` to `docs/index.html` in your RhythmicSpace repo and commit.
+
+### Live preview
+
+After merge, GitHub Pages updates at:
+https://simonlatham155-tech.github.io/RhythmicSpace/
