@@ -21,9 +21,13 @@ Then quit Logic, reopen, and **Reset & Rescan Selection**.
 
 ### B. Run validation in Terminal (shows the real error)
 
+Rhythmic Space registers as **`aumf`** (MIDI-controlled effect), not `aufx`:
+
 ```bash
-auval -v aufx Rysp Ltha
+auval -v aumf Rysp Ltha
 ```
+
+Using `aufx` by mistake produces a false "didn't find the component" error even when the plugin is installed correctly.
 
 If you see:
 ```
@@ -74,12 +78,33 @@ In Projucer/Xcode:
 4. Build (⌘B)
 5. Reinstall:
 
+Build Release from Terminal (reliable):
+
 ```bash
-cp -R ~/Documents/GitHub/RhythmicSpace/Builds/MacOSX/build/Release/RhythmicSpace.component \
-      ~/Library/Audio/Plug-Ins/Components/
+cd ~/Documents/GitHub/RhythmicSpace/Builds/MacOSX
+xcodebuild -scheme "RhythmicSpace - AU" -configuration Release build
+```
+
+Find the built component (path varies by Xcode version):
+
+```bash
+find ~/Documents/GitHub/RhythmicSpace/Builds/MacOSX/build -name "RhythmicSpace.component" 2>/dev/null
+find ~/Library/Developer/Xcode/DerivedData/RhythmicSpace-*/Build/Products/Release -name "RhythmicSpace.component" 2>/dev/null
+```
+
+Install (replace `SOURCE` with the path found above):
+
+```bash
+rm -rf ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component
+cp -R SOURCE ~/Library/Audio/Plug-Ins/Components/
 codesign --force --deep --sign - ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component
 xattr -cr ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component
+killall -9 AudioComponentRegistrar
 ```
+
+**Important:** Building in Xcode does not auto-install. You must copy the `.component` into `~/Library/Audio/Plug-Ins/Components/` yourself.
+
+Use **`~/Library`** (your user folder), not `/Library` (system folder).
 
 ---
 
@@ -104,11 +129,11 @@ If you built from source, make sure you built the **AU** scheme, not just VST3:
 2. In Xcode, select scheme **RhythmicSpace - AU**
 3. Set configuration to **Release**
 4. Build (⌘B)
-5. Copy the built component:
+5. Copy the built component (find path first — may be `build/Release`, `build/Debug`, or DerivedData):
 
 ```bash
-cp -R ~/Documents/GitHub/RhythmicSpace/Builds/MacOSX/build/Release/RhythmicSpace.component \
-      ~/Library/Audio/Plug-Ins/Components/
+find ~/Documents/GitHub/RhythmicSpace/Builds/MacOSX/build -name "RhythmicSpace.component" 2>/dev/null
+cp -R /path/from/find/above ~/Library/Audio/Plug-Ins/Components/
 ```
 
 ## 3. Remove macOS quarantine (downloaded zips)
@@ -130,19 +155,23 @@ xattr -cr ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component
 
 ## 5. Validate the AU in Terminal
 
-Run Apple's AU validator:
+Run Apple's AU validator with the correct type code:
 
 ```bash
-auval -v aufx Rysp Ltha
+auval -v aumf Rysp Ltha
 ```
 
-- `aufx` = audio effect
+- `aumf` = MIDI-controlled music effect (Rhythmic Space uses this because of MIDI Learn)
 - `Rysp` = plugin code
 - `Ltha` = manufacturer code
 
-**Pass** = plugin is valid; Logic should load it after a rescan.
+Confirm type in Info.plist: `"type" => "aumf"`.
 
-**Fail** = note the error and rebuild with the latest code (see patch `0006`).
+**Pass** on the first section = macOS can see and open the plugin.
+
+**Initialize: -10868** with JUCE leak-detector messages = you installed a **Debug** build. Rebuild **Release**, copy again, and revalidate.
+
+**Fail** at open = note the error and rebuild with the latest code (see patch `0006`).
 
 ## 6. Remove old duplicates
 
