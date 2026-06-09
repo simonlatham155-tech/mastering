@@ -1,7 +1,7 @@
 From 75e8674cb8ecf3f5e6dcc4c44fe32d0a12931c18 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 9 Jun 2026 15:49:12 +0000
-Subject: [PATCH] Redesign download page to match Latham Audio promotional
+Subject: [PATCH 1/2] Redesign download page to match Latham Audio promotional
  style
 
 - Dark navy layout with cyan accents and ambient glows
@@ -1074,6 +1074,89 @@ index b625e45..d9b419e 100644
  
  </body>
  </html>
+-- 
+2.43.0
+
+
+From b8f7335422175ecab30a5675532dd3b0f4dfd2b9 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 9 Jun 2026 15:50:35 +0000
+Subject: [PATCH 2/2] Clarify free VST3 and AU component downloads
+
+---
+ docs/index.html | 30 ++++++++++++++++++++++--------
+ 1 file changed, 22 insertions(+), 8 deletions(-)
+
+diff --git a/docs/index.html b/docs/index.html
+index d9b419e..7f0cd5c 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -4,7 +4,7 @@
+     <meta charset="UTF-8">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+     <title>LATHAM AUDIO — Rhythmic Space</title>
+-    <meta name="description" content="Rhythmic Space — step sequencer multi-effect processor. Move, shape, transform your sound in motion.">
++    <meta name="description" content="Rhythmic Space — free VST3 & AU component for macOS. Step sequencer multi-effect processor. Move, shape, transform your sound in motion.">
+     <link rel="preconnect" href="https://fonts.googleapis.com">
+     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+@@ -479,6 +479,20 @@
+             margin-top: 2px;
+         }
+ 
++        .free-badge {
++            display: inline-block;
++            font-size: 9px;
++            font-weight: 700;
++            letter-spacing: 0.1em;
++            text-transform: uppercase;
++            color: #000;
++            background: var(--green);
++            padding: 2px 6px;
++            border-radius: 4px;
++            margin-right: 6px;
++            vertical-align: middle;
++        }
++
+         .site-link {
+             display: inline-block;
+             margin-top: 16px;
+@@ -660,8 +674,8 @@
+         </div>
+ 
+         <div class="availability">
+-            <p class="available-now">Available Now</p>
+-            <p class="formats">VST3 · AU · Standalone</p>
++            <p class="available-now">Free · Available Now</p>
++            <p class="formats">VST3 · AU Component · Standalone</p>
+             <p class="sys-req">macOS 10.13+ · Intel &amp; Apple Silicon</p>
+             <svg class="waveform-deco" viewBox="0 0 200 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                 <path d="M0 20 Q10 5 20 20 T40 20 T60 20 T80 20 T100 20 T120 20 T140 20 T160 20 T180 20 T200 20" stroke="#00c8f0" stroke-width="1.5" fill="none"/>
+@@ -675,19 +689,19 @@
+                     <path d="M12 5v14M5 12l7 7 7-7"/>
+                 </svg>
+             </div>
+-            <h3>Demo Available</h3>
+-            <p class="sub">Try Rhythmic Space and discover new rhythms.</p>
++            <h3>Free Download</h3>
++            <p class="sub">Free VST3 &amp; AU component for macOS. No registration, no trial limits.</p>
+             <div class="download-links">
+                 <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-VST3-macOS-v1.0.0.zip" class="dl-btn">
+-                    Download VST3
++                    <span class="free-badge">Free</span> VST3 Plugin
+                     <span class="format">Ableton, Cubase, Reaper · ~10 MB</span>
+                 </a>
+                 <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-AU-macOS-v1.0.0.zip" class="dl-btn">
+-                    Download Audio Unit
++                    <span class="free-badge">Free</span> AU Component
+                     <span class="format">Logic Pro, GarageBand · ~10 MB</span>
+                 </a>
+                 <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-Standalone-macOS-v1.0.0.zip" class="dl-btn">
+-                    Download Standalone
++                    <span class="free-badge">Free</span> Standalone App
+                     <span class="format">No DAW required · ~10 MB</span>
+                 </a>
+             </div>
 -- 
 2.43.0
 
