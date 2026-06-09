@@ -2,6 +2,65 @@
 
 If the **AU component** doesn't show up or won't load in Logic, work through these steps in order.
 
+## "Couldn't be opened" + blank validation window
+
+If Logic's Plug-in Manager shows **RhythmicSpace** but Compatibility says **"couldn't be opened"**, and the Audio Unit Validation Result window is **empty/blank**, the AU binary is failing to load before validation can run. This is different from a normal validation error.
+
+Work through these steps **in this order**:
+
+### A. Code-sign the component (most common fix for local Xcode builds)
+
+Unsigned local builds often show exactly this error in Logic:
+
+```bash
+codesign --force --deep --sign - ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component
+xattr -cr ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component
+```
+
+Then quit Logic, reopen, and **Reset & Rescan Selection**.
+
+### B. Run validation in Terminal (shows the real error)
+
+```bash
+auval -v aufx Rysp Ltha
+```
+
+If this crashes or prints `FATAL` / `OPEN (-50)`, note the output. A silent crash confirms the binary won't load.
+
+### C. Check architecture matches your Mac
+
+```bash
+lipo -info ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component/Contents/MacOS/RhythmicSpace
+```
+
+- Apple Silicon Mac → needs **arm64** (or universal arm64+x86_64)
+- If it only shows **x86_64**, rebuild in Xcode with **Any Mac (Apple Silicon, Intel)** selected
+
+### D. Rebuild with the AU bus fix (patch 0006)
+
+Your v1.0.1 build may include an extra disabled "MIDI In" bus that breaks AU loading in Logic. Apply the fix and rebuild:
+
+```bash
+cd ~/Documents/GitHub/RhythmicSpace
+git am ~/Documents/GitHub/mastering/rhythmicspace-patches/0006-Fix-Logic-AU-validation.patch
+```
+
+In Projucer/Xcode:
+1. Open `RhythmicSpace.jucer` → **Save and Open in IDE**
+2. Scheme: **RhythmicSpace - AU**
+3. Configuration: **Release**
+4. Build (⌘B)
+5. Reinstall:
+
+```bash
+cp -R ~/Documents/GitHub/RhythmicSpace/Builds/MacOSX/build/Release/RhythmicSpace.component \
+      ~/Library/Audio/Plug-Ins/Components/
+codesign --force --deep --sign - ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component
+xattr -cr ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component
+```
+
+---
+
 ## 1. Confirm you installed the AU (not VST3)
 
 Logic uses the **Audio Unit** format only — not VST3.
