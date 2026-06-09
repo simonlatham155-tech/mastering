@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LATHAM AUDIO — Rhythmic Space</title>
+    <meta name="description" content="Rhythmic Space — step sequencer multi-effect processor. Move, shape, transform your sound in motion.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #080c12;
+            --bg-mid: #0d1219;
+            --surface: #141a24;
+            --surface2: #1a2230;
+            --border: #2a3548;
+            --cyan: #00c8f0;
+            --cyan-dim: rgba(0, 200, 240, 0.15);
+            --cyan-glow: rgba(0, 200, 240, 0.35);
+            --text: #f0f2f5;
+            --text-dim: #8a95a8;
+            --orange: #f5a623;
+            --green: #4cd964;
+            --purple: #b07cff;
+            --blue: #5ac8fa;
+            --yellow: #ffd60a;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.5;
+        }
+
+        /* Ambient glow */
+        body::before,
+        body::after {
+            content: '';
+            position: fixed;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body::before {
+            width: 700px;
+            height: 700px;
+            top: -200px;
+            right: -100px;
+            background: radial-gradient(circle, rgba(0, 200, 240, 0.12) 0%, transparent 70%);
+        }
+
+        body::after {
+            width: 500px;
+            height: 500px;
+            bottom: 0;
+            left: -150px;
+            background: radial-gradient(circle, rgba(0, 200, 240, 0.08) 0%, transparent 70%);
+        }
+
+        .page {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 32px 60px;
+        }
+
+        /* Header */
+        .intro {
+            font-size: 11px;
+            letter-spacing: 0.35em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 48px;
+        }
+
+        .intro span { color: var(--text); }
+
+        /* Hero grid */
+        .hero {
+            display: grid;
+            grid-template-columns: 1fr 1.1fr;
+            gap: 48px;
+            align-items: start;
+            margin-bottom: 56px;
+        }
+
+        .hero-title {
+            font-size: clamp(42px, 5.5vw, 68px);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            line-height: 0.95;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .hero-title .space { color: var(--cyan); }
+
+        .hero-sub {
+            font-size: 13px;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 28px;
+        }
+
+        .hero-tagline {
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--cyan);
+            margin-bottom: 16px;
+        }
+
+        .hero-desc {
+            font-size: 15px;
+            color: var(--text-dim);
+            max-width: 420px;
+            line-height: 1.7;
+            margin-bottom: 36px;
+        }
+
+        /* Feature icons row */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+        }
+
+        .feature {
+            text-align: center;
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            background: var(--cyan-dim);
+            color: var(--cyan);
+        }
+
+        .feature-icon svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .feature h3 {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .feature p {
+            font-size: 11px;
+            color: var(--text-dim);
+            line-height: 1.4;
+        }
+
+        /* Plugin mockup */
+        .plugin-mock {
+            background: linear-gradient(145deg, #1a2030 0%, #12161f 100%);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow:
+                0 0 60px rgba(0, 200, 240, 0.15),
+                0 24px 48px rgba(0, 0, 0, 0.5);
+            position: relative;
+        }
+
+        .plugin-mock::before {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, rgba(0, 200, 240, 0.2), transparent 50%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .plugin-inner {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            grid-template-columns: 1fr 140px;
+            gap: 12px;
+        }
+
+        .plugin-toolbar {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+
+        .plugin-btn {
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 5px 12px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text-dim);
+        }
+
+        .plugin-btn.play { color: var(--green); border-color: rgba(76, 217, 100, 0.3); }
+        .plugin-btn.rand {
+            background: linear-gradient(135deg, #00a8cc, var(--cyan));
+            color: #000;
+            border: none;
+        }
+
+        .lanes {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .lane {
+            display: grid;
+            grid-template-columns: 72px 1fr;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .lane-label {
+            font-size: 8px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            text-align: right;
+        }
+
+        .steps {
+            display: flex;
+            gap: 3px;
+            height: 28px;
+            align-items: flex-end;
+        }
+
+        .step {
+            flex: 1;
+            border-radius: 2px;
+            min-height: 4px;
+            opacity: 0.85;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding-left: 8px;
+            border-left: 1px solid var(--border);
+        }
+
+        .ctrl-group {
+            background: var(--surface);
+            border-radius: 6px;
+            padding: 6px 8px;
+        }
+
+        .ctrl-label {
+            font-size: 7px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 4px;
+        }
+
+        .knob-row {
+            display: flex;
+            gap: 6px;
+            justify-content: center;
+        }
+
+        .knob {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 2px solid var(--border);
+            background: radial-gradient(circle at 30% 30%, #2a3548, #1a2230);
+            position: relative;
+        }
+
+        .knob::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 50%;
+            width: 2px;
+            height: 5px;
+            background: var(--cyan);
+            transform: translateX(-50%);
+            border-radius: 1px;
+        }
+
+        /* Bottom section */
+        .bottom {
+            display: grid;
+            grid-template-columns: 1fr 1fr 280px;
+            gap: 32px;
+            align-items: end;
+        }
+
+        .perfect-for h4,
+        .availability h4 {
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 12px;
+        }
+
+        .genres {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 0;
+            font-size: 13px;
+            color: var(--text);
+        }
+
+        .genres span:not(:last-child)::after {
+            content: '·';
+            color: var(--cyan);
+            margin: 0 10px;
+        }
+
+        .quote {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--cyan);
+            border-radius: 0 8px 8px 0;
+            padding: 20px 24px;
+            margin-top: 24px;
+        }
+
+        .quote p {
+            font-size: 14px;
+            font-style: italic;
+            color: var(--text);
+            line-height: 1.6;
+            margin-bottom: 8px;
+        }
+
+        .quote cite {
+            font-size: 11px;
+            font-style: normal;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        .availability {
+            text-align: center;
+            position: relative;
+        }
+
+        .waveform-deco {
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 40px;
+            opacity: 0.3;
+        }
+
+        .available-now {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--cyan);
+            margin-bottom: 8px;
+        }
+
+        .formats {
+            font-size: 12px;
+            color: var(--text-dim);
+            margin-bottom: 4px;
+        }
+
+        .sys-req {
+            font-size: 11px;
+            color: var(--text-dim);
+        }
+
+        /* Download CTA */
+        .download-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px 24px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .download-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 16px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #00a8cc, var(--cyan));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 30px var(--cyan-glow);
+        }
+
+        .download-icon svg {
+            width: 28px;
+            height: 28px;
+            color: #000;
+        }
+
+        .download-box h3 {
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--cyan);
+            margin-bottom: 8px;
+        }
+
+        .download-box .sub {
+            font-size: 13px;
+            color: var(--text-dim);
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .download-links {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .dl-btn {
+            display: block;
+            padding: 12px 16px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+        }
+
+        .dl-btn:hover {
+            border-color: var(--cyan);
+            background: var(--cyan-dim);
+            box-shadow: 0 0 20px var(--cyan-glow);
+        }
+
+        .dl-btn .format {
+            display: block;
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--text-dim);
+            margin-top: 2px;
+        }
+
+        .site-link {
+            display: inline-block;
+            margin-top: 16px;
+            font-size: 13px;
+            color: var(--cyan);
+            text-decoration: none;
+            letter-spacing: 0.05em;
+        }
+
+        .site-link:hover { text-decoration: underline; }
+
+        footer {
+            text-align: center;
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-dim);
+        }
+
+        footer a {
+            color: var(--cyan);
+            text-decoration: none;
+        }
+
+        footer a:hover { text-decoration: underline; }
+
+        @media (max-width: 960px) {
+            .hero {
+                grid-template-columns: 1fr;
+            }
+
+            .plugin-mock { order: -1; }
+
+            .bottom {
+                grid-template-columns: 1fr;
+            }
+
+            .features {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 520px) {
+            .page { padding: 24px 16px 40px; }
+
+            .features {
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+            }
+
+            .plugin-inner {
+                grid-template-columns: 1fr;
+            }
+
+            .controls {
+                flex-direction: row;
+                flex-wrap: wrap;
+                border-left: none;
+                border-top: 1px solid var(--border);
+                padding-left: 0;
+                padding-top: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="page">
+
+    <p class="intro"><span>LATHAM AUDIO</span> &nbsp;|&nbsp; INTRODUCING</p>
+
+    <section class="hero">
+        <div class="hero-left">
+            <h1 class="hero-title">Rhythmic <span class="space">Space</span></h1>
+            <p class="hero-sub">Step Sequencer Multi-Effect Processor</p>
+            <p class="hero-tagline">Move. Shape. Transform. Your sound in motion.</p>
+            <p class="hero-desc">Five independent effect lanes — Filter, Delay, Reverb, Pan, and Volume — each driven by a 16-step sequencer. Lock to your DAW tempo, randomize patterns, and turn static effects into living, breathing movement.</p>
+
+            <div class="features">
+                <div class="feature">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="12" width="3" height="8" rx="1"/><rect x="8" y="8" width="3" height="12" rx="1"/><rect x="13" y="4" width="3" height="16" rx="1"/><rect x="18" y="10" width="3" height="10" rx="1"/></svg>
+                    </div>
+                    <h3>Step Sequencer</h3>
+                    <p>16-step patterns per effect lane</p>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12c2-4 4-6 6-6s4 2 6 6-4 6-6 6-4-2-6-6z"/><path d="M14 12c2-4 4-6 6-6s4 2 6 6-4 6-6 6-4-2-6-6z"/></svg>
+                    </div>
+                    <h3>Multi-Effect Engine</h3>
+                    <p>Filter, delay, reverb, pan &amp; volume</p>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+                    </div>
+                    <h3>BPM Sync</h3>
+                    <p>Lock to host tempo automatically</p>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="16" cy="8" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="8" cy="16" r="1" fill="currentColor"/><circle cx="16" cy="16" r="1" fill="currentColor"/></svg>
+                    </div>
+                    <h3>Randomize</h3>
+                    <p>Instant creative inspiration</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="plugin-mock" aria-hidden="true">
+            <div class="plugin-inner">
+                <div class="plugin-toolbar">
+                    <span class="plugin-btn play">Play</span>
+                    <span class="plugin-btn">Stop</span>
+                    <span class="plugin-btn rand">Randomize</span>
+                </div>
+
+                <div class="lanes">
+                    <div class="lane">
+                        <span class="lane-label">Filter Cutoff</span>
+                        <div class="steps" id="lane-filter"></div>
+                    </div>
+                    <div class="lane">
+                        <span class="lane-label">Pan</span>
+                        <div class="steps" id="lane-pan"></div>
+                    </div>
+                    <div class="lane">
+                        <span class="lane-label">Delay</span>
+                        <div class="steps" id="lane-delay"></div>
+                    </div>
+                    <div class="lane">
+                        <span class="lane-label">Reverb</span>
+                        <div class="steps" id="lane-reverb"></div>
+                    </div>
+                    <div class="lane">
+                        <span class="lane-label">Volume</span>
+                        <div class="steps" id="lane-volume"></div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <div class="ctrl-group">
+                        <div class="ctrl-label">Preset</div>
+                        <div class="knob-row"><div class="knob"></div></div>
+                    </div>
+                    <div class="ctrl-group">
+                        <div class="ctrl-label">Filter</div>
+                        <div class="knob-row"><div class="knob"></div><div class="knob"></div><div class="knob"></div></div>
+                    </div>
+                    <div class="ctrl-group">
+                        <div class="ctrl-label">Delay</div>
+                        <div class="knob-row"><div class="knob"></div><div class="knob"></div></div>
+                    </div>
+                    <div class="ctrl-group">
+                        <div class="ctrl-label">MIDI</div>
+                        <div class="knob-row"><div class="knob"></div><div class="knob"></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bottom">
+        <div class="perfect-for">
+            <h4>Perfect For</h4>
+            <div class="genres">
+                <span>Electronic Music</span>
+                <span>Sound Design</span>
+                <span>Live Performance</span>
+                <span>Beat Production</span>
+                <span>Ambient</span>
+            </div>
+            <blockquote class="quote">
+                <p>"Rhythmic Space turns static effects into living, breathing movement."</p>
+                <cite>— Latham Audio</cite>
+            </blockquote>
+        </div>
+
+        <div class="availability">
+            <p class="available-now">Available Now</p>
+            <p class="formats">VST3 · AU · Standalone</p>
+            <p class="sys-req">macOS 10.13+ · Intel &amp; Apple Silicon</p>
+            <svg class="waveform-deco" viewBox="0 0 200 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M0 20 Q10 5 20 20 T40 20 T60 20 T80 20 T100 20 T120 20 T140 20 T160 20 T180 20 T200 20" stroke="#00c8f0" stroke-width="1.5" fill="none"/>
+                <path d="M0 25 Q10 35 20 25 T40 25 T60 25 T80 25 T100 25 T120 25 T140 25 T160 25 T180 25 T200 25" stroke="#00c8f0" stroke-width="1" fill="none" opacity="0.5"/>
+            </svg>
+        </div>
+
+        <div class="download-box">
+            <div class="download-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 5v14M5 12l7 7 7-7"/>
+                </svg>
+            </div>
+            <h3>Demo Available</h3>
+            <p class="sub">Try Rhythmic Space and discover new rhythms.</p>
+            <div class="download-links">
+                <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-VST3-macOS-v1.0.0.zip" class="dl-btn">
+                    Download VST3
+                    <span class="format">Ableton, Cubase, Reaper · ~10 MB</span>
+                </a>
+                <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-AU-macOS-v1.0.0.zip" class="dl-btn">
+                    Download Audio Unit
+                    <span class="format">Logic Pro, GarageBand · ~10 MB</span>
+                </a>
+                <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-Standalone-macOS-v1.0.0.zip" class="dl-btn">
+                    Download Standalone
+                    <span class="format">No DAW required · ~10 MB</span>
+                </a>
+            </div>
+            <a href="https://lathamaudio.com" class="site-link">lathamaudio.com</a>
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2025 Latham Audio · <a href="https://github.com/simonlatham155-tech/RhythmicSpace">Source on GitHub</a></p>
+    </footer>
+
+</div>
+
+<script>
+    const laneColors = {
+        filter: ['#f5a623', '#e8912d', '#f5a623', '#cc7a1a', '#f5a623', '#ffbe4d', '#e8912d', '#f5a623', '#cc7a1a', '#f5a623', '#ffbe4d', '#e8912d', '#f5a623', '#cc7a1a', '#f5a623', '#ffbe4d'],
+        pan:    ['#5ac8fa', '#4ab8e8', '#5ac8fa', '#3aa8d8', '#5ac8fa', '#6ad8ff', '#4ab8e8', '#5ac8fa', '#3aa8d8', '#5ac8fa', '#6ad8ff', '#4ab8e8', '#5ac8fa', '#3aa8d8', '#5ac8fa', '#6ad8ff'],
+        delay:  ['#4cd964', '#3cc954', '#4cd964', '#2cb944', '#4cd964', '#5ce974', '#3cc954', '#4cd964', '#2cb944', '#4cd964', '#5ce974', '#3cc954', '#4cd964', '#2cb944', '#4cd964', '#5ce974'],
+        reverb: ['#b07cff', '#a06cef', '#b07cff', '#905cdf', '#b07cff', '#c08cff', '#a06cef', '#b07cff', '#905cdf', '#b07cff', '#c08cff', '#a06cef', '#b07cff', '#905cdf', '#b07cff', '#c08cff'],
+        volume: ['#ffd60a', '#efc60a', '#ffd60a', '#dfb60a', '#ffd60a', '#ffe61a', '#efc60a', '#ffd60a', '#dfb60a', '#ffd60a', '#ffe61a', '#efc60a', '#ffd60a', '#dfb60a', '#ffd60a', '#ffe61a']
+    };
+
+    const laneHeights = {
+        filter: [60, 80, 45, 90, 55, 70, 40, 85, 50, 75, 65, 95, 48, 72, 58, 88],
+        pan:    [50, 70, 85, 40, 65, 90, 55, 75, 45, 80, 60, 95, 50, 70, 85, 42],
+        delay:  [70, 45, 80, 55, 90, 40, 75, 60, 85, 50, 95, 45, 70, 65, 80, 55],
+        reverb: [40, 65, 75, 50, 85, 60, 90, 45, 70, 55, 80, 50, 95, 40, 75, 60],
+        volume: [85, 60, 45, 90, 55, 70, 40, 80, 50, 95, 65, 45, 75, 55, 90, 48]
+    };
+
+    Object.entries(laneColors).forEach(([name, colors]) => {
+        const container = document.getElementById('lane-' + name);
+        const heights = laneHeights[name];
+        colors.forEach((color, i) => {
+            const step = document.createElement('div');
+            step.className = 'step';
+            step.style.background = color;
+            step.style.height = heights[i] + '%';
+            container.appendChild(step);
+        });
+    });
+</script>
+
+</body>
+</html>
