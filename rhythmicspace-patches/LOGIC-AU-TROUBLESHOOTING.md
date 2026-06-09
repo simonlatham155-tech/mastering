@@ -25,7 +25,29 @@ Then quit Logic, reopen, and **Reset & Rescan Selection**.
 auval -v aufx Rysp Ltha
 ```
 
-If this crashes or prints `FATAL` / `OPEN (-50)`, note the output. A silent crash confirms the binary won't load.
+If you see:
+```
+ERROR: Cannot get Component's Name strings
+ERROR: Error from retrieving Component Version: -50
+FATAL ERROR: didn't find the component
+```
+
+macOS **cannot see your AU in its registry at all**. The bundle is missing, incomplete, or unreadable — not a DSP bug.
+
+Run the full diagnostic script:
+```bash
+bash ~/Documents/GitHub/mastering/rhythmicspace-patches/diagnose-au.sh
+```
+
+Or check manually:
+```bash
+# Is it registered?
+auval -a | grep -i Ltha
+
+# Is the bundle complete?
+ls ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component/Contents/MacOS/
+plutil -p ~/Library/Audio/Plug-Ins/Components/RhythmicSpace.component/Contents/Info.plist | grep AudioComponents
+```
 
 ### C. Check architecture matches your Mac
 
