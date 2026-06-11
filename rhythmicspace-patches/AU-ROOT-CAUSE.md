@@ -41,6 +41,18 @@ With `aumf` + stereo I/O buses, **JUCE 8.0.x** can report `AUChannelInfo` that d
 
 VST3 works because VST3 uses a completely different format path with no AU type registration.
 
+Internet research (JUCE forums, Stack Overflow, vendor docs) confirms this pattern — see **`AU-INTERNET-RESEARCH.md`** for full citations. Notable threads:
+
+- [Wrong AUChannelInfo in JUCE 8](https://forum.juce.com/t/br-wrong-auchannelinfo-reported-for-some-bus-layout-combinations/66725) — wildcard `[-1, 2]` layouts cause Initialize `-10868` (fix merged to JUCE develop Aug 2025; may not be in 8.0.13)
+- [kAudioUnitErr_FormatNotSupported](https://stackoverflow.com/questions/9153772/why-do-i-get-the-kaudiouniterr-formatnotsupported-10868-error) — stream format / channel count mismatch
+- [Logic AU type + channel config](https://forum.juce.com/t/logic-requiring-a-sidechain-input-failed-to-load-audio-unit/34685) — wrong type + bus topology → `ValidFormat InvalidFormat`
+
+### MIDI Learn tradeoff (important)
+
+`aumf` is required for Logic to route **live MIDI** (notes/CC) into an effect’s `processBlock` on many setups. `aufx` loads on **audio tracks** but Logic may not deliver external MIDI to a plain audio insert.
+
+**Priority:** fix Initialize `-10868` first with `aufx` so Logic can open the plugin. Then test MIDI Learn; if needed in Logic, use the instrument-track + sidechain workflow documented in `AU-INTERNET-RESEARCH.md`, or revisit `aumf` after upgrading JUCE past the `AUChannelInfo` fix.
+
 ## The fix (one coherent change)
 
 ### Projucer (`RhythmicSpace.jucer`)

@@ -51,6 +51,10 @@ auval -v aufx Rysp Ltha
 - `auval` FIRST TIME: no `Initialize: -10868`
 - Logic: **Audio FX → LATHAMAUDIO → Rhythmic Space** loads
 
+## After it loads — test MIDI Learn
+
+`aufx` fixes Logic loading on **audio tracks**. Logic may not send live MIDI CC to a standard audio insert (that is why the plugin was originally `aumf`). See **`AU-INTERNET-RESEARCH.md`** for the Logic sidechain workflow if MIDI Learn does not respond on an audio track.
+
 ## Or apply patch
 
 ```bash

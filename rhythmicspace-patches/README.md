@@ -82,3 +82,15 @@ Copy `rhythmicspace-patches/docs/index.html` to `docs/index.html` in your Rhythm
 
 After merge, GitHub Pages updates at:
 https://simonlatham155-tech.github.io/RhythmicSpace/
+
+---
+
+## Logic AU fix (-10868 Initialize)
+
+If Logic shows **"couldn't be opened"** and `auval` fails FIRST TIME with **-10868**:
+
+1. Read **`AU-ROOT-CAUSE.md`** — why `aumf` + channel config fails
+2. Read **`AU-INTERNET-RESEARCH.md`** — forum citations and MIDI tradeoff
+3. Apply **`0008-Fix-AU-type-aufx-definitive.patch`** (or follow **`AU-FIX-ONCE.md`**)
+4. Validate: `auval -v aufx Rysp Ltha` (not `aumf`)
+5. Run **`diagnose-au.sh`** if still stuck
