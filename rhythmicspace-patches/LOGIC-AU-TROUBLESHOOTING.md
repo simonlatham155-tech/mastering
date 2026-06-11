@@ -1,5 +1,7 @@
 # Rhythmic Space — Logic Pro AU Troubleshooting
 
+**Start here if you see Initialize -10868:** read `AU-ROOT-CAUSE.md` and apply `0008-Fix-AU-type-aufx-definitive.patch` or follow `AU-FIX-ONCE.md`. The plugin must be **`aufx` (Effect)**, not **`aumf` (Music Effect)**.
+
 If the **AU component** doesn't show up or won't load in Logic, work through these steps in order.
 
 ## "Couldn't be opened" + blank validation window
