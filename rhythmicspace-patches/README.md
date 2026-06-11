@@ -85,7 +85,20 @@ https://simonlatham155-tech.github.io/RhythmicSpace/
 
 ---
 
-## Logic AU fix (-10868 Initialize)
+## Complete AU + MIDI Learn fix
+
+**Read `AU-COMPLETE-FIX.md` first** — the full solution:
+
+1. Upgrade JUCE to **`develop`** (AUChannelInfo fix, Aug 2025)
+2. Projucer: **Plugin wants MIDI input** ON + **Music Effect (`aumf`)**
+3. Release build → `auval -v aumf Rysp Ltha`
+4. Logic: AU MIDI-controlled Effects + sidechain; Ableton: MIDI From on track
+
+Patches: `0009` (stuck popup), `0011` (aumf + learn fix)
+
+---
+
+## Logic AU fix (-10868 Initialize) — legacy notes
 
 If Logic shows **"couldn't be opened"** and `auval` fails FIRST TIME with **-10868**:
 
