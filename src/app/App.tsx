@@ -138,6 +138,9 @@ export default function App() {
   const uploadGenRef = useRef(0);
   const waveformRenderGenRef = useRef(0);
   const waveformSkipTrimRerenderRef = useRef(false);
+  const waveformSkipTonalMatchRerenderRef = useRef(false);
+  const skipChainPreviewOnceRef = useRef(false);
+  const waveformPreviewScheduleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const waveformDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
   const [bypassMode, setBypassMode] = useState(false); // A/B comparison: false = processed, true = original
@@ -256,6 +259,30 @@ export default function App() {
     originalBuffer,
   ]);
 
+  /** Coalesce rapid preview requests (upload + tonal match + chain rebuild) into one render. */
+  const scheduleWaveformPreviewRender = useCallback(
+    (
+      settings: ReturnType<typeof buildAppProcessingSettings>,
+      options?: { hq?: boolean; immediate?: boolean }
+    ) => {
+      if (waveformPreviewScheduleRef.current) {
+        clearTimeout(waveformPreviewScheduleRef.current);
+        waveformPreviewScheduleRef.current = null;
+      }
+
+      if (options?.immediate) {
+        startWaveformPreviewRender(settings, options);
+        return;
+      }
+
+      waveformPreviewScheduleRef.current = setTimeout(() => {
+        waveformPreviewScheduleRef.current = null;
+        startWaveformPreviewRender(settings, options);
+      }, 750);
+    },
+    [startWaveformPreviewRender]
+  );
+
   const syncPlaybackGainOptions = useCallback(() => {
     const player = realtimePlayerRef.current;
     if (!player) return;
@@ -344,24 +371,8 @@ export default function App() {
       if (player) {
         applyProfileAdjustmentsToPlayer(player, gearProfile, nextProfile);
       }
-
-      const ctx = buildProcessingContext({
-        gearProfile,
-        exportPreset,
-        logicMode,
-        circuitDrive,
-        profileAdjustments: nextProfile,
-        proDynamics,
-      });
-      startWaveformPreviewRender(buildAppProcessingSettings(ctx));
     },
-    [
-      gearProfile,
-      exportPreset,
-      logicMode,
-      circuitDrive,
-      proDynamics,
-    ]
+    [gearProfile]
   );
 
   const handleApplyReferenceMatch = useCallback(
@@ -381,6 +392,7 @@ export default function App() {
     }
 
     referenceMatchDebounceRef.current = setTimeout(() => {
+      waveformSkipTonalMatchRerenderRef.current = true;
       handleApplyReferenceMatch(matchStrength);
     }, matchStrength === 0 ? 0 : 300);
 
@@ -665,8 +677,12 @@ export default function App() {
       applyProfileAdjustmentsToPlayer(player, gearProfile, profileAdjustments);
       applyProDynamicsToPlayer(player, proDynamics, autoInputTrimDB);
       console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
-      
-      startWaveformPreviewRender(settings);
+
+      if (skipChainPreviewOnceRef.current) {
+        skipChainPreviewOnceRef.current = false;
+      } else {
+        scheduleWaveformPreviewRender(settings);
+      }
     };
     
     rebuildAsync();
@@ -691,6 +707,11 @@ export default function App() {
       return;
     }
 
+    if (waveformSkipTonalMatchRerenderRef.current) {
+      waveformSkipTonalMatchRerenderRef.current = false;
+      return;
+    }
+
     if (waveformDebounceRef.current) {
       clearTimeout(waveformDebounceRef.current);
     }
@@ -704,7 +725,7 @@ export default function App() {
         profileAdjustments,
         proDynamics,
       });
-      startWaveformPreviewRender(buildAppProcessingSettings(ctx));
+      scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx));
     }, 400);
 
     return () => {
@@ -906,8 +927,9 @@ export default function App() {
       console.log('   No pre-rendering! Instant start! 🚀');
       
       toast.success('⚡ Preview ready — hit play for live mastering');
-      
-      startWaveformPreviewRender(settings);
+
+      skipChainPreviewOnceRef.current = true;
+      scheduleWaveformPreviewRender(settings);
       
       // Set up playback state polling
       const pollInterval = setInterval(() => {
@@ -1223,7 +1245,10 @@ export default function App() {
       proDynamics,
     });
     toast.info('Rendering HQ waveform preview (export quality, ~45s)…');
-    startWaveformPreviewRender(buildAppProcessingSettings(ctx), { hq: true });
+    scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx), {
+      hq: true,
+      immediate: true,
+    });
   };
 
   // Rebuild bypass path when Gain Match toggles during playback
