@@ -42,7 +42,7 @@ import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-pane
 import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
 import { buildExportQualityReport } from './utils/measure-buffer-loudness';
 import { preloadLufsMeterWorkletScript } from './services/lufs-meter-worklet';
-import { preloadFaustLimiterFactory } from './services/faust-limiter';
+import { preloadFaustLimiterFactory, faustVendorModuleUrl } from './services/faust-limiter';
 import {
   computeAutoInputTrimDB,
   masterExportFilename,
@@ -110,7 +110,16 @@ function syncProfileAdjustmentsForGear(
 export default function App() {
   useEffect(() => {
     preloadLufsMeterWorkletScript();
-    void preloadFaustLimiterFactory().catch(() => undefined);
+    const vendorUrl = faustVendorModuleUrl();
+    if (!document.querySelector(`link[rel="modulepreload"][href="${vendorUrl}"]`)) {
+      const link = document.createElement('link');
+      link.rel = 'modulepreload';
+      link.href = vendorUrl;
+      document.head.appendChild(link);
+    }
+    void preloadFaustLimiterFactory().catch((err) => {
+      console.warn('[Faust] Preload failed (FIR fallback will be used):', err);
+    });
   }, []);
 
   const [circuitDrive, setCircuitDrive] = useState(50);

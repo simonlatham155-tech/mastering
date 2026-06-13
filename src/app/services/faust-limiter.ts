@@ -29,19 +29,33 @@ function faustLimiterBaseUrl(): string {
   return `${base}faust/compiled/limiter/`;
 }
 
-function faustVendorUrl(): string {
-  const base = import.meta.env.BASE_URL || '/';
-  return `${base}vendor/faustwasm.js`;
+/** Absolute module URL — required for dynamic import on GitHub Pages subpaths. */
+export function faustVendorModuleUrl(): string {
+  const path = `${import.meta.env.BASE_URL || '/'}vendor/faustwasm.js`.replace(
+    /([^:]\/)\/+/g,
+    '$1'
+  );
+  if (typeof window !== 'undefined') {
+    return new URL(path, window.location.href).href;
+  }
+  return path;
 }
 
 async function loadFaustRuntime(): Promise<FaustWasmRuntime> {
   if (!runtimePromise) {
     runtimePromise = (async () => {
-      const mod = (await import(/* @vite-ignore */ faustVendorUrl())) as FaustWasmRuntime;
-      if (!mod.FaustWasmInstantiator || !mod.FaustMonoDspGenerator) {
-        throw new Error('Faust vendor bundle missing exports');
+      const url = faustVendorModuleUrl();
+      try {
+        const mod = (await import(/* @vite-ignore */ url)) as FaustWasmRuntime;
+        if (!mod.FaustWasmInstantiator || !mod.FaustMonoDspGenerator) {
+          throw new Error('Faust vendor bundle missing exports');
+        }
+        return mod;
+      } catch (err) {
+        runtimePromise = null;
+        console.error(`[Faust] Vendor runtime failed to load from ${url}`, err);
+        throw err;
       }
-      return mod;
     })();
   }
   return runtimePromise;
@@ -55,12 +69,17 @@ export function preloadFaustLimiterFactory(): Promise<LooseFaustDspFactory> {
 export async function loadFaustLimiterFactory(): Promise<LooseFaustDspFactory> {
   if (!factoryPromise) {
     factoryPromise = (async () => {
-      const { FaustWasmInstantiator } = await loadFaustRuntime();
-      const base = faustLimiterBaseUrl();
-      return FaustWasmInstantiator.loadDSPFactory(
-        `${base}dsp-module.wasm`,
-        `${base}dsp-meta.json`
-      );
+      try {
+        const { FaustWasmInstantiator } = await loadFaustRuntime();
+        const base = faustLimiterBaseUrl();
+        return FaustWasmInstantiator.loadDSPFactory(
+          `${base}dsp-module.wasm`,
+          `${base}dsp-meta.json`
+        );
+      } catch (err) {
+        factoryPromise = null;
+        throw err;
+      }
     })();
   }
   return factoryPromise;
@@ -93,13 +112,21 @@ export async function createFaustLimiterNode(
   const generator = new FaustMonoDspGenerator();
   generator.factory = factory;
 
+  // OfflineAudioContext: ScriptProcessor avoids AudioWorklet registration failures.
+  const offline =
+    typeof OfflineAudioContext !== 'undefined' &&
+    context instanceof OfflineAudioContext;
+  const processorName = offline
+    ? 'latham-faust-limiter-offline'
+    : 'latham-faust-limiter';
+
   const node = await generator.createNode(
     context,
     'Latham True Peak Limiter',
     factory,
-    false,
+    offline,
     1024,
-    'latham-faust-limiter'
+    processorName
   );
 
   if (!node) {
