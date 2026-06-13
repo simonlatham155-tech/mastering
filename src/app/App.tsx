@@ -53,6 +53,7 @@ import {
   runBatchAlbumExport,
 } from './services/batch-export';
 import { batchZipFilename } from './utils/master-export-utils';
+import { deliverBlobToUser, tryAutoDownloadBlob } from './utils/blob-download';
 import { renderWaveformPreviewWithAutoStaging } from './services/waveform-preview-staging';
 import { computeBypassGainMatchDB } from './utils/gain-match';
 import { computeStagingTrimStep } from './utils/auto-staging';
@@ -185,6 +186,11 @@ export default function App() {
   const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
   const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
   const [isBatchExporting, setIsBatchExporting] = useState(false);
+  const [pendingDownload, setPendingDownload] = useState<{
+    blob: Blob;
+    filename: string;
+    label: string;
+  } | null>(null);
   const [batchExportProgress, setBatchExportProgress] = useState<{
     index: number;
     total: number;
@@ -1001,11 +1007,26 @@ export default function App() {
     setMixSetup(null);
   };
 
+  const registerPendingDownload = useCallback((blob: Blob, filename: string, label: string) => {
+    tryAutoDownloadBlob(blob, filename);
+    setPendingDownload({ blob, filename, label });
+  }, []);
+
+  const saveFileToastAction = useCallback((blob: Blob, filename: string) => ({
+    label: 'Save file',
+    onClick: () => {
+      void deliverBlobToUser(blob, filename, {
+        mimeType: blob.type || 'application/octet-stream',
+      });
+    },
+  }), []);
+
   const handleClearFile = () => {
     uploadGenRef.current += 1;
     setSelectedFile(null);
     setIsProcessing(false);
     setIsExporting(false);
+    setPendingDownload(null);
     setShowHeritageAlert(false);
     setInputAnalysis(null);
     setMixSetup(null);
@@ -1067,14 +1088,8 @@ export default function App() {
         }));
       }
 
-      const url = URL.createObjectURL(exportResult.wavBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = masterExportFilename(selectedFile.name, presetId);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const filename = masterExportFilename(selectedFile.name, presetId);
+      registerPendingDownload(exportResult.wavBlob, filename, `${presetId.toUpperCase()} master`);
 
       const stageNote = exportResult.staged
         ? ` · auto-staged ${exportResult.outputTrimDB >= 0 ? '+' : ''}${exportResult.outputTrimDB.toFixed(1)} dB (${exportResult.iterations} pass${exportResult.iterations > 1 ? 'es' : ''})`
@@ -1085,22 +1100,30 @@ export default function App() {
           ? `${report.integratedLUFS.toFixed(1)} LUFS integrated`
           : 'LUFS measure pending';
 
+      const saveHint = ' If download did not start, click Save file.';
+      const saveAction = saveFileToastAction(exportResult.wavBlob, filename);
+
       if (report.onTarget && report.peakOk) {
         toast.success(
-          `${presetId.toUpperCase()} master exported — ${lufsStr}, true peak ${report.truePeakDBTP.toFixed(1)} dBTP (on target)${stageNote}`
+          `${presetId.toUpperCase()} master exported — ${lufsStr}, true peak ${report.truePeakDBTP.toFixed(1)} dBTP (on target)${stageNote}.${saveHint}`,
+          { action: saveAction, duration: 20000 }
         );
       } else if (!report.peakOk) {
         toast.warning(
-          `${presetId.toUpperCase()} exported — ${lufsStr}. True peak ${report.truePeakDBTP.toFixed(1)} dBTP exceeds ceiling ${preset.ceiling} dBTP.${stageNote}`
+          `${presetId.toUpperCase()} exported — ${lufsStr}. True peak ${report.truePeakDBTP.toFixed(1)} dBTP exceeds ceiling ${preset.ceiling} dBTP.${stageNote}${saveHint}`,
+          { action: saveAction, duration: 20000 }
         );
       } else {
         toast.success(
-          `${presetId.toUpperCase()} exported — ${lufsStr} (target ${preset.lufs}, Δ ${report.lufsDelta >= 0 ? '+' : ''}${report.lufsDelta.toFixed(1)} LU)${stageNote}`
+          `${presetId.toUpperCase()} exported — ${lufsStr} (target ${preset.lufs}, Δ ${report.lufsDelta >= 0 ? '+' : ''}${report.lufsDelta.toFixed(1)} LU)${stageNote}.${saveHint}`,
+          { action: saveAction, duration: 20000 }
         );
       }
     } catch (error) {
       console.error('Export failed:', error);
-      toast.error('Failed to export audio');
+      const detail =
+        error instanceof Error && error.message ? `: ${error.message}` : '';
+      toast.error(`Failed to export audio${detail}`);
     } finally {
       setIsExporting(false);
     }
@@ -1148,22 +1171,19 @@ export default function App() {
       }
 
       const zipBlob = await batchResultsToZip(summary.rows, batchZipFilename(exportPreset));
-      const url = URL.createObjectURL(zipBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = batchZipFilename(exportPreset);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const zipName = batchZipFilename(exportPreset);
+      registerPendingDownload(zipBlob, zipName, 'Album ZIP');
+      const zipSaveAction = saveFileToastAction(zipBlob, zipName);
 
       if (failed.length > 0) {
         toast.warning(
-          `ZIP ready: ${ok.length}/${files.length} tracks · ${failed.length} failed (see manifest.json in ZIP)`
+          `ZIP ready: ${ok.length}/${files.length} tracks · ${failed.length} failed (see manifest.json in ZIP). If download did not start, click Save file.`,
+          { action: zipSaveAction, duration: 20000 }
         );
       } else {
         toast.success(
-          `Album ZIP exported — ${ok.length} track${ok.length > 1 ? 's' : ''} at ${getExportPreset(exportPreset).lufs} LUFS target`
+          `Album ZIP exported — ${ok.length} track${ok.length > 1 ? 's' : ''} at ${getExportPreset(exportPreset).lufs} LUFS target. If download did not start, click Save file.`,
+          { action: zipSaveAction, duration: 20000 }
         );
       }
     } catch (error) {
@@ -1587,6 +1607,40 @@ export default function App() {
               </div>
             )}
 
+            {pendingDownload && (
+              <div className="mb-6 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="text-[10px] font-mono text-emerald-200">
+                  <div>{pendingDownload.label} ready</div>
+                  <div className="text-zinc-500 mt-0.5 truncate">{pendingDownload.filename}</div>
+                  <div className="text-zinc-600 mt-1">
+                    If your browser blocked the download, click Save file.
+                  </div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void deliverBlobToUser(
+                        pendingDownload.blob,
+                        pendingDownload.filename,
+                        { mimeType: pendingDownload.blob.type || 'application/octet-stream' }
+                      )
+                    }
+                    className="px-4 py-2 rounded-md font-mono text-xs uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+                  >
+                    Save file
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingDownload(null)}
+                    className="px-4 py-2 rounded-md font-mono text-xs uppercase tracking-wider border border-zinc-600 text-zinc-400 hover:text-zinc-200 transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
             {!expertMode && (
               <div
                 className="relative border-2 rounded-lg p-6 mb-6"
@@ -1613,7 +1667,7 @@ export default function App() {
                     boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
                   }}
                 >
-                  Download mastered WAV
+                  {isExporting ? 'Rendering master…' : 'Download mastered WAV'}
                 </button>
               </div>
             )}
