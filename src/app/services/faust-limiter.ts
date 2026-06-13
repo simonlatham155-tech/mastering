@@ -24,21 +24,25 @@ type FaustWasmRuntime = {
 let factoryPromise: Promise<LooseFaustDspFactory> | null = null;
 let runtimePromise: Promise<FaustWasmRuntime> | null = null;
 
-function faustLimiterBaseUrl(): string {
-  const base = import.meta.env.BASE_URL || '/';
-  return `${base}faust/compiled/limiter/`;
-}
-
-/** Absolute module URL — required for dynamic import on GitHub Pages subpaths. */
-export function faustVendorModuleUrl(): string {
-  const path = `${import.meta.env.BASE_URL || '/'}vendor/faustwasm.js`.replace(
-    /([^:]\/)\/+/g,
-    '$1'
-  );
+function faustPublicPath(relative: string): string {
+  const path = `${import.meta.env.BASE_URL || '/'}${relative}`.replace(/([^:]\/)\/+/g, '$1');
   if (typeof window !== 'undefined') {
     return new URL(path, window.location.href).href;
   }
   return path;
+}
+
+/** Absolute module URL — required for dynamic import on GitHub Pages subpaths. */
+export function faustVendorModuleUrl(): string {
+  return faustPublicPath('vendor/faustwasm.js');
+}
+
+export function faustLimiterWasmUrl(): string {
+  return faustPublicPath('faust/compiled/limiter/dsp-module.wasm');
+}
+
+export function faustLimiterMetaUrl(): string {
+  return faustPublicPath('faust/compiled/limiter/dsp-meta.json');
 }
 
 async function loadFaustRuntime(): Promise<FaustWasmRuntime> {
@@ -71,10 +75,9 @@ export async function loadFaustLimiterFactory(): Promise<LooseFaustDspFactory> {
     factoryPromise = (async () => {
       try {
         const { FaustWasmInstantiator } = await loadFaustRuntime();
-        const base = faustLimiterBaseUrl();
         return FaustWasmInstantiator.loadDSPFactory(
-          `${base}dsp-module.wasm`,
-          `${base}dsp-meta.json`
+          faustLimiterWasmUrl(),
+          faustLimiterMetaUrl()
         );
       } catch (err) {
         factoryPromise = null;

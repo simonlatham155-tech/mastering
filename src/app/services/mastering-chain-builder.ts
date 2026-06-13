@@ -257,16 +257,29 @@ export async function buildOfflineMasteringChain(
       useFaustLimiter: true,
       useTruePeakWorklet: false,
     });
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
+  } catch (faustErr) {
+    const detail = faustErr instanceof Error ? faustErr.message : String(faustErr);
     console.warn(
       `Faust WASM limiter unavailable — using FIR worklet fallback (${detail})`
     );
-    return buildMasteringChainAsync({
-      ...config,
-      useFaustLimiter: false,
-      useTruePeakWorklet: true,
-    });
+    try {
+      return await buildMasteringChainAsync({
+        ...config,
+        useFaustLimiter: false,
+        useTruePeakWorklet: true,
+      });
+    } catch (firErr) {
+      const firDetail = firErr instanceof Error ? firErr.message : String(firErr);
+      console.warn(
+        `FIR worklet limiter unavailable — WaveShaper ceiling fallback (${firDetail})`
+      );
+      return buildMasteringChain({
+        ...config,
+        quality: 'preview',
+        useFaustLimiter: false,
+        useTruePeakWorklet: false,
+      });
+    }
   }
 }
 
