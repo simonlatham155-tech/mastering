@@ -28,7 +28,6 @@
 
 import {
   buildMasteringChain,
-  buildMasteringChainAsync,
   type MasteringChain,
 } from './mastering-chain-builder';
 import type { ProcessingSettings } from './audio-processor';
@@ -192,8 +191,11 @@ export class RealtimeAudioPlayer {
   }
 
   setHQMode(enabled: boolean): void {
+    if (this.hqModeEnabled === enabled) return;
     this.hqModeEnabled = enabled;
     this.limiterMeter.setParameters({ hqMode: enabled });
+    // Force chain rebuild on next play (2× vs 4× ceiling oversampling).
+    this.currentHqMode = !enabled;
   }
   setPlaybackGainOptions(
     outputTrimDB: number,
@@ -308,32 +310,15 @@ export class RealtimeAudioPlayer {
     };
 
     let chain: MasteringChain;
+    // Live preview never uses in-chain FIR/Faust — they cause bass buzz/rattle in realtime
+    // blocks (see PATCH 2026-06-07). Export/offline uses FIR via buildOfflineMasteringChain.
+    // HQ = 4× oversampled Flow WaveShaper ceiling; preview = 2×.
+    chain = buildMasteringChain({
+      ...chainConfig,
+      quality: this.hqModeEnabled && !dryBypass ? 'export' : 'preview',
+    });
     if (this.hqModeEnabled && !dryBypass) {
-      try {
-        chain = await buildMasteringChainAsync({
-          ...chainConfig,
-          quality: 'export',
-          useFaustLimiter: false,
-          useTruePeakWorklet: true,
-        });
-        console.log('✅ HQ live chain: FIR true-peak worklet (export parity)');
-      } catch (firErr) {
-        console.warn('HQ FIR worklet unavailable — Faust fallback', firErr);
-        try {
-          chain = await buildMasteringChainAsync({
-            ...chainConfig,
-            quality: 'export',
-            useFaustLimiter: true,
-            useTruePeakWorklet: false,
-          });
-          console.log('✅ HQ live chain: Faust limiter (FIR unavailable)');
-        } catch (faustErr) {
-          console.warn('HQ Faust unavailable — WaveShaper ceiling fallback', faustErr);
-          chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
-        }
-      }
-    } else {
-      chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
+      console.log('✅ HQ live chain: Flow ceiling (4× OS WaveShaper, FIR meter tap only)');
     }
 
     this.wireLiveMeters(chain);

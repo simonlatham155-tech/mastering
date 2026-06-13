@@ -185,6 +185,8 @@ export default function App() {
   const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
   const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
   const [isBatchExporting, setIsBatchExporting] = useState(false);
+  /** Bumps when realtime player is created so meter callbacks attach after upload. */
+  const [playerEpoch, setPlayerEpoch] = useState(0);
   const [batchExportProgress, setBatchExportProgress] = useState<{
     index: number;
     total: number;
@@ -194,6 +196,28 @@ export default function App() {
 
   const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
   const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
+
+  const wireRealtimePlayerMeters = useCallback((player: RealtimeAudioPlayer) => {
+    player.setMeterCallback((data) => {
+      if (Number.isFinite(data.truePeakDBTP)) setTruePeakDBTP(data.truePeakDBTP);
+      if (Number.isFinite(data.digitalPeakDB)) setDigitalPeakDB(data.digitalPeakDB);
+      if (Number.isFinite(data.gainReductionDB)) setGainReductionDB(data.gainReductionDB);
+      if (Number.isFinite(data.ispDifference)) setISPDifference(data.ispDifference);
+      setMeterValues((prev) => ({
+        peak: Math.abs(data.truePeakDBTP),
+        lra: prev.lra,
+      }));
+    });
+
+    player.setSSLMeterCallback((data) => {
+      if (Number.isFinite(data.gainReductionDB)) setGainReduction(data.gainReductionDB);
+      if (Number.isFinite(data.inputLevelDB)) setInputLevel(data.inputLevelDB);
+    });
+
+    player.setLufsMeterCallback((data) => {
+      setOutputLufs(data);
+    });
+  }, []);
 
   const startWaveformPreviewRender = useCallback(
     (
@@ -473,42 +497,24 @@ export default function App() {
     }
   }, [logicMode, analysis, selectedFile]);
 
-  // Sync HQ mode to limiter meter worklet
+  // Sync HQ mode to limiter meter worklet (live chain rebuild on toggle below).
   useEffect(() => {
     realtimePlayerRef.current?.setHQMode(hqMode);
   }, [hqMode]);
 
-  // Wire live meter updates from the in-chain limiter worklet
+  // Wire live meters — must run after realtime player exists (post-upload).
   useEffect(() => {
     const player = realtimePlayerRef.current;
     if (!player || !isReady) return;
 
-    player.setMeterCallback((data) => {
-      if (Number.isFinite(data.truePeakDBTP)) setTruePeakDBTP(data.truePeakDBTP);
-      if (Number.isFinite(data.digitalPeakDB)) setDigitalPeakDB(data.digitalPeakDB);
-      if (Number.isFinite(data.gainReductionDB)) setGainReductionDB(data.gainReductionDB);
-      if (Number.isFinite(data.ispDifference)) setISPDifference(data.ispDifference);
-      setMeterValues(prev => ({
-        peak: Math.abs(data.truePeakDBTP),
-        lra: prev.lra,
-      }));
-    });
-
-    player.setSSLMeterCallback((data) => {
-      if (Number.isFinite(data.gainReductionDB)) setGainReduction(data.gainReductionDB);
-      if (Number.isFinite(data.inputLevelDB)) setInputLevel(data.inputLevelDB);
-    });
-
-    player.setLufsMeterCallback((data) => {
-      setOutputLufs(data);
-    });
+    wireRealtimePlayerMeters(player);
 
     return () => {
       player.setMeterCallback(null);
       player.setSSLMeterCallback(null);
       player.setLufsMeterCallback(null);
     };
-  }, [isReady]);
+  }, [isReady, playerEpoch, wireRealtimePlayerMeters]);
 
   // Reset user EQ/width offsets when gear profile changes (genre defaults + pro stack re-applied).
   const skipInitialGearResetRef = useRef(true);
@@ -630,6 +636,7 @@ export default function App() {
     gearProfile,
     exportPreset,
     circuitDrive,
+    hqMode,
     limiterCeilingDBTP: proDynamics.limiterCeilingDBTP,
     forceMonoBass: proDynamics.forceMonoBass,
     monoBassHz: proDynamics.monoBassHz,
@@ -643,6 +650,7 @@ export default function App() {
       prev.gearProfile !== gearProfile ||
       prev.exportPreset !== exportPreset ||
       prev.circuitDrive !== circuitDrive ||
+      prev.hqMode !== hqMode ||
       prev.limiterCeilingDBTP !== proDynamics.limiterCeilingDBTP ||
       prev.forceMonoBass !== proDynamics.forceMonoBass ||
       prev.monoBassHz !== proDynamics.monoBassHz ||
@@ -653,6 +661,7 @@ export default function App() {
       gearProfile,
       exportPreset,
       circuitDrive,
+      hqMode,
       limiterCeilingDBTP: proDynamics.limiterCeilingDBTP,
       forceMonoBass: proDynamics.forceMonoBass,
       monoBassHz: proDynamics.monoBassHz,
@@ -728,6 +737,7 @@ export default function App() {
     gearProfile,
     exportPreset,
     circuitDrive,
+    hqMode,
     proDynamics.limiterCeilingDBTP,
     proDynamics.forceMonoBass,
     proDynamics.monoBassHz,
@@ -966,6 +976,9 @@ export default function App() {
         realtimePlayerRef.current = new RealtimeAudioPlayer();
       }
 
+      wireRealtimePlayerMeters(realtimePlayerRef.current);
+      setPlayerEpoch((epoch) => epoch + 1);
+
       realtimePlayerRef.current.loadBuffer(buffer);
       
       console.log('✅ Real-time player ready! Audio will be processed live during playback');
@@ -1006,6 +1019,7 @@ export default function App() {
     setSelectedFile(null);
     setIsProcessing(false);
     setIsExporting(false);
+    setPlayerEpoch(0);
     setShowHeritageAlert(false);
     setInputAnalysis(null);
     setMixSetup(null);
