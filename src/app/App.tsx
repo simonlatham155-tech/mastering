@@ -129,6 +129,7 @@ export default function App() {
   const [exportPreset, setExportPreset] = useState<ExportPresetId>('spotify'); // DEFAULT: Spotify Standard (-14 LUFS) - safe for beginners
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [showHeritageAlert, setShowHeritageAlert] = useState(false);
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
   const [processedBuffer, setProcessedBuffer] = useState<AudioBuffer | null>(null);
@@ -150,6 +151,8 @@ export default function App() {
   const waveformSkipTonalMatchRerenderRef = useRef(false);
   const skipChainPreviewOnceRef = useRef(false);
   const waveformPreviewScheduleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chainRebuildGenRef = useRef(0);
+  const chainRebuildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const waveformDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
   const [bypassMode, setBypassMode] = useState(false); // A/B comparison: false = processed, true = original
@@ -657,44 +660,69 @@ export default function App() {
     };
     
     if (!changed) return;
-    
+
     const player = realtimePlayerRef.current;
     if (!player || !analysis) return;
-    
-    const rebuildAsync = async () => {
-      const ctx = buildProcessingContext({
-        gearProfile,
-        exportPreset,
-        logicMode,
-        circuitDrive,
-        profileAdjustments,
-        proDynamics,
-      });
-      const plan = buildAppProcessingPlan(ctx);
-      const settings = buildAppProcessingSettings(ctx);
-      
-      await player.rebuildChain(
-        settings,
-        plan,
-        bypassMode,
-        effectiveInputTrimDB,
-        false,
-        measuredInputLUFS,
-        limiterCeilingOverride,
-        proDynamics.sslGlue
-      );
-      applyProfileAdjustmentsToPlayer(player, gearProfile, profileAdjustments);
-      applyProDynamicsToPlayer(player, proDynamics, autoInputTrimDB);
-      console.log(`🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`);
 
-      if (skipChainPreviewOnceRef.current) {
-        skipChainPreviewOnceRef.current = false;
-      } else {
-        scheduleWaveformPreviewRender(settings);
+    // Cancel any in-flight HQ waveform — preset/gear changes use fast preview quality.
+    waveformRenderGenRef.current += 1;
+    setIsWaveformRendering(false);
+
+    if (chainRebuildTimerRef.current) {
+      clearTimeout(chainRebuildTimerRef.current);
+    }
+
+    chainRebuildTimerRef.current = setTimeout(() => {
+      chainRebuildTimerRef.current = null;
+      const gen = ++chainRebuildGenRef.current;
+
+      void (async () => {
+        const ctx = buildProcessingContext({
+          gearProfile,
+          exportPreset,
+          logicMode,
+          circuitDrive,
+          profileAdjustments,
+          proDynamics,
+        });
+        const plan = buildAppProcessingPlan(ctx);
+        const settings = buildAppProcessingSettings(ctx);
+
+        if (gen !== chainRebuildGenRef.current) return;
+
+        await player.rebuildChain(
+          settings,
+          plan,
+          bypassMode,
+          effectiveInputTrimDB,
+          false,
+          measuredInputLUFS,
+          limiterCeilingOverride,
+          proDynamics.sslGlue
+        );
+
+        if (gen !== chainRebuildGenRef.current) return;
+
+        applyProfileAdjustmentsToPlayer(player, gearProfile, profileAdjustments);
+        applyProDynamicsToPlayer(player, proDynamics, autoInputTrimDB);
+        console.log(
+          `🔄 Chain rebuilt: ${logicMode.toUpperCase()} / ${gearProfile} / ${exportPreset} / drive=${circuitDrive}%`
+        );
+
+        if (skipChainPreviewOnceRef.current) {
+          skipChainPreviewOnceRef.current = false;
+        } else {
+          scheduleWaveformPreviewRender(settings, { hq: false });
+        }
+      })();
+    }, 350);
+
+    return () => {
+      if (chainRebuildTimerRef.current) {
+        clearTimeout(chainRebuildTimerRef.current);
+        chainRebuildTimerRef.current = null;
       }
     };
-    
-    rebuildAsync();
   }, [
     logicMode,
     gearProfile,
@@ -734,7 +762,7 @@ export default function App() {
         profileAdjustments,
         proDynamics,
       });
-      scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx));
+      scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx), { hq: false });
     }, 400);
 
     return () => {
@@ -783,6 +811,14 @@ export default function App() {
     setIsProcessing(true);
     setIsAnalyzing(true);
 
+    const staleUpload = () => {
+      if (uploadGen !== uploadGenRef.current) {
+        setIsProcessing(false);
+        return true;
+      }
+      return false;
+    };
+
     const largeFile = selectedFile.size > 15 * 1024 * 1024;
     toast.info(
       largeFile
@@ -799,7 +835,7 @@ export default function App() {
         'Audio decode'
       );
 
-      if (uploadGen !== uploadGenRef.current) return;
+      if (staleUpload()) return;
 
       const original = audioProcessor.getOriginalBuffer();
       if (!original) {
@@ -816,7 +852,7 @@ export default function App() {
       });
 
       const analysisResult = await audioProcessor.analyzeAudio();
-      if (uploadGen !== uploadGenRef.current) return;
+      if (staleUpload()) return;
 
       const inputResult = buildInputAnalysisFromProcessor(original, analysisResult);
 
@@ -877,11 +913,11 @@ export default function App() {
         }
       );
 
-      if (uploadGen !== uploadGenRef.current) return;
+      if (staleUpload()) return;
 
       await processAudioFile(analysisResult, original, processingContext);
     } catch (error) {
-      if (uploadGen !== uploadGenRef.current) return;
+      if (staleUpload()) return;
       console.error('Audio analysis failed:', error);
       const message =
         error instanceof Error && error.message.includes('timed out')
@@ -938,7 +974,7 @@ export default function App() {
       toast.success('⚡ Preview ready — hit play for live mastering');
 
       skipChainPreviewOnceRef.current = true;
-      scheduleWaveformPreviewRender(settings);
+      scheduleWaveformPreviewRender(settings, { hq: hqMode });
       
       // Set up playback state polling
       const pollInterval = setInterval(() => {
@@ -969,6 +1005,7 @@ export default function App() {
     uploadGenRef.current += 1;
     setSelectedFile(null);
     setIsProcessing(false);
+    setIsExporting(false);
     setShowHeritageAlert(false);
     setInputAnalysis(null);
     setMixSetup(null);
@@ -989,7 +1026,7 @@ export default function App() {
       return;
     }
 
-    setIsProcessing(true);
+    setIsExporting(true);
 
     try {
       const ctx = buildProcessingContext({
@@ -1065,7 +1102,7 @@ export default function App() {
       console.error('Export failed:', error);
       toast.error('Failed to export audio');
     } finally {
-      setIsProcessing(false);
+      setIsExporting(false);
     }
   };
 
@@ -1408,6 +1445,7 @@ export default function App() {
               exportPreset={exportPreset}
               onGearChange={setGearProfile}
               onExportPresetChange={setExportPreset}
+              isUpdatingPreview={isWaveformRendering}
             />
 
             <ActiveSettingsStrip
@@ -1567,7 +1605,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => handleExport(exportPreset)}
-                  disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
+                  disabled={!selectedFile || !analysis || isExporting || isBatchExporting}
                   className="w-full sm:w-auto px-6 py-3 rounded-lg font-mono text-sm uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{
                     background: 'linear-gradient(180deg, #10b981, #059669)',
@@ -1677,12 +1715,12 @@ export default function App() {
             >
               <ExportPanel
                 onExport={handleExport}
-                disabled={!selectedFile || !analysis || isProcessing || isBatchExporting}
+                disabled={!selectedFile || !analysis || isExporting || isBatchExporting}
                 currentTarget={getExportPreset(exportPreset).lufs}
                 selectedPreset={exportPreset}
               />
               <BatchExportPanel
-                disabled={isProcessing}
+                disabled={isExporting || isBatchExporting}
                 isExporting={isBatchExporting}
                 progress={batchExportProgress}
                 selectedPreset={exportPreset}

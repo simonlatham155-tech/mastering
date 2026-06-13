@@ -16,6 +16,7 @@ interface MixSetupPanelProps {
   exportPreset: ExportPresetId;
   onGearChange: (profile: GearProfileId) => void;
   onExportPresetChange: (preset: ExportPresetId) => void;
+  isUpdatingPreview?: boolean;
 }
 
 function confidenceColor(confidence: number): string {
@@ -30,6 +31,7 @@ export function MixSetupPanel({
   exportPreset,
   onGearChange,
   onExportPresetChange,
+  isUpdatingPreview = false,
 }: MixSetupPanelProps) {
   const accent = summary ? confidenceColor(summary.confidence) : '#22d3ee';
   const exportPresets = Object.values(EXPORT_PRESETS);
@@ -153,6 +155,11 @@ export function MixSetupPanel({
             Streaming (-14) preserves dynamics. Club/festival targets are louder — use Pressure mode
             if you need more punch.
           </p>
+          {isUpdatingPreview && (
+            <p className="text-[10px] font-mono text-cyan-500/80">
+              Updating live chain and waveform preview…
+            </p>
+          )}
         </div>
       </div>
     </motion.div>
