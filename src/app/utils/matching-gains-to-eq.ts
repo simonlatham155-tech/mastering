@@ -9,6 +9,7 @@ function clamp(v: number, min: number, max: number): number {
 
 /**
  * Fold 10-band ISO corrections into user EQ offsets (added on top of genre defaults).
+ * Cuts are capped conservatively — large mid/high cuts cause muffled / "cave" tone.
  */
 export function matchingGainsToProfileAdjustments(
   matching: MatchingGains,
@@ -21,9 +22,9 @@ export function matchingGainsToProfileAdjustments(
 
   return {
     ...current,
-    lowShelfBoost: clamp(current.lowShelfBoost + lowDelta, -12, 12),
-    midRangeAdjust: clamp(current.midRangeAdjust + midDelta, -12, 12),
-    highShelfBoost: clamp(current.highShelfBoost + highDelta, -12, 12),
+    lowShelfBoost: clamp(current.lowShelfBoost + lowDelta, -4, 8),
+    midRangeAdjust: clamp(current.midRangeAdjust + midDelta, -3, 3),
+    highShelfBoost: clamp(current.highShelfBoost + highDelta, -2, 6),
   };
 }
 

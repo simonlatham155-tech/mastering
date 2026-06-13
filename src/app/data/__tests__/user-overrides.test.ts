@@ -126,7 +126,7 @@ describe('User Overrides Survive to Engine', () => {
       },
     });
 
-    expect(plan.genreBehavior.bassTilt).toBe(3.5);
+    expect(plan.genreBehavior.bassTilt).toBe(3);
     expect(plan.genreBehavior.airTilt).toBe(0.5);
     expect(plan.genreBehavior.mudCut).toBe(-2);
   });
