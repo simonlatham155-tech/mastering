@@ -10,6 +10,7 @@ import {
   resolveIntegratedLUFS,
   INPUT_ANALYSIS_MAX_SECONDS,
 } from '../utils/measure-buffer-loudness';
+import { getSharedAudioContext } from './shared-audio-context';
 
 /** Scan sample peak; decimate on very long files to keep upload responsive. */
 function scanSamplePeakLinear(buffer: AudioBuffer): number {
@@ -170,7 +171,7 @@ export class AudioProcessor {
   private bypassMix: GainNode | null = null; // NEW: Bypass routing node
 
   constructor() {
-    this.audioContext = new AudioContext();
+    this.audioContext = getSharedAudioContext();
   }
 
   /**

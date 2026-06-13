@@ -69,6 +69,11 @@ import {
 import { BatchExportPanel } from './components/batch-export-panel';
 import { ProductNav } from './components/product-nav';
 import { CreatorAboutStrip } from './components/creator-about-strip';
+import {
+  getSharedAudioContext,
+  yieldToMain,
+  withTimeout,
+} from './services/shared-audio-context';
 import { motion } from 'motion/react';
 
 type LogicMode = 'brickwall' | 'dynamics';
@@ -130,6 +135,7 @@ export default function App() {
 
   // Real-time audio player (processes audio live during playback - NO pre-rendering!)
   const realtimePlayerRef = useRef<RealtimeAudioPlayer | null>(null);
+  const uploadGenRef = useRef(0);
   const waveformRenderGenRef = useRef(0);
   const waveformSkipTrimRerenderRef = useRef(false);
   const waveformDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -268,7 +274,7 @@ export default function App() {
     if (!spectralProfile || !referenceCurve) return null;
     if (!referenceMatchControllerRef.current) {
       referenceMatchControllerRef.current = new ReferenceMatchingController(
-        new AudioContext()
+        getSharedAudioContext()
       );
     }
     return referenceMatchControllerRef.current.calculateMatchingGains(
@@ -287,7 +293,7 @@ export default function App() {
     try {
       if (!referenceMatchControllerRef.current) {
         referenceMatchControllerRef.current = new ReferenceMatchingController(
-          new AudioContext()
+          getSharedAudioContext()
         );
       }
       const profile = await referenceMatchControllerRef.current.analyzeTrack(buffer);
@@ -743,11 +749,27 @@ export default function App() {
   const analyzeAudioFile = async () => {
     if (!selectedFile) return;
 
+    const uploadGen = uploadGenRef.current;
     setIsProcessing(true);
-    toast.info('Decoding audio file...');
+    setIsAnalyzing(true);
+
+    const largeFile = selectedFile.size > 15 * 1024 * 1024;
+    toast.info(
+      largeFile
+        ? 'Decoding large file — UI may pause briefly…'
+        : 'Decoding audio file...'
+    );
 
     try {
-      await audioProcessor.loadAudioFile(selectedFile);
+      await yieldToMain();
+
+      await withTimeout(
+        audioProcessor.loadAudioFile(selectedFile),
+        120_000,
+        'Audio decode'
+      );
+
+      if (uploadGen !== uploadGenRef.current) return;
 
       const original = audioProcessor.getOriginalBuffer();
       if (!original) {
@@ -755,7 +777,6 @@ export default function App() {
       }
       setOriginalBuffer(original);
 
-      setIsAnalyzing(true);
       toast.info('Analyzing audio file...');
 
       console.log('📊 Original buffer stored:', {
@@ -765,6 +786,8 @@ export default function App() {
       });
 
       const analysisResult = await audioProcessor.analyzeAudio();
+      if (uploadGen !== uploadGenRef.current) return;
+
       const inputResult = buildInputAnalysisFromProcessor(original, analysisResult);
 
       setInputAnalysis(inputResult);
@@ -772,7 +795,7 @@ export default function App() {
       setIsAnalyzing(false);
 
       void audioProcessor.refineAnalysisLoudnessBS1770().then((refined) => {
-        if (!refined) return;
+        if (!refined || uploadGen !== uploadGenRef.current) return;
         setAnalysis(refined);
         setInputAnalysis(buildInputAnalysisFromProcessor(original, refined));
         setMixSetup((prev) =>
@@ -824,13 +847,22 @@ export default function App() {
         }
       );
 
+      if (uploadGen !== uploadGenRef.current) return;
+
       await processAudioFile(analysisResult, original, processingContext);
     } catch (error) {
+      if (uploadGen !== uploadGenRef.current) return;
       console.error('Audio analysis failed:', error);
-      toast.error('Failed to analyze audio file');
+      const message =
+        error instanceof Error && error.message.includes('timed out')
+          ? 'Upload timed out — try a shorter clip or smaller file'
+          : 'Failed to analyze audio file';
+      toast.error(message);
       setIsProcessing(false);
     } finally {
-      setIsAnalyzing(false);
+      if (uploadGen === uploadGenRef.current) {
+        setIsAnalyzing(false);
+      }
     }
   };
 
@@ -896,12 +928,14 @@ export default function App() {
   };
 
   const handleFileSelect = async (file: File) => {
+    uploadGenRef.current += 1;
     setSelectedFile(file);
     setInputAnalysis(null);
     setMixSetup(null);
   };
 
   const handleClearFile = () => {
+    uploadGenRef.current += 1;
     setSelectedFile(null);
     setIsProcessing(false);
     setShowHeritageAlert(false);
