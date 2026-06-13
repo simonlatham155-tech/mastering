@@ -6,7 +6,8 @@
   "description": "LathamAudio AI Mastering Suite — hardware emulation mastering in the browser",
   "scripts": {
     "dev": "vite",
-    "build:faust": "node scripts/build-faust-dsp.mjs",
+    "build:faust": "node scripts/build-faust-dsp.mjs && node scripts/copy-faustwasm-vendor.mjs",
+    "predev": "node scripts/copy-faustwasm-vendor.mjs",
     "build": "npm run build:faust && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview",
