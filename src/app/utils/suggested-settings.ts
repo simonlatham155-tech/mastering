@@ -41,7 +41,7 @@ export function getSuggestedProDynamics(
     outputTrimDB: 0,
     limiterCeilingDBTP: presetCeilingDBTP,
     sslGlue,
-    forceMonoBass: genre?.toggles.forceMonoBass ?? false,
-    monoBassHz: genre?.biases.monoBassHz ?? 120,
+    forceMonoBass: false,
+    monoBassHz: genre?.biases.monoBassHz ?? 80,
   };
 }

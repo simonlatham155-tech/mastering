@@ -161,7 +161,7 @@ export default function App() {
   const [gainMatchEnabled, setGainMatchEnabled] = useState(false);
   const [bypassGainMatchDB, setBypassGainMatchDB] = useState(0);
   /** HQ: export-quality chain (Faust ceiling, 4× saturation OS) for live + waveform. */
-  const [hqMode, setHQMode] = useState(true);
+  const [hqMode, setHQMode] = useState(false);
 
   const [spectralProfile, setSpectralProfile] = useState<SpectralProfile | null>(null);
   const [matchStrength, setMatchStrength] = useState(DEFAULT_TONAL_MATCH_STRENGTH);

@@ -307,6 +307,7 @@ export class RealtimeAudioPlayer {
           ? this.currentBypassGainMatchDB
           : undefined,
       sslGlue,
+      livePreview: true,
     };
 
     let chain: MasteringChain;
