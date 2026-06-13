@@ -14,6 +14,11 @@ import { getExportPreset } from '../data/export-presets';
 import { getGenrePreset } from '../data/genre-presets';
 import { resolveProcessingPlan, type ProcessingPlan, type UserOverrides } from '../data/preset-resolution';
 import { finiteDB } from '../utils/finite-audio';
+import {
+  clampCombinedAirTilt,
+  clampCombinedBassTilt,
+  clampCombinedMudCut,
+} from '../utils/genre-eq-clamp';
 import type { ProcessingSettings } from '../services/audio-processor';
 import type { AIMasteringRecommendation } from '../services/ai-mastering-engine';
 import type { RealtimeAudioPlayer } from '../services/realtime-audio-player';
@@ -24,8 +29,8 @@ export type LogicMode = 'brickwall' | 'dynamics';
 export { DEFAULT_PRO_DYNAMICS };
 export type { ProDynamicsSettings, SSLGlueMode };
 
-/** Default tonal balance match — applied automatically; pros adjust in expert rack. */
-export const DEFAULT_TONAL_MATCH_STRENGTH = 35;
+/** Default tonal balance match — conservative; raise in expert rack if needed. */
+export const DEFAULT_TONAL_MATCH_STRENGTH = 20;
 
 const SSL_GLUE_PRESETS: Record<Exclude<SSLGlueMode, 'auto'>, { threshold: number; ratio: number }> = {
   gentle: { threshold: -14, ratio: 2 },
@@ -109,15 +114,15 @@ export function applyProfileAdjustmentsToPlayer(
 
   player.updateParameter(
     'lowShelfGain',
-    finiteDB(genre.biases.bassTilt + profileAdjustments.lowShelfBoost)
+    clampCombinedBassTilt(genre.biases.bassTilt, profileAdjustments.lowShelfBoost)
   );
   player.updateParameter(
     'midRangeGain',
-    finiteDB(genre.biases.mudCut + profileAdjustments.midRangeAdjust)
+    clampCombinedMudCut(genre.biases.mudCut, profileAdjustments.midRangeAdjust)
   );
   player.updateParameter(
     'highShelfGain',
-    finiteDB(genre.biases.airTilt + profileAdjustments.highShelfBoost)
+    clampCombinedAirTilt(genre.biases.airTilt, profileAdjustments.highShelfBoost)
   );
 
   const widthOffset = (finiteDB(profileAdjustments.stereoWidth, 50) - 50) / 100 * 0.6;

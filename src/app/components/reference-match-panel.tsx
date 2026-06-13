@@ -40,8 +40,8 @@ export function ReferenceMatchPanel({
             Tonal balance match
           </div>
           <p className="text-[10px] font-mono text-zinc-500 mt-1 max-w-md">
-            Applied automatically on upload. Adjust strength here — changes apply live to profile
-            EQ.
+            Light correction on upload (default {defaultStrength}%). If the mix sounds muffled or
+            hollow, slide to Off — then A/B with bypass.
           </p>
         </div>
         {referenceCurve && (
