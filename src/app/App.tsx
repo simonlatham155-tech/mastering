@@ -185,6 +185,8 @@ export default function App() {
   const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
   const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
   const [isBatchExporting, setIsBatchExporting] = useState(false);
+  /** Bumps when realtime player is created so meter callbacks re-wire after upload. */
+  const [playerEpoch, setPlayerEpoch] = useState(0);
   const [batchExportProgress, setBatchExportProgress] = useState<{
     index: number;
     total: number;
@@ -194,6 +196,28 @@ export default function App() {
 
   const effectiveInputTrimDB = resolveEffectiveInputTrimDB(proDynamics, autoInputTrimDB);
   const limiterCeilingOverride = resolveLimiterCeilingOverride(proDynamics);
+
+  const wireRealtimePlayerMeters = useCallback((player: RealtimeAudioPlayer) => {
+    player.setMeterCallback((data) => {
+      if (Number.isFinite(data.truePeakDBTP)) setTruePeakDBTP(data.truePeakDBTP);
+      if (Number.isFinite(data.digitalPeakDB)) setDigitalPeakDB(data.digitalPeakDB);
+      if (Number.isFinite(data.gainReductionDB)) setGainReductionDB(data.gainReductionDB);
+      if (Number.isFinite(data.ispDifference)) setISPDifference(data.ispDifference);
+      setMeterValues((prev) => ({
+        peak: Math.abs(data.truePeakDBTP),
+        lra: prev.lra,
+      }));
+    });
+
+    player.setSSLMeterCallback((data) => {
+      if (Number.isFinite(data.gainReductionDB)) setGainReduction(data.gainReductionDB);
+      if (Number.isFinite(data.inputLevelDB)) setInputLevel(data.inputLevelDB);
+    });
+
+    player.setLufsMeterCallback((data) => {
+      setOutputLufs(data);
+    });
+  }, []);
 
   const startWaveformPreviewRender = useCallback(
     (
@@ -473,42 +497,24 @@ export default function App() {
     }
   }, [logicMode, analysis, selectedFile]);
 
-  // Sync HQ mode to limiter meter worklet
+  // Sync HQ mode to limiter meter worklet (chain rebuild handled below).
   useEffect(() => {
     realtimePlayerRef.current?.setHQMode(hqMode);
   }, [hqMode]);
 
-  // Wire live meter updates from the in-chain limiter worklet
+  // Wire live meter updates — must run after realtime player exists (post-upload).
   useEffect(() => {
     const player = realtimePlayerRef.current;
     if (!player || !isReady) return;
 
-    player.setMeterCallback((data) => {
-      if (Number.isFinite(data.truePeakDBTP)) setTruePeakDBTP(data.truePeakDBTP);
-      if (Number.isFinite(data.digitalPeakDB)) setDigitalPeakDB(data.digitalPeakDB);
-      if (Number.isFinite(data.gainReductionDB)) setGainReductionDB(data.gainReductionDB);
-      if (Number.isFinite(data.ispDifference)) setISPDifference(data.ispDifference);
-      setMeterValues(prev => ({
-        peak: Math.abs(data.truePeakDBTP),
-        lra: prev.lra,
-      }));
-    });
-
-    player.setSSLMeterCallback((data) => {
-      if (Number.isFinite(data.gainReductionDB)) setGainReduction(data.gainReductionDB);
-      if (Number.isFinite(data.inputLevelDB)) setInputLevel(data.inputLevelDB);
-    });
-
-    player.setLufsMeterCallback((data) => {
-      setOutputLufs(data);
-    });
+    wireRealtimePlayerMeters(player);
 
     return () => {
       player.setMeterCallback(null);
       player.setSSLMeterCallback(null);
       player.setLufsMeterCallback(null);
     };
-  }, [isReady]);
+  }, [isReady, playerEpoch, wireRealtimePlayerMeters]);
 
   // Reset user EQ/width offsets when gear profile changes (genre defaults + pro stack re-applied).
   const skipInitialGearResetRef = useRef(true);
@@ -734,6 +740,46 @@ export default function App() {
     proDynamics.sslGlue,
     analysis,
   ]);
+
+  // HQ toggle switches Faust/FIR vs WaveShaper ceiling — rebuild live chain.
+  const prevHqModeRef = useRef(hqMode);
+  useEffect(() => {
+    if (prevHqModeRef.current === hqMode) return;
+    prevHqModeRef.current = hqMode;
+
+    const player = realtimePlayerRef.current;
+    if (!player || !analysis) return;
+
+    void (async () => {
+      const ctx = buildProcessingContext({
+        gearProfile,
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments,
+        proDynamics,
+      });
+      const plan = buildAppProcessingPlan(ctx);
+      const settings = buildAppProcessingSettings(ctx);
+
+      await player.rebuildChain(
+        settings,
+        plan,
+        bypassMode,
+        effectiveInputTrimDB,
+        false,
+        measuredInputLUFS,
+        limiterCeilingOverride,
+        proDynamics.sslGlue
+      );
+
+      applyProfileAdjustmentsToPlayer(player, gearProfile, profileAdjustments);
+      applyProDynamicsToPlayer(player, proDynamics, autoInputTrimDB);
+      console.log(`🔄 Chain rebuilt for HQ mode: ${hqMode ? 'export parity' : 'preview'}`);
+    })();
+    // Rebuild only when HQ flag changes — other settings have their own rebuild effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hqMode, analysis]);
 
   // Re-render waveform when EQ / trim sliders move (live audio updates instantly; viz needs a pass).
   useEffect(() => {
@@ -966,6 +1012,9 @@ export default function App() {
         realtimePlayerRef.current = new RealtimeAudioPlayer();
       }
 
+      wireRealtimePlayerMeters(realtimePlayerRef.current);
+      setPlayerEpoch((epoch) => epoch + 1);
+
       realtimePlayerRef.current.loadBuffer(buffer);
       
       console.log('✅ Real-time player ready! Audio will be processed live during playback');
@@ -1006,6 +1055,7 @@ export default function App() {
     setSelectedFile(null);
     setIsProcessing(false);
     setIsExporting(false);
+    setPlayerEpoch(0);
     setShowHeritageAlert(false);
     setInputAnalysis(null);
     setMixSetup(null);

@@ -192,8 +192,13 @@ export class RealtimeAudioPlayer {
   }
 
   setHQMode(enabled: boolean): void {
+    const changed = this.hqModeEnabled !== enabled;
     this.hqModeEnabled = enabled;
     this.limiterMeter.setParameters({ hqMode: enabled });
+    if (changed) {
+      // Force chain rebuild on next play — Faust vs WaveShaper topology differs.
+      this.currentHqMode = !enabled;
+    }
   }
   setPlaybackGainOptions(
     outputTrimDB: number,
@@ -317,9 +322,20 @@ export class RealtimeAudioPlayer {
           useTruePeakWorklet: false,
         });
         console.log('✅ HQ live chain: Faust true-peak limiter (export parity)');
-      } catch (err) {
-        console.warn('HQ Faust limiter unavailable — preview ceiling fallback', err);
-        chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
+      } catch (faustErr) {
+        console.warn('HQ Faust limiter unavailable — FIR worklet fallback', faustErr);
+        try {
+          chain = await buildMasteringChainAsync({
+            ...chainConfig,
+            quality: 'export',
+            useFaustLimiter: false,
+            useTruePeakWorklet: true,
+          });
+          console.log('✅ HQ live chain: FIR true-peak worklet (export parity)');
+        } catch (firErr) {
+          console.warn('HQ FIR worklet unavailable — WaveShaper ceiling fallback', firErr);
+          chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
+        }
       }
     } else {
       chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
@@ -657,6 +673,7 @@ export class RealtimeAudioPlayer {
     this.currentInputTrimDB = inputTrimDB;
     this.currentLimiterCeilingOverride = limiterCeilingOverride;
     this.currentSslGlue = sslGlue ?? 'auto';
+    this.currentHqMode = this.hqModeEnabled;
     
     console.log('🔄 Rebuilding mastering chain...');
     
