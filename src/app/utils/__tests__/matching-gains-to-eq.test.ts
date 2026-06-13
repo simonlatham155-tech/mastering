@@ -31,7 +31,32 @@ describe('matching-gains-to-eq', () => {
     expect(next.highShelfBoost).toBeCloseTo(1, 1);
   });
 
-  it('clamps auto-gain trim delta', () => {
+  it('limits extreme mid/high cuts from tonal match', () => {
+    const next = matchingGainsToProfileAdjustments(
+      {
+        bands: [-6, -6, -6, -6, -6, -6, -6, -6, -6, -6],
+        autoGain: 0,
+        warnings: [],
+        deltaVisualization: {
+          muddy: true,
+          dark: false,
+          boomy: false,
+          harsh: false,
+        },
+      },
+      {
+        lowShelfBoost: 0,
+        midRangeAdjust: 0,
+        highShelfBoost: 0,
+        stereoWidth: 50,
+      }
+    );
+
+    expect(next.midRangeAdjust).toBe(-3);
+    expect(next.highShelfBoost).toBe(-2);
+  });
+
+  it('maps auto-gain to output trim delta', () => {
     expect(matchingAutoGainToOutputTrimDelta(10)).toBe(2);
     expect(matchingAutoGainToOutputTrimDelta(-10)).toBe(-2);
   });
