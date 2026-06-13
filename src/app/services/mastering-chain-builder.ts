@@ -258,7 +258,10 @@ export async function buildOfflineMasteringChain(
       useTruePeakWorklet: false,
     });
   } catch (err) {
-    console.warn('Faust WASM limiter unavailable — using FIR worklet fallback', err);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `Faust WASM limiter unavailable — using FIR worklet fallback (${detail})`
+    );
     return buildMasteringChainAsync({
       ...config,
       useFaustLimiter: false,
