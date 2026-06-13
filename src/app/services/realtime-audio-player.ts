@@ -313,13 +313,24 @@ export class RealtimeAudioPlayer {
         chain = await buildMasteringChainAsync({
           ...chainConfig,
           quality: 'export',
-          useFaustLimiter: true,
-          useTruePeakWorklet: false,
+          useFaustLimiter: false,
+          useTruePeakWorklet: true,
         });
-        console.log('✅ HQ live chain: Faust true-peak limiter (export parity)');
-      } catch (err) {
-        console.warn('HQ Faust limiter unavailable — preview ceiling fallback', err);
-        chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
+        console.log('✅ HQ live chain: FIR true-peak worklet (export parity)');
+      } catch (firErr) {
+        console.warn('HQ FIR worklet unavailable — Faust fallback', firErr);
+        try {
+          chain = await buildMasteringChainAsync({
+            ...chainConfig,
+            quality: 'export',
+            useFaustLimiter: true,
+            useTruePeakWorklet: false,
+          });
+          console.log('✅ HQ live chain: Faust limiter (FIR unavailable)');
+        } catch (faustErr) {
+          console.warn('HQ Faust unavailable — WaveShaper ceiling fallback', faustErr);
+          chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });
+        }
       }
     } else {
       chain = buildMasteringChain({ ...chainConfig, quality: 'preview' });

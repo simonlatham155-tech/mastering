@@ -40,8 +40,8 @@ export function ReferenceMatchPanel({
             Tonal balance match
           </div>
           <p className="text-[10px] font-mono text-zinc-500 mt-1 max-w-md">
-            Light correction on upload (default {defaultStrength}%). If the mix sounds muffled or
-            hollow, slide to Off — then A/B with bypass.
+            Optional EQ toward the genre reference (default Off). Raise slowly if the mix needs
+            tonal help — if it sounds muffled or hollow, leave at Off and A/B with bypass.
           </p>
         </div>
         {referenceCurve && (

@@ -532,7 +532,7 @@ export class AudioProcessor {
     const forVisualization = options?.forVisualization ?? false;
     console.log(forVisualization
       ? '🎨 WAVEFORM PREVIEW: Full chain render (matches live preview)'
-      : '💎 EXPORT MODE: Offline render with Faust WASM limiter (FIR worklet fallback)');
+      : '💎 EXPORT MODE: Offline render with FIR true-peak limiter (Faust fallback)');
 
     // Build processing plan
     const plan = resolveProcessingPlan({

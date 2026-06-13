@@ -228,7 +228,8 @@ export function resolveMasteringQualityMode(hqEnabled: boolean): QualityMode {
 }
 
 /**
- * Build offline chain — export uses Faust WASM limiter, with FIR worklet fallback.
+ * Build offline chain — export uses 4× FIR true-peak worklet (best quality).
+ * Faust WASM is fallback only (compressor + hard clip — harsher than Flow ceiling).
  */
 export async function buildOfflineMasteringChain(
   config: MasteringChainConfig
@@ -251,22 +252,43 @@ export async function buildOfflineMasteringChain(
     });
   }
 
-  try {
-    return await buildMasteringChainAsync({
+  if (config.useFaustLimiter && !config.useTruePeakWorklet) {
+    return buildMasteringChainAsync({
       ...config,
       useFaustLimiter: true,
       useTruePeakWorklet: false,
     });
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `Faust WASM limiter unavailable — using FIR worklet fallback (${detail})`
-    );
-    return buildMasteringChainAsync({
+  }
+
+  try {
+    return await buildMasteringChainAsync({
       ...config,
       useFaustLimiter: false,
       useTruePeakWorklet: true,
     });
+  } catch (firErr) {
+    const firDetail = firErr instanceof Error ? firErr.message : String(firErr);
+    console.warn(
+      `FIR true-peak worklet unavailable — Faust WASM fallback (${firDetail})`
+    );
+    try {
+      return await buildMasteringChainAsync({
+        ...config,
+        useFaustLimiter: true,
+        useTruePeakWorklet: false,
+      });
+    } catch (faustErr) {
+      const faustDetail = faustErr instanceof Error ? faustErr.message : String(faustErr);
+      console.warn(
+        `Faust limiter unavailable — WaveShaper ceiling fallback (${faustDetail})`
+      );
+      return buildMasteringChain({
+        ...config,
+        quality: 'preview',
+        useFaustLimiter: false,
+        useTruePeakWorklet: false,
+      });
+    }
   }
 }
 

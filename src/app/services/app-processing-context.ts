@@ -29,8 +29,8 @@ export type LogicMode = 'brickwall' | 'dynamics';
 export { DEFAULT_PRO_DYNAMICS };
 export type { ProDynamicsSettings, SSLGlueMode };
 
-/** Default tonal balance match — conservative; raise in expert rack if needed. */
-export const DEFAULT_TONAL_MATCH_STRENGTH = 20;
+/** Tonal balance match is opt-in — auto EQ was degrading exports on many mixes. */
+export const DEFAULT_TONAL_MATCH_STRENGTH = 0;
 
 const SSL_GLUE_PRESETS: Record<Exclude<SSLGlueMode, 'auto'>, { threshold: number; ratio: number }> = {
   gentle: { threshold: -14, ratio: 2 },
