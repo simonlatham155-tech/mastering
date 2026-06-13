@@ -40,6 +40,7 @@ import {
   setTargetFinite,
   setTargetLinearFromDB,
 } from '../utils/finite-audio';
+import { getSharedAudioContext } from './shared-audio-context';
 
 export type { LufsMeterData };
 
@@ -106,24 +107,46 @@ export class RealtimeAudioPlayer {
     this.setLoadedBuffer(buffer);
   }
 
-  /** Reuse an already-decoded buffer (avoids a third full-file decode on upload). */
+  /** Reuse an already-decoded buffer from the shared AudioContext (no full-file copy). */
   loadBuffer(buffer: AudioBuffer): void {
+    this.ensureContext();
+    this.setLoadedBuffer(buffer);
+  }
+
+  /**
+   * Copy a buffer from another AudioContext in chunks so long files do not freeze the UI.
+   * Not needed when decode uses getSharedAudioContext() — kept as a fallback.
+   */
+  async loadBufferAsync(buffer: AudioBuffer): Promise<void> {
     const ctx = this.ensureContext();
-    // Copy into this player's context — buffers decoded elsewhere may not play back.
-    const copy = ctx.createBuffer(
-      buffer.numberOfChannels,
-      buffer.length,
-      buffer.sampleRate
-    );
-    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-      copy.copyToChannel(buffer.getChannelData(ch), ch);
+    if (buffer.sampleRate === ctx.sampleRate) {
+      this.setLoadedBuffer(buffer);
+      return;
     }
+
+    const channels = buffer.numberOfChannels;
+    const length = buffer.length;
+    const copy = ctx.createBuffer(channels, length, buffer.sampleRate);
+    const chunkSamples = 262_144;
+
+    for (let ch = 0; ch < channels; ch++) {
+      const src = buffer.getChannelData(ch);
+      const dst = copy.getChannelData(ch);
+      for (let offset = 0; offset < length; offset += chunkSamples) {
+        const end = Math.min(offset + chunkSamples, length);
+        dst.set(src.subarray(offset, end), offset);
+        if (end < length) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+    }
+
     this.setLoadedBuffer(copy);
   }
 
   private ensureContext(): AudioContext {
     if (!this.audioContext) {
-      this.audioContext = new AudioContext();
+      this.audioContext = getSharedAudioContext();
     }
     return this.audioContext;
   }

@@ -6,6 +6,8 @@
  * that can be compared against reference curves for "AI mastering"
  */
 
+import { analysisFeatureBuffer } from '../utils/analysis-buffer-slice';
+
 export interface SpectralProfile {
   bands: {
     sub: number;        // 40Hz (20-60Hz average)
@@ -51,48 +53,8 @@ export class SpectralAnalyzer {
    * Analyze an audio buffer and generate spectral profile
    */
   async analyzeBuffer(buffer: AudioBuffer): Promise<SpectralProfile> {
-    // Create offline context for analysis
-    const offlineContext = new OfflineAudioContext(
-      1, // Mono analysis
-      buffer.length,
-      buffer.sampleRate
-    );
-    
-    // Convert to mono if stereo
-    const monoBuffer = this.convertToMono(buffer);
-    
-    // Create analyzer node
-    const analyzer = offlineContext.createAnalyser();
-    analyzer.fftSize = this.fftSize;
-    analyzer.smoothingTimeConstant = 0.8;
-    
-    // Create source
-    const source = offlineContext.createBufferSource();
-    source.buffer = monoBuffer;
-    
-    // Connect: source -> analyzer -> destination
-    source.connect(analyzer);
-    analyzer.connect(offlineContext.destination);
-    
-    // Start playback
-    source.start(0);
-    
-    // Collect frequency data over time
-    const frequencyData = new Float32Array(analyzer.frequencyBinCount);
-    const timeSlices: Float32Array[] = [];
-    
-    // Sample every 100ms
-    const sampleInterval = 0.1; // seconds
-    const sampleCount = Math.floor(buffer.duration / sampleInterval);
-    
-    // We need to collect data during rendering, but OfflineAudioContext
-    // doesn't allow real-time access. Instead, we'll use a ScriptProcessor
-    // or analyze the buffer directly with manual FFT.
-    
-    // For now, use a simpler approach: analyze the raw buffer with manual FFT
-    const profile = this.analyzeBufferManually(buffer);
-    
-    return profile;
+    const featureBuffer = analysisFeatureBuffer(buffer);
+    return this.analyzeBufferManually(featureBuffer);
   }
   
   /**
