@@ -29,8 +29,8 @@ export type LogicMode = 'brickwall' | 'dynamics';
 export { DEFAULT_PRO_DYNAMICS };
 export type { ProDynamicsSettings, SSLGlueMode };
 
-/** Tonal balance match is opt-in — auto EQ was degrading exports on many mixes. */
-export const DEFAULT_TONAL_MATCH_STRENGTH = 0;
+/** Default tonal balance match — conservative with EQ clamps so genre + match stack safely. */
+export const DEFAULT_TONAL_MATCH_STRENGTH = 20;
 
 const SSL_GLUE_PRESETS: Record<Exclude<SSLGlueMode, 'auto'>, { threshold: number; ratio: number }> = {
   gentle: { threshold: -14, ratio: 2 },
@@ -62,11 +62,9 @@ export function profileAdjustmentsToUserOverrides(
     airTilt: profileAdjustments.highShelfBoost,
   };
 
-  if (proDynamics?.forceMonoBass === true) {
-    overrides.forceMonoBass = true;
+  if (proDynamics?.forceMonoBass != null) {
+    overrides.forceMonoBass = proDynamics.forceMonoBass;
     overrides.monoBassHz = proDynamics.monoBassHz;
-  } else if (proDynamics?.forceMonoBass === false) {
-    overrides.forceMonoBass = false;
   }
 
   return overrides;

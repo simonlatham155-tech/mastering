@@ -2,6 +2,7 @@ import { CheckCircle2 } from 'lucide-react';
 import type { GearProfileId } from './gear-selector';
 import type { ExportPresetId } from '../data/export-presets';
 import { getExportPreset } from '../data/export-presets';
+import { getGenrePreset } from '../data/genre-presets';
 import { gearProfiles } from './gear-selector';
 import type { ProDynamicsSettings, SSLGlueMode } from './pro-dynamics-panel';
 
@@ -51,6 +52,8 @@ export function ActiveSettingsStrip({
   const gearName = gearProfiles.find((p) => p.id === gearProfile)?.name ?? gearProfile;
   const preset = getExportPreset(exportPreset);
   const logicLabel = logicMode === 'brickwall' ? 'Pressure' : 'Flow';
+  const genreMonoBass = getGenrePreset(gearProfile)?.toggles.forceMonoBass ?? false;
+  const monoBassActive = proDynamics.forceMonoBass ?? genreMonoBass;
 
   return (
     <div
@@ -81,10 +84,10 @@ export function ActiveSettingsStrip({
           detail={proDynamics.autoStageOnExport ? 'Auto-staging to target LUFS' : 'Manual output level'}
         />
         <AppliedRow label="Bus glue" detail={sslGlueLabel(proDynamics.sslGlue)} />
-        {proDynamics.forceMonoBass && (
+        {monoBassActive && (
           <AppliedRow
             label="Mono bass"
-            detail={`Below ${proDynamics.monoBassHz} Hz`}
+            detail={`Side HPF below ${proDynamics.monoBassHz} Hz`}
           />
         )}
         <AppliedRow

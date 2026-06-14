@@ -111,9 +111,9 @@ describe('Mono-Bass Dependency (Auto-Enable M/S)', () => {
     expect(plan.genreBehavior.useMidSide).toBe(true);  // Still enabled (not dependent)
   });
   
-  test('Preset has mono-bass enabled, user does nothing, mono-bass stays off (opt-in)', () => {
-    // Genre presets may suggest mono-bass, but side HPF is Pro-panel opt-in only.
-    // M/S width processing still follows the genre toggle.
+  test('Preset has mono-bass enabled, user does nothing, both enabled', () => {
+    // Preset defaults: forceMonoBass=true, useMidSide=true
+    // User makes no overrides — genre toggles flow through resolver
     
     const plan = resolveProcessingPlan({
       genreId: 'dubstep',
@@ -123,7 +123,7 @@ describe('Mono-Bass Dependency (Auto-Enable M/S)', () => {
       // No userOverrides
     });
     
-    expect(plan.genreBehavior.forceMonoBass).toBe(false);
+    expect(plan.genreBehavior.forceMonoBass).toBe(true);
     expect(plan.genreBehavior.useMidSide).toBe(true);
   });
 });

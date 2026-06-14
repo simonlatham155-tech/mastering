@@ -122,12 +122,12 @@ describe('Export Preset Separation (Architecture Guard)', () => {
       logicMode: 'dynamics'
     });
     
-    // Mono-bass is opt-in (Pro panel) — genre toggle alone does not enable side HPF
-    expect(spotify.genreBehavior.forceMonoBass).toBe(false);
+    // Mono-bass follows genre preset across export presets (not delivery-driven)
+    expect(spotify.genreBehavior.forceMonoBass).toBe(true);
     expect(spotify.genreBehavior.useMidSide).toBe(true);
     
-    expect(club.genreBehavior.forceMonoBass).toBe(false);
-    expect(extreme.genreBehavior.forceMonoBass).toBe(false);
+    expect(club.genreBehavior.forceMonoBass).toBe(true);
+    expect(extreme.genreBehavior.forceMonoBass).toBe(true);
     
     expect(spotify.genreBehavior.monoBassHz).toBe(club.genreBehavior.monoBassHz);
     expect(club.genreBehavior.monoBassHz).toBe(extreme.genreBehavior.monoBassHz);

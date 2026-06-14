@@ -80,7 +80,7 @@ export class RealtimeAudioPlayer {
   private isSwitchingBypass: boolean = false;
   private limiterMeter = new OversamplingLimiterManager();
   private lufsMeter = new LufsMeterManager();
-  private hqModeEnabled = false;
+  private hqModeEnabled = true;
   private sslMeterCallback: ((data: SSLMeterData) => void) | null = null;
   private lufsMeterCallback: ((data: LufsMeterData) => void) | null = null;
   private meterPollId: number | null = null;
@@ -88,7 +88,7 @@ export class RealtimeAudioPlayer {
   private sslOutputBuffer: Float32Array | null = null;
   private currentLimiterCeilingOverride: number | undefined = undefined;
   private currentSslGlue: 'auto' | 'gentle' | 'firm' = 'auto';
-  private currentHqMode = false;
+  private currentHqMode = true;
   private currentOutputTrimDB = 0;
   /** When set, dry bypass boosts original to processed level (Gain Match). */
   private currentBypassGainMatchDB: number | null = null;
@@ -310,9 +310,9 @@ export class RealtimeAudioPlayer {
     };
 
     let chain: MasteringChain;
-    // Live preview never uses in-chain FIR/Faust — they cause bass buzz/rattle in realtime
-    // blocks (see PATCH 2026-06-07). Export/offline uses FIR via buildOfflineMasteringChain.
-    // HQ = 4× oversampled Flow WaveShaper ceiling; preview = 2×.
+    // Live: Flow ceiling in-chain (WaveShaper). FIR worklet runs monitor-only on the
+    // meter tap (see PATCH 2026-06-07) — same true-peak readout as export, no block buzz.
+    // HQ toggles 2× vs 4× ceiling oversampling to match preview/export quality modes.
     chain = buildMasteringChain({
       ...chainConfig,
       quality: this.hqModeEnabled && !dryBypass ? 'export' : 'preview',
