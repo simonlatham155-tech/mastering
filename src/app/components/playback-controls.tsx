@@ -197,6 +197,10 @@ export function PlaybackControls({
       const totalBarWidth = barWidth + barGap;
       const numBars = Math.floor(width / totalBarWidth);
       const processedCover = processed?.duration ?? 0;
+      const previewEndX =
+        processedCover > 0 && processedCover < dur
+          ? (processedCover / dur) * width
+          : null;
 
       for (let i = 0; i < numBars; i++) {
         const x = i * totalBarWidth;
@@ -240,9 +244,20 @@ export function PlaybackControls({
         }
 
         if (isPlayed) {
-          ctx.fillStyle = bypass ? '#d97706' : '#0891b2';
+          if (bypass) {
+            ctx.fillStyle = '#d97706';
+          } else if (useProcessedShape) {
+            ctx.fillStyle = '#0891b2';
+          } else {
+            // Beyond offline preview — original level (not mastered)
+            ctx.fillStyle = '#52525b';
+          }
         } else {
-          ctx.fillStyle = bypass ? '#3f3f46' : useProcessedShape ? '#164e63' : '#27272a';
+          ctx.fillStyle = bypass
+            ? '#3f3f46'
+            : useProcessedShape
+              ? '#164e63'
+              : '#27272a';
         }
 
         ctx.fillRect(x, y, barWidth, barHeight);
@@ -272,6 +287,17 @@ export function PlaybackControls({
           ctx.fillStyle = 'rgba(56, 189, 248, 0.45)';
           ctx.fillRect(px, height - boostH - 2, barWidth, boostH);
         }
+      }
+
+      if (previewEndX != null) {
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.55)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(previewEndX, 0);
+        ctx.lineTo(previewEndX, height);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
 
       const playheadX = (t / dur) * width;
@@ -420,8 +446,8 @@ export function PlaybackControls({
 
         {!bypassMode && processedBuffer && processedBuffer.duration < duration && (
           <span className="text-[9px] font-mono text-zinc-500">
-            Cyan = staged master · zinc = original · green/pink ticks = level delta (first{' '}
-            {Math.round(processedBuffer.duration)}s)
+            Cyan = mastered preview (first {Math.round(processedBuffer.duration)}s) · zinc =
+            original mix · dashed line = preview boundary · live play is full-track
           </span>
         )}
 

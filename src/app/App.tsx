@@ -243,11 +243,11 @@ export default function App() {
   const startWaveformPreviewRender = useCallback(
     (
       settings: ReturnType<typeof buildAppProcessingSettings>,
-      options?: { hq?: boolean }
+      options?: { exportQuality?: boolean }
     ) => {
     const generation = ++waveformRenderGenRef.current;
     setIsWaveformRendering(true);
-    const hq = options?.hq ?? hqMode;
+    const exportQuality = options?.exportQuality ?? false;
 
     const preset = getExportPreset(exportPreset);
     const ceilingDBTP = limiterCeilingOverride ?? preset.ceiling;
@@ -263,9 +263,11 @@ export default function App() {
             initialOutputTrimDB: proDynamics.outputTrimDB,
             targetLUFS: preset.lufs,
             ceilingDBTP,
-            autoStage: proDynamics.autoStageOnExport,
-            quality: hq ? 'export' : 'preview',
-            preserveMultiband: hq,
+            // Default waveform matches live listen (current trim, no staging loop).
+            // HQ / export-quality button runs full auto-staging like delivery export.
+            autoStage: exportQuality && proDynamics.autoStageOnExport,
+            quality: exportQuality ? 'export' : 'preview',
+            preserveMultiband: true,
           }
         );
         if (generation !== waveformRenderGenRef.current) return;
@@ -291,7 +293,7 @@ export default function App() {
           );
         }
 
-        if (hq) {
+        if (exportQuality) {
           toast.success('HQ waveform preview ready (export-quality first 45s)');
         }
       } catch (err) {
@@ -306,7 +308,6 @@ export default function App() {
     })();
   },
   [
-    hqMode,
     exportPreset,
     limiterCeilingOverride,
     effectiveInputTrimDB,
@@ -320,7 +321,7 @@ export default function App() {
   const scheduleWaveformPreviewRender = useCallback(
     (
       settings: ReturnType<typeof buildAppProcessingSettings>,
-      options?: { hq?: boolean; immediate?: boolean }
+      options?: { exportQuality?: boolean; immediate?: boolean }
     ) => {
       if (waveformPreviewScheduleRef.current) {
         clearTimeout(waveformPreviewScheduleRef.current);
@@ -736,7 +737,7 @@ export default function App() {
         if (skipChainPreviewOnceRef.current) {
           skipChainPreviewOnceRef.current = false;
         } else {
-          scheduleWaveformPreviewRender(settings, { hq: hqMode });
+          scheduleWaveformPreviewRender(settings);
         }
       })();
     }, 350);
@@ -782,7 +783,7 @@ export default function App() {
         profileAdjustments,
         proDynamics,
       });
-      scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx), { hq: hqMode });
+      scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx));
     }, 400);
 
     return () => {
@@ -796,7 +797,6 @@ export default function App() {
     exportPreset,
     logicMode,
     circuitDrive,
-    hqMode,
     matchStrength,
     profileAdjustments.lowShelfBoost,
     profileAdjustments.midRangeAdjust,
@@ -1000,7 +1000,7 @@ export default function App() {
       toast.success('⚡ Preview ready — hit play for live mastering');
 
       skipChainPreviewOnceRef.current = true;
-      scheduleWaveformPreviewRender(settings, { hq: hqMode });
+      scheduleWaveformPreviewRender(settings);
       
       // Set up playback state polling
       const pollInterval = setInterval(() => {
@@ -1318,7 +1318,7 @@ export default function App() {
     });
     toast.info('Rendering HQ waveform preview (export quality, ~45s)…');
     scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx), {
-      hq: true,
+      exportQuality: true,
       immediate: true,
     });
   };
