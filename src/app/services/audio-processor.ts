@@ -721,7 +721,7 @@ export class AudioProcessor {
   async renderWaveformPreview(
     settings: ProcessingSettings,
     inputTrimDB?: number,
-    maxSeconds: number = 45,
+    maxSeconds: number = 180,
     limiterCeilingOverride?: number,
     outputTrimDB?: number,
     sslGlue?: 'auto' | 'gentle' | 'firm',
@@ -755,7 +755,10 @@ export class AudioProcessor {
       `🎨 Waveform preview: first ${chunkSeconds.toFixed(1)}s (${quality}${preserveMultiband ? ', multiband' : ''})`
     );
 
-    const timeoutMs = quality === 'export' ? 90000 : 25000;
+    const timeoutMs =
+      quality === 'export'
+        ? Math.max(120_000, chunkSeconds * 1500)
+        : Math.max(45_000, chunkSeconds * 750);
     const renderPromise = this.renderPreviewChunk(
       previewSettings,
       0,

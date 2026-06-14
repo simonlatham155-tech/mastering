@@ -1,10 +1,12 @@
 import type { ProcessingSettings } from './audio-processor';
 import { audioProcessor } from './audio-processor';
 import { runOutputTrimStagingLoop } from './output-trim-staging-loop';
+import { resolveWaveformPreviewSeconds } from '../utils/waveform-preview-duration';
 
-/** Fewer passes than export — preview is only ~45s and should stay snappy. */
+/** Fewer passes than export — preview window is capped for render time. */
 export const WAVEFORM_PREVIEW_MAX_STAGING_ITERATIONS = 3;
-export const WAVEFORM_PREVIEW_SECONDS = 45;
+/** @deprecated Use resolveWaveformPreviewSeconds(trackDuration) */
+export const WAVEFORM_PREVIEW_SECONDS = 180;
 
 export interface WaveformPreviewStagingOptions {
   limiterCeilingOverride?: number;
@@ -42,10 +44,14 @@ export async function renderWaveformPreviewWithAutoStaging(
     targetLUFS,
     ceilingDBTP,
     autoStage = true,
-    maxSeconds = WAVEFORM_PREVIEW_SECONDS,
+    maxSeconds,
     quality = 'preview',
     preserveMultiband = false,
   } = options;
+
+  const previewSeconds =
+    maxSeconds ??
+    resolveWaveformPreviewSeconds(audioProcessor.getOriginalBuffer()?.duration ?? 0);
 
   const result = await runOutputTrimStagingLoop({
     initialOutputTrimDB,
@@ -58,7 +64,7 @@ export async function renderWaveformPreviewWithAutoStaging(
       audioProcessor.renderWaveformPreview(
         settings,
         inputTrimDB,
-        maxSeconds,
+        previewSeconds,
         limiterCeilingOverride,
         outputTrimDB,
         sslGlue,

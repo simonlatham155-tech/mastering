@@ -53,6 +53,10 @@ import {
 } from './services/batch-export';
 import { batchZipFilename } from './utils/master-export-utils';
 import { renderWaveformPreviewWithAutoStaging } from './services/waveform-preview-staging';
+import {
+  formatWaveformPreviewDuration,
+  resolveWaveformPreviewSeconds,
+} from './utils/waveform-preview-duration';
 import { computeBypassGainMatchDB } from './utils/gain-match';
 import { computeStagingTrimStep } from './utils/auto-staging';
 import { PlaybackControls } from './components/playback-controls';
@@ -251,6 +255,10 @@ export default function App() {
 
     const preset = getExportPreset(exportPreset);
     const ceilingDBTP = limiterCeilingOverride ?? preset.ceiling;
+    const trackDuration =
+      originalBuffer?.duration ?? audioProcessor.getOriginalBuffer()?.duration ?? 0;
+    const previewSeconds = resolveWaveformPreviewSeconds(trackDuration);
+    const previewLabel = formatWaveformPreviewDuration(previewSeconds);
 
     (async () => {
       try {
@@ -268,6 +276,7 @@ export default function App() {
             autoStage: exportQuality && proDynamics.autoStageOnExport,
             quality: exportQuality ? 'export' : 'preview',
             preserveMultiband: true,
+            maxSeconds: previewSeconds,
           }
         );
         if (generation !== waveformRenderGenRef.current) return;
@@ -294,7 +303,9 @@ export default function App() {
         }
 
         if (exportQuality) {
-          toast.success('HQ waveform preview ready (export-quality first 45s)');
+          toast.success(
+            `HQ waveform preview ready (export quality, first ${previewLabel})`
+          );
         }
       } catch (err) {
         if (generation !== waveformRenderGenRef.current) return;
@@ -1316,7 +1327,11 @@ export default function App() {
       profileAdjustments,
       proDynamics,
     });
-    toast.info('Rendering HQ waveform preview (export quality, ~45s)…');
+    toast.info(`Rendering HQ waveform preview (export quality, first ${formatWaveformPreviewDuration(
+      resolveWaveformPreviewSeconds(
+        originalBuffer?.duration ?? audioProcessor.getOriginalBuffer()?.duration ?? 0
+      )
+    )})…`);
     scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx), {
       exportQuality: true,
       immediate: true,
