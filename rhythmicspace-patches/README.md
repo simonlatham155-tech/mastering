@@ -82,3 +82,28 @@ Copy `rhythmicspace-patches/docs/index.html` to `docs/index.html` in your Rhythm
 
 After merge, GitHub Pages updates at:
 https://simonlatham155-tech.github.io/RhythmicSpace/
+
+---
+
+## Complete AU + MIDI Learn fix
+
+**Read `AU-COMPLETE-FIX.md` first** — the full solution:
+
+1. Upgrade JUCE to **`develop`** (AUChannelInfo fix, Aug 2025)
+2. Projucer: **Plugin wants MIDI input** ON + **Music Effect (`aumf`)**
+3. Release build → `auval -v aumf Rysp Ltha`
+4. Logic: AU MIDI-controlled Effects + sidechain; Ableton: MIDI From on track
+
+Patches: `0009` (stuck popup), `0011` (aumf + learn fix)
+
+---
+
+## Logic AU fix (-10868 Initialize) — legacy notes
+
+If Logic shows **"couldn't be opened"** and `auval` fails FIRST TIME with **-10868**:
+
+1. Read **`AU-ROOT-CAUSE.md`** — why `aumf` + channel config fails
+2. Read **`AU-INTERNET-RESEARCH.md`** — forum citations and MIDI tradeoff
+3. Apply **`0008-Fix-AU-type-aufx-definitive.patch`** (or follow **`AU-FIX-ONCE.md`**)
+4. Validate: `auval -v aufx Rysp Ltha` (not `aumf`)
+5. Run **`diagnose-au.sh`** if still stuck
