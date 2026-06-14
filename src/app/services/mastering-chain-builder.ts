@@ -62,8 +62,6 @@ export interface MasteringChainConfig {
   limiterCeilingOverride?: number;
   /** SSL bus glue macro — gentle/firm override genre auto */
   sslGlue?: 'auto' | 'gentle' | 'firm';
-  /** Live playback — skip heavy multiband/clipper; export keeps full chain */
-  livePreview?: boolean;
 }
 
 export interface MasteringChain {
@@ -375,11 +373,6 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     bypassGainMatchDB,
     sslGlue,
   } = config;
-
-  const livePreview = config.livePreview ?? false;
-  const colorAmount = livePreview
-    ? Math.min(params.genreBehavior.colorAmount, 0.4)
-    : params.genreBehavior.colorAmount;
   
   const loudnessStyle = params.genreBehavior.loudnessStyle;
   const styleParams = LOUDNESS_STYLE_PARAMS[loudnessStyle] || LOUDNESS_STYLE_PARAMS.balanced;
@@ -489,7 +482,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   nodesToDispose.push(profileEQ.input, profileEQ.output);
   
   // === STAGE 1: TRANSFORMER (Harmonic Enhancement) ===
-  if (!useMinimalMaster && colorAmount > 0) {
+  if (!useMinimalMaster && params.genreBehavior.colorAmount > 0) {
     console.log('   [1] Transformer: ACTIVE');
     const transformerConfig = getTransformerConfig(settings.genreId);
     const transformer = buildTransformerStage(context, quality, transformerConfig);
@@ -502,7 +495,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   }
   
   // === STAGE 2: TAPE SATURATION ===
-  if (!useMinimalMaster && colorAmount > 0) {
+  if (!useMinimalMaster && params.genreBehavior.colorAmount > 0) {
     console.log('   [2] Tape: ACTIVE');
     const tapeConfig = getTapeConfig(settings.genreId, settings.circuitDrive);
     const tape = buildTapeStage(context, quality, tapeConfig);
@@ -518,8 +511,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   // PARITY FIX: Multiband runs in BOTH preview and export if genre needs it.
   // Old code gated this behind `enableHeavyProcessing` (export-only) — that meant
   // DnB/Techno/Dubstep/Hardstyle preview was missing an entire processing stage.
-  const useMultiband =
-    params.genreBehavior.useMultiband && !useMinimalMaster && !livePreview;
+  const useMultiband = params.genreBehavior.useMultiband && !useMinimalMaster;
   if (useMultiband) {
     console.log('   [3] Multiband: ACTIVE (4-band split)');
     const multiband = createMultibandStage(context, settings, quality);
@@ -528,11 +520,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     parameters.multibandInput = multiband.input;
     nodesToDispose.push(multiband.input, multiband.output);
   } else {
-    console.log(
-      livePreview && params.genreBehavior.useMultiband
-        ? '   [3] Multiband: BYPASSED (live preview — export still uses multiband)'
-        : '   [3] Multiband: BYPASSED'
-    );
+    console.log('   [3] Multiband: BYPASSED');
   }
   
   // === STAGE 4: SSL BUS GLUE COMPRESSION (loudnessStyle-aware) ===
@@ -574,7 +562,6 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   const useClipper =
     params.genreBehavior.useClipper &&
     !useMinimalMaster &&
-    !livePreview &&
     settings.logicMode === 'brickwall';
   if (useClipper) {
     console.log('   [5b] Clipper: ACTIVE');
@@ -695,11 +682,6 @@ function createSSLCompressor(
   outputAnalyser.fftSize = 256;
   outputAnalyser.smoothingTimeConstant = 0.65;
 
-  const sidechainHPF = context.createBiquadFilter();
-  sidechainHPF.type = 'highpass';
-  sidechainHPF.frequency.value = 100;
-  sidechainHPF.Q.value = 0.707;
-  
   const compressor = context.createDynamicsCompressor();
   
   if (sslGlue === 'gentle') {
@@ -765,10 +747,10 @@ function createSSLCompressor(
     `attack=${(compressor.attack.value * 1000).toFixed(1)}ms, release=${(compressor.release.value * 1000).toFixed(0)}ms, ` +
     `knee=${compressor.knee.value}dB`);
   
+  input.connect(compressor);
+  compressor.connect(output);
   input.connect(inputAnalyser);
-  inputAnalyser.connect(compressor);
-  compressor.connect(outputAnalyser);
-  outputAnalyser.connect(output);
+  output.connect(outputAnalyser);
   
   return {
     input,
@@ -816,8 +798,7 @@ function createMidSideProcessor(
   
   // Width control on Side channel
   const widthControl = context.createGain();
-  const requestedWidth = finiteDB(params.source.requestedWidth ?? 1.0, 1.0);
-  const widthAmount = Math.max(0, Math.min(2.0, requestedWidth));
+  const widthAmount = Math.max(0, Math.min(2.0, finiteDB(params.genreBehavior.width, 1.0)));
   widthControl.gain.value = widthAmount;
   
   sideGain.connect(widthControl);
@@ -826,9 +807,8 @@ function createMidSideProcessor(
   if (params.genreBehavior.forceMonoBass) {
     const monoBassHPF = context.createBiquadFilter();
     monoBassHPF.type = 'highpass';
-    // Gentle side HPF — aggressive cut hollows wide/import mixes (thin / hi-pass sound).
-    monoBassHPF.frequency.value = Math.min(params.genreBehavior.monoBassHz ?? 120, 80);
-    monoBassHPF.Q.value = 0.5;
+    monoBassHPF.frequency.value = params.genreBehavior.monoBassHz ?? 120;
+    monoBassHPF.Q.value = 0.707;
     
     // Insert HPF between sideGain and widthControl
     // Rebuild: sideGain → HPF → widthControl

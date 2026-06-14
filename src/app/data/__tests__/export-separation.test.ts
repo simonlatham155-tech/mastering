@@ -122,13 +122,12 @@ describe('Export Preset Separation (Architecture Guard)', () => {
       logicMode: 'dynamics'
     });
     
-    // DnB is "bass-heavy" - mono-bass ON
-    expect(spotify.genreBehavior.forceMonoBass).toBe(true);
+    // Mono-bass is opt-in (Pro panel) — genre toggle alone does not enable side HPF
+    expect(spotify.genreBehavior.forceMonoBass).toBe(false);
     expect(spotify.genreBehavior.useMidSide).toBe(true);
     
-    // Must be identical across export presets
-    expect(club.genreBehavior.forceMonoBass).toBe(true);
-    expect(extreme.genreBehavior.forceMonoBass).toBe(true);
+    expect(club.genreBehavior.forceMonoBass).toBe(false);
+    expect(extreme.genreBehavior.forceMonoBass).toBe(false);
     
     expect(spotify.genreBehavior.monoBassHz).toBe(club.genreBehavior.monoBassHz);
     expect(club.genreBehavior.monoBassHz).toBe(extreme.genreBehavior.monoBassHz);

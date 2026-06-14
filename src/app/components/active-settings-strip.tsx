@@ -97,7 +97,7 @@ export function ActiveSettingsStrip({
         />
         <AppliedRow
           label="Export limiter"
-          detail="Faust WASM compressor + brickwall ceiling (fallback: FIR worklet)"
+          detail="4× FIR Flow true-peak ceiling (Faust fallback if worklet unavailable)"
         />
       </div>
     </div>

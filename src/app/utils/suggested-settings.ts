@@ -41,7 +41,8 @@ export function getSuggestedProDynamics(
     outputTrimDB: 0,
     limiterCeilingDBTP: presetCeilingDBTP,
     sslGlue,
-    forceMonoBass: false,
-    monoBassHz: genre?.biases.monoBassHz ?? 80,
+    // UI hint only — engine enables mono bass only when user checks Pro panel.
+    forceMonoBass: genre?.toggles.forceMonoBass ?? false,
+    monoBassHz: genre?.biases.monoBassHz ?? 120,
   };
 }

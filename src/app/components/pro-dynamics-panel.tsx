@@ -61,7 +61,7 @@ export function ProDynamicsPanel({
   const suggested = getSuggestedProDynamics(gearProfile, presetCeilingDBTP, autoInputTrimDB);
   const effectiveInputTrim = settings.inputTrimDB ?? autoInputTrimDB ?? 0;
   const effectiveCeiling = settings.limiterCeilingDBTP ?? presetCeilingDBTP;
-  const effectiveForceMonoBass = settings.forceMonoBass ?? suggested.forceMonoBass;
+  const effectiveForceMonoBass = settings.forceMonoBass === true;
 
   return (
     <div className="space-y-4">
@@ -243,7 +243,7 @@ export function ProDynamicsPanel({
               onClick={() => onChange(update(settings, 'forceMonoBass', null))}
               className="text-[10px] font-mono text-zinc-500 hover:text-cyan-400"
             >
-              Use genre default ({suggested.forceMonoBass ? 'on' : 'off'})
+              Reset (off — genre suggests {suggested.forceMonoBass ? 'on' : 'off'})
             </button>
           )}
         </div>

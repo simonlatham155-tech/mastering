@@ -62,9 +62,11 @@ export function profileAdjustmentsToUserOverrides(
     airTilt: profileAdjustments.highShelfBoost,
   };
 
-  if (proDynamics?.forceMonoBass != null) {
-    overrides.forceMonoBass = proDynamics.forceMonoBass;
+  if (proDynamics?.forceMonoBass === true) {
+    overrides.forceMonoBass = true;
     overrides.monoBassHz = proDynamics.monoBassHz;
+  } else if (proDynamics?.forceMonoBass === false) {
+    overrides.forceMonoBass = false;
   }
 
   return overrides;
@@ -81,7 +83,6 @@ export function buildProDynamicsForGear(
   return {
     ...DEFAULT_PRO_DYNAMICS,
     sslGlue: suggested.sslGlue,
-    forceMonoBass: suggested.forceMonoBass,
     monoBassHz: suggested.monoBassHz,
     autoStageOnExport: true,
     autoStageLive: false,

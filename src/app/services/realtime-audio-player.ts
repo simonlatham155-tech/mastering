@@ -80,7 +80,7 @@ export class RealtimeAudioPlayer {
   private isSwitchingBypass: boolean = false;
   private limiterMeter = new OversamplingLimiterManager();
   private lufsMeter = new LufsMeterManager();
-  private hqModeEnabled = true;
+  private hqModeEnabled = false;
   private sslMeterCallback: ((data: SSLMeterData) => void) | null = null;
   private lufsMeterCallback: ((data: LufsMeterData) => void) | null = null;
   private meterPollId: number | null = null;
@@ -88,7 +88,7 @@ export class RealtimeAudioPlayer {
   private sslOutputBuffer: Float32Array | null = null;
   private currentLimiterCeilingOverride: number | undefined = undefined;
   private currentSslGlue: 'auto' | 'gentle' | 'firm' = 'auto';
-  private currentHqMode = true;
+  private currentHqMode = false;
   private currentOutputTrimDB = 0;
   /** When set, dry bypass boosts original to processed level (Gain Match). */
   private currentBypassGainMatchDB: number | null = null;
@@ -307,7 +307,6 @@ export class RealtimeAudioPlayer {
           ? this.currentBypassGainMatchDB
           : undefined,
       sslGlue,
-      livePreview: true,
     };
 
     let chain: MasteringChain;
@@ -654,6 +653,7 @@ export class RealtimeAudioPlayer {
     this.currentInputTrimDB = inputTrimDB;
     this.currentLimiterCeilingOverride = limiterCeilingOverride;
     this.currentSslGlue = sslGlue ?? 'auto';
+    this.currentHqMode = this.hqModeEnabled;
     
     console.log('🔄 Rebuilding mastering chain...');
     
@@ -904,12 +904,8 @@ export class RealtimeAudioPlayer {
     this.limiterMeter.dispose();
     this.lufsMeter.dispose();
 
-    if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
-
     this.audioBuffer = null;
+    this.audioContext = null;
   }
   
   /**

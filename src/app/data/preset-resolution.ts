@@ -147,7 +147,8 @@ export function resolveProcessingPlan(input: ResolutionInput): ProcessingPlan {
   // Toggles: User override OR genre default
   const requestedMultiband = userOverrides?.useMultiband ?? genrePreset.toggles.useMultiband;
   const useClipper = userOverrides?.useClipper ?? genrePreset.toggles.useClipper;
-  const forceMonoBass = userOverrides?.forceMonoBass ?? genrePreset.toggles.forceMonoBass;
+  // Mono bass side HPF is opt-in only (Pro panel) — genre toggle alone does not enable it.
+  const forceMonoBass = userOverrides?.forceMonoBass === true;
   
   // M/S cannot be overridden (engine architectural requirement)
   const useMidSide = userOverrides?.useMidSide ?? genrePreset.toggles.useMidSide;
