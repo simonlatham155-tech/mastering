@@ -64,6 +64,9 @@ export function profileAdjustmentsToUserOverrides(
 
   if (proDynamics?.forceMonoBass != null) {
     overrides.forceMonoBass = proDynamics.forceMonoBass;
+  }
+  // Hz applies whenever mono bass is not explicitly off (genre default or user on).
+  if (proDynamics?.forceMonoBass !== false && proDynamics?.monoBassHz != null) {
     overrides.monoBassHz = proDynamics.monoBassHz;
   }
 

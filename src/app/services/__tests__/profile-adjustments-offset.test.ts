@@ -72,4 +72,44 @@ describe('profile adjustment offsets', () => {
     expect(plan.genreBehavior.mudCut).toBe(-2);
     expect(plan.genreBehavior.airTilt).toBe(-0.5);
   });
+
+  it('passes monoBassHz when forceMonoBass is null (genre default)', () => {
+    const overrides = profileAdjustmentsToUserOverrides(
+      { lowShelfBoost: 0, midRangeAdjust: 0, highShelfBoost: 0, stereoWidth: 50 },
+      'dubstep',
+      {
+        inputTrimDB: null,
+        outputTrimDB: 0,
+        sslGlue: 'auto',
+        autoStageOnExport: true,
+        autoStageLive: false,
+        limiterCeilingDBTP: null,
+        forceMonoBass: null,
+        monoBassHz: 95,
+      }
+    );
+
+    expect(overrides.forceMonoBass).toBeUndefined();
+    expect(overrides.monoBassHz).toBe(95);
+  });
+
+  it('blocks monoBassHz when forceMonoBass is explicitly false', () => {
+    const overrides = profileAdjustmentsToUserOverrides(
+      { lowShelfBoost: 0, midRangeAdjust: 0, highShelfBoost: 0, stereoWidth: 50 },
+      'dubstep',
+      {
+        inputTrimDB: null,
+        outputTrimDB: 0,
+        sslGlue: 'auto',
+        autoStageOnExport: true,
+        autoStageLive: false,
+        limiterCeilingDBTP: null,
+        forceMonoBass: false,
+        monoBassHz: 95,
+      }
+    );
+
+    expect(overrides.forceMonoBass).toBe(false);
+    expect(overrides.monoBassHz).toBeUndefined();
+  });
 });

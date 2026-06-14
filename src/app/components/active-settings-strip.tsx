@@ -99,8 +99,16 @@ export function ActiveSettingsStrip({
           }
         />
         <AppliedRow
+          label="Live limiter"
+          detail={
+            hqMode
+              ? 'Flow WaveShaper ceiling (4× OS) + FIR true-peak meter tap'
+              : 'Flow WaveShaper ceiling (2× OS) + FIR true-peak meter tap'
+          }
+        />
+        <AppliedRow
           label="Export limiter"
-          detail="4× FIR Flow true-peak ceiling (Faust fallback if worklet unavailable)"
+          detail="4× FIR true-peak ceiling in-file (Faust / WaveShaper fallback)"
         />
       </div>
     </div>

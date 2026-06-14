@@ -22,9 +22,9 @@ export function matchingGainsToProfileAdjustments(
 
   return {
     ...current,
-    lowShelfBoost: clamp(current.lowShelfBoost + lowDelta, -4, 8),
+    lowShelfBoost: clamp(current.lowShelfBoost + lowDelta, -3, 3),
     midRangeAdjust: clamp(current.midRangeAdjust + midDelta, -3, 3),
-    highShelfBoost: clamp(current.highShelfBoost + highDelta, -2, 6),
+    highShelfBoost: clamp(current.highShelfBoost + highDelta, -3, 3),
   };
 }
 

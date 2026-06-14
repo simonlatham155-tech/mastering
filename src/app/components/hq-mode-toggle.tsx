@@ -36,7 +36,7 @@ export function HQModeToggle({
       {/* Header */}
       <div className="flex items-center gap-2">
         <span className="text-xs font-mono text-zinc-400 uppercase tracking-wider">
-          Meter quality
+          Preview quality
         </span>
         <div className="group relative">
           <Info className="w-3 h-3 text-zinc-600 cursor-help" />
@@ -163,11 +163,14 @@ export function HQModeToggle({
             <div className="space-y-2 text-[9px] font-mono text-zinc-400 leading-relaxed">
               <div className="flex items-start gap-2">
                 <span className="text-purple-400 shrink-0">Live preview:</span>
-                <span>4× FIR true-peak metering on the output tap (passthrough audio).</span>
+                <span>
+                  Rebuilds the mastering chain with 4× ceiling oversampling. FIR worklet runs
+                  monitor-only on the meter tap (passthrough audio).
+                </span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-emerald-400 shrink-0">Export file:</span>
-                <span>Faust WASM limiter on export files + 16-bit delivery WAV.</span>
+                <span>4× FIR true-peak limiter in the offline chain (Faust / WaveShaper fallback).</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-orange-400">⚠</span>

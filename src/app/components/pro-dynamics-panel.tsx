@@ -196,15 +196,15 @@ export function ProDynamicsPanel({
           />
         </div>
 
-        {/* Mono bass */}
+        {/* Mono bass — tri-state: null = genre, true/false = explicit override */}
         <div className="md:col-span-2 flex flex-wrap items-center gap-4">
           <label className="relative flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
-              checked={settings.forceMonoBass === true}
+              checked={effectiveForceMonoBass}
               onChange={(e) =>
                 onChange(
-                  update(settings, 'forceMonoBass', e.target.checked ? true : null)
+                  update(settings, 'forceMonoBass', e.target.checked ? true : false)
                 )
               }
               className="rounded border-zinc-700"
@@ -214,7 +214,7 @@ export function ProDynamicsPanel({
               <span
                 className="inline-block w-1 h-3 rounded-full bg-cyan-400"
                 style={{ boxShadow: '0 0 4px rgba(34, 211, 238, 0.8)' }}
-                title={`Genre suggests: ${suggested.forceMonoBass ? 'on' : 'off'}`}
+                title={`Following genre (${suggested.forceMonoBass ? 'on' : 'off'})`}
                 aria-hidden
               />
             )}

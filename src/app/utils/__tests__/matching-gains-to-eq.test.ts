@@ -53,7 +53,8 @@ describe('matching-gains-to-eq', () => {
     );
 
     expect(next.midRangeAdjust).toBe(-3);
-    expect(next.highShelfBoost).toBe(-2);
+    expect(next.highShelfBoost).toBe(-3);
+    expect(next.lowShelfBoost).toBe(-3);
   });
 
   it('maps auto-gain to output trim delta', () => {

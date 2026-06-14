@@ -11,7 +11,6 @@ import { LUFSMeter } from './components/lufs-meter';
 import { ExportPanel, ExportPresetId } from './components/export-panel';
 import { HeritageAlert } from './components/heritage-alert';
 import { AudioInputSection } from './components/audio-input-section';
-import { LiveModeToggle } from './components/live-mode-toggle';
 import { PerformanceClipMeter } from './components/performance-clip-meter';
 import { ChunkSelector } from './components/chunk-selector';
 import { SignalChainVisualizer } from './components/signal-chain-visualizer';
@@ -149,7 +148,6 @@ export default function App() {
   const uploadGenRef = useRef(0);
   const waveformRenderGenRef = useRef(0);
   const waveformSkipTrimRerenderRef = useRef(false);
-  const waveformSkipTonalMatchRerenderRef = useRef(false);
   const skipChainPreviewOnceRef = useRef(false);
   const waveformPreviewScheduleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chainRebuildGenRef = useRef(0);
@@ -451,7 +449,6 @@ export default function App() {
     }
 
     referenceMatchDebounceRef.current = setTimeout(() => {
-      waveformSkipTonalMatchRerenderRef.current = true;
       handleApplyReferenceMatch(matchStrength);
     }, matchStrength === 0 ? 0 : 300);
 
@@ -464,11 +461,6 @@ export default function App() {
   
   // Mix analysis summary (shown in unified setup panel after upload)
   const [mixSetup, setMixSetup] = useState<MixSetupSummary | null>(null);
-  
-  // Performance mode removed (2026-02-16) - studio mastering only
-  const [zeroLatencyMode, setZeroLatencyMode] = useState(false);
-  const [autoMonoBass, setAutoMonoBass] = useState(false);
-  const [clipIndicator, setClipIndicator] = useState(false);
   
   // Reference-Grade DSP State
   const [truePeakDBTP, setTruePeakDBTP] = useState(-1.0);
@@ -744,7 +736,7 @@ export default function App() {
         if (skipChainPreviewOnceRef.current) {
           skipChainPreviewOnceRef.current = false;
         } else {
-          scheduleWaveformPreviewRender(settings, { hq: false });
+          scheduleWaveformPreviewRender(settings, { hq: hqMode });
         }
       })();
     }, 350);
@@ -777,11 +769,6 @@ export default function App() {
       return;
     }
 
-    if (waveformSkipTonalMatchRerenderRef.current) {
-      waveformSkipTonalMatchRerenderRef.current = false;
-      return;
-    }
-
     if (waveformDebounceRef.current) {
       clearTimeout(waveformDebounceRef.current);
     }
@@ -795,7 +782,7 @@ export default function App() {
         profileAdjustments,
         proDynamics,
       });
-      scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx), { hq: false });
+      scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx), { hq: hqMode });
     }, 400);
 
     return () => {
@@ -809,6 +796,8 @@ export default function App() {
     exportPreset,
     logicMode,
     circuitDrive,
+    hqMode,
+    matchStrength,
     profileAdjustments.lowShelfBoost,
     profileAdjustments.midRangeAdjust,
     profileAdjustments.highShelfBoost,

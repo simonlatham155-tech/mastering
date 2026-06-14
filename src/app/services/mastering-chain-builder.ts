@@ -807,9 +807,9 @@ function createMidSideProcessor(
   if (params.genreBehavior.forceMonoBass) {
     const monoBassHPF = context.createBiquadFilter();
     monoBassHPF.type = 'highpass';
-    // Gentler side HPF — high Q / high cutoff hollow wide mixes (thin / hi-pass sound).
+    // Gentler side HPF — high Q hollows wide mixes; cutoff follows resolved plan Hz.
     const cutoffHz = params.genreBehavior.monoBassHz ?? 120;
-    monoBassHPF.frequency.value = Math.min(cutoffHz, 100);
+    monoBassHPF.frequency.value = cutoffHz;
     monoBassHPF.Q.value = 0.5;
     
     // Insert HPF between sideGain and widthControl
