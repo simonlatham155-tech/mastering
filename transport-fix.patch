@@ -1,0 +1,391 @@
+From 087eb7eed92077caa32cee8ee243ef642c89bf75 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 23 Jun 2026 17:45:27 +0000
+Subject: [PATCH] Fix stop button + implement microphone recording
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stop button:
+- Move TransportBtn out of Transport component body — React was
+  recreating the component type on every render, causing unmount/
+  remount on state changes which swallowed clicks mid-transition
+- Stop button now correctly disabled when already stopped
+- All transport buttons use stable component reference
+
+Record button:
+- Add src/engine/recorder.ts: getUserMedia + MediaRecorder wrapper
+  startRecording() opens mic stream; stopRecording() returns AudioBuffer
+  decoded from the captured blob (webm/opus or webm fallback)
+- handleRecord arms mic if a track is armed, calls startPlayback so
+  existing clips play back during recording (overdub)
+- handleStop stops MediaRecorder, decodes blob, inserts clip at the
+  beat position where recording started on the armed track
+- Error toasts for: no track armed, mic permission denied, device error
+- Record button pulses red while capturing; play/skip disabled during record
+---
+ src/components/transport/Transport.tsx | 184 ++++++++++++++++++-------
+ src/engine/recorder.ts                 |  78 +++++++++++
+ 2 files changed, 214 insertions(+), 48 deletions(-)
+ create mode 100644 src/engine/recorder.ts
+
+diff --git a/src/components/transport/Transport.tsx b/src/components/transport/Transport.tsx
+index 803e98b..5206e5b 100644
+--- a/src/components/transport/Transport.tsx
++++ b/src/components/transport/Transport.tsx
+@@ -13,10 +13,45 @@ import {
+ } from 'lucide-react';
+ import { useDAWStore } from '@/store/daw-store';
+ import { audioEngine } from '@/engine/audio-engine';
++import { micRecorder } from '@/engine/recorder';
+ import { formatTime, formatBeatPosition, beatsToSeconds } from '@/utils/beats';
+ import { cn } from '@/utils/cn';
+ import { ProjectBar } from '@/components/project/ProjectBar';
+ 
++// ─── Moved outside Transport so React doesn't remount on every render ─────────
++function TransportBtn({
++  children,
++  onClick,
++  active,
++  danger,
++  title,
++  disabled,
++}: {
++  children: React.ReactNode;
++  onClick: () => void;
++  active?: boolean;
++  danger?: boolean;
++  title?: string;
++  disabled?: boolean;
++}) {
++  return (
++    <button
++      onClick={onClick}
++      title={title}
++      disabled={disabled}
++      className={cn(
++        'w-9 h-9 flex items-center justify-center rounded transition-all',
++        active && !danger && 'bg-[#6c63ff] text-white',
++        active && danger && 'bg-[#ef4444] text-white animate-pulse',
++        !active && 'bg-[#1a1a24] text-[#8888aa] hover:bg-[#22222e] hover:text-[#e8e8f0]',
++        disabled && 'opacity-40 cursor-not-allowed pointer-events-none'
++      )}
++    >
++      {children}
++    </button>
++  );
++}
++
+ function BpmInput() {
+   const bpm = useDAWStore((s) => s.project.bpm);
+   const setBpm = useDAWStore((s) => s.setBpm);
+@@ -86,12 +121,13 @@ function TimeDisplay() {
+ }
+ 
+ export function Transport() {
+-  const state = useDAWStore((s) => s.transport.state);
++  const transportState = useDAWStore((s) => s.transport.state);
+   const position = useDAWStore((s) => s.transport.position);
+   const loopEnabled = useDAWStore((s) => s.transport.loopEnabled);
+   const metronomeEnabled = useDAWStore((s) => s.transport.metronomeEnabled);
+   const masterVolume = useDAWStore((s) => s.masterVolume);
+   const showMixer = useDAWStore((s) => s.ui.showMixer);
++  const tracks = useDAWStore((s) => s.tracks);
+ 
+   const play = useDAWStore((s) => s.play);
+   const pause = useDAWStore((s) => s.pause);
+@@ -102,11 +138,18 @@ export function Transport() {
+   const toggleMetronome = useDAWStore((s) => s.toggleMetronome);
+   const setMasterVolume = useDAWStore((s) => s.setMasterVolume);
+   const toggleMixer = useDAWStore((s) => s.toggleMixer);
++  const addClip = useDAWStore((s) => s.addClip);
++
++  const isPlaying = transportState === 'playing';
++  const isRecording = transportState === 'recording';
++  const isStopped = transportState === 'stopped';
+ 
+-  const isPlaying = state === 'playing';
+-  const isRecording = state === 'recording';
++  // Beat at which recording started, so we place the clip at the right position
++  const recordStartBeatRef = useRef(0);
++  const [recordError, setRecordError] = useState<string | null>(null);
+ 
+   const handlePlay = useCallback(async () => {
++    if (isRecording) return;
+     await audioEngine.init();
+     await audioEngine.resume();
+     if (isPlaying) {
+@@ -116,24 +159,65 @@ export function Transport() {
+       play();
+       audioEngine.startPlayback(position);
+     }
+-  }, [isPlaying, pause, play, position]);
++  }, [isPlaying, isRecording, pause, play, position]);
+ 
+-  const handleStop = useCallback(() => {
++  const handleStop = useCallback(async () => {
++    if (isRecording) {
++      // Stop recording and save the clip
++      try {
++        const audioBuffer = await micRecorder.stopRecording();
++        const armedTrack = useDAWStore.getState().tracks.find((t) => t.armed);
++        if (armedTrack) {
++          const bpm = useDAWStore.getState().project.bpm;
++          const durationBeats = (audioBuffer.duration / 60) * bpm;
++          addClip(armedTrack.id, {
++            startBeat: recordStartBeatRef.current,
++            durationBeats,
++            name: 'Recording',
++            color: '#ef4444',
++            audioBuffer,
++            gain: 1.0,
++            fadeIn: 0,
++            fadeOut: 0,
++          });
++        }
++      } catch (err) {
++        console.error('Recording stop failed:', err);
++      }
++    }
+     stop();
+     audioEngine.stopPlayback();
+-  }, [stop]);
++  }, [isRecording, stop, addClip]);
+ 
+   const handleRecord = useCallback(async () => {
+-    await audioEngine.init();
+-    await audioEngine.resume();
+     if (isRecording) {
+-      stop();
+-      audioEngine.stopPlayback();
+-    } else {
++      await handleStop();
++      return;
++    }
++
++    setRecordError(null);
++    const armedTrack = tracks.find((t) => t.armed);
++    if (!armedTrack) {
++      setRecordError('Arm a track first (click the mic icon on a track)');
++      setTimeout(() => setRecordError(null), 3000);
++      return;
++    }
++
++    try {
++      await audioEngine.init();
++      await audioEngine.resume();
++      await micRecorder.startRecording();
++      recordStartBeatRef.current = position;
+       record();
+       audioEngine.startPlayback(position);
++    } catch (err) {
++      const msg = err instanceof Error ? err.message : String(err);
++      setRecordError(msg.includes('Permission') || msg.includes('denied')
++        ? 'Microphone access denied'
++        : 'Could not access microphone');
++      setTimeout(() => setRecordError(null), 4000);
+     }
+-  }, [isRecording, stop, record, position]);
++  }, [isRecording, tracks, position, record, handleStop]);
+ 
+   useEffect(() => {
+     audioEngine.setMasterVolume(masterVolume);
+@@ -155,32 +239,15 @@ export function Transport() {
+     return () => window.removeEventListener('keydown', handleKey);
+   }, [handlePlay, handleStop]);
+ 
+-  const TransportBtn = ({
+-    children,
+-    onClick,
+-    active,
+-    danger,
+-    title,
+-  }: {
+-    children: React.ReactNode;
+-    onClick: () => void;
+-    active?: boolean;
+-    danger?: boolean;
+-    title?: string;
+-  }) => (
+-    <button
+-      onClick={onClick}
+-      title={title}
+-      className={cn(
+-        'w-9 h-9 flex items-center justify-center rounded transition-all',
+-        active && !danger && 'bg-[#6c63ff] text-white',
+-        active && danger && 'bg-[#ef4444] text-white',
+-        !active && 'bg-[#1a1a24] text-[#8888aa] hover:bg-[#22222e] hover:text-[#e8e8f0]'
+-      )}
+-    >
+-      {children}
+-    </button>
+-  );
++  const handleSkipForward = useCallback(() => {
++    const { timeSignature } = useDAWStore.getState().project;
++    setPosition(position + timeSignature.numerator);
++  }, [position, setPosition]);
++
++  const handleReturnToStart = useCallback(() => {
++    handleStop();
++    setPosition(0);
++  }, [handleStop, setPosition]);
+ 
+   return (
+     <div className="flex items-center gap-4 px-4 py-2 bg-[#111118] border-b border-[#2a2a38] h-14 shrink-0">
+@@ -201,34 +268,53 @@ export function Transport() {
+ 
+       {/* Transport controls */}
+       <div className="flex items-center gap-1.5">
+-        <TransportBtn
+-          onClick={() => { handleStop(); setPosition(0); }}
+-          title="Return to start (Home)"
+-        >
++        <TransportBtn onClick={handleReturnToStart} title="Return to start (Home)">
+           <SkipBack size={14} />
+         </TransportBtn>
+-        <TransportBtn onClick={handlePlay} active={isPlaying} title="Play/Pause (Space)">
++
++        <TransportBtn
++          onClick={handlePlay}
++          active={isPlaying}
++          disabled={isRecording}
++          title="Play/Pause (Space)"
++        >
+           {isPlaying ? <Pause size={15} /> : <Play size={15} />}
+         </TransportBtn>
+-        <TransportBtn onClick={handleStop} title="Stop (Home)">
++
++        <TransportBtn
++          onClick={handleStop}
++          active={false}
++          disabled={isStopped}
++          title="Stop (Home)"
++        >
+           <Square size={13} />
+         </TransportBtn>
++
+         <TransportBtn
+           onClick={handleRecord}
+           active={isRecording}
+-          danger
+-          title="Record"
++          danger={isRecording}
++          title={isRecording ? 'Stop recording' : 'Record (arm a track first)'}
+         >
+           <Circle size={13} />
+         </TransportBtn>
++
+         <TransportBtn
+-          onClick={() => setPosition(position + useDAWStore.getState().project.timeSignature.numerator)}
+-          title="Skip forward"
++          onClick={handleSkipForward}
++          disabled={isRecording}
++          title="Skip forward one bar"
+         >
+           <SkipForward size={14} />
+         </TransportBtn>
+       </div>
+ 
++      {/* Record error toast */}
++      {recordError && (
++        <span className="text-[11px] text-[#ef4444] bg-[#ef444422] border border-[#ef444444] rounded px-2 py-1 animate-pulse">
++          {recordError}
++        </span>
++      )}
++
+       <div className="w-px h-8 bg-[#2a2a38]" />
+ 
+       {/* Position display */}
+@@ -281,3 +367,5 @@ export function Transport() {
+     </div>
+   );
+ }
++
++import React from 'react';
+diff --git a/src/engine/recorder.ts b/src/engine/recorder.ts
+new file mode 100644
+index 0000000..f1ff314
+--- /dev/null
++++ b/src/engine/recorder.ts
+@@ -0,0 +1,78 @@
++/**
++ * Microphone recorder — wraps getUserMedia + MediaRecorder.
++ * Call startRecording() to begin capturing; stopRecording() returns an AudioBuffer.
++ */
++
++import { audioEngine } from './audio-engine';
++
++class MicRecorder {
++  private mediaRecorder: MediaRecorder | null = null;
++  private chunks: Blob[] = [];
++  private stream: MediaStream | null = null;
++
++  get isRecording(): boolean {
++    return this.mediaRecorder?.state === 'recording';
++  }
++
++  async startRecording(): Promise<void> {
++    if (this.isRecording) return;
++
++    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
++    this.chunks = [];
++
++    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
++      ? 'audio/webm;codecs=opus'
++      : MediaRecorder.isTypeSupported('audio/webm')
++      ? 'audio/webm'
++      : '';
++
++    this.mediaRecorder = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
++
++    this.mediaRecorder.ondataavailable = (e) => {
++      if (e.data.size > 0) this.chunks.push(e.data);
++    };
++
++    this.mediaRecorder.start(100);
++  }
++
++  stopRecording(): Promise<AudioBuffer> {
++    return new Promise((resolve, reject) => {
++      if (!this.mediaRecorder || !this.isRecording) {
++        reject(new Error('Not recording'));
++        return;
++      }
++
++      this.mediaRecorder.onstop = async () => {
++        try {
++          const blob = new Blob(this.chunks, { type: this.mediaRecorder?.mimeType ?? 'audio/webm' });
++          const arrayBuffer = await blob.arrayBuffer();
++          await audioEngine.init();
++          const audioBuffer = await audioEngine.audioContext!.decodeAudioData(arrayBuffer);
++          resolve(audioBuffer);
++        } catch (err) {
++          reject(err);
++        } finally {
++          this.stream?.getTracks().forEach((t) => t.stop());
++          this.stream = null;
++          this.mediaRecorder = null;
++          this.chunks = [];
++        }
++      };
++
++      this.mediaRecorder.stop();
++    });
++  }
++
++  cancel(): void {
++    if (this.mediaRecorder && this.isRecording) {
++      this.mediaRecorder.onstop = null;
++      this.mediaRecorder.stop();
++    }
++    this.stream?.getTracks().forEach((t) => t.stop());
++    this.stream = null;
++    this.mediaRecorder = null;
++    this.chunks = [];
++  }
++}
++
++export const micRecorder = new MicRecorder();
+-- 
+2.43.0
+
