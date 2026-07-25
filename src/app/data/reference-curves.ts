@@ -49,7 +49,8 @@ export interface ReferenceCurve {
   visualProfile?: {
     swooshShape?: string;    // Visual "ghost" shape (e.g., "nike", "flat", "smile")
     highlightRegion?: string; // Which region to emphasize (e.g., "high-mids", "sub", "air")
-    dimRegion?: string;       // Which region to de-emphasize
+    dimRegion?: string | null; // Which region to de-emphasize
+    glowType?: string;
   };
   dspBehavior?: {
     mode?: string;           // DSP effect mode (e.g., "pulse", "wallOfSound", "punch", "hyperEnergy")

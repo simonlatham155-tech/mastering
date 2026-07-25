@@ -21,13 +21,13 @@ function makeSineBuffer(
       duration: len / sr,
       getChannelData: (ch: number) => new Float32Array(len),
       copyToChannel: (source: Float32Array, ch: number) => {
-        (buffer as { channels: Float32Array[] }).channels[ch].set(source);
+        (buffer as { channels: Float32Array<ArrayBuffer>[] }).channels[ch].set(source);
       },
     }),
   };
 
   const buffer = ctx.createBuffer(2, length, sampleRate) as AudioBuffer & {
-    channels: Float32Array[];
+    channels: Float32Array<ArrayBuffer>[];
   };
   buffer.channels = [new Float32Array(length), new Float32Array(length)];
 

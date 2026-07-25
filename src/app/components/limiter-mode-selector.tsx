@@ -1,6 +1,5 @@
-import { useState } from 'motion/react';
 import { Shield, Zap, Flame, CheckCircle } from 'lucide-react';
-import { LimiterMode, LIMITER_MODES, LimiterSettings } from '../services/multi-stage-limiter';
+import { LimiterMode, LIMITER_MODES } from '../services/multi-stage-limiter';
 
 interface LimiterModeSelectorProps {
   currentMode: LimiterMode;

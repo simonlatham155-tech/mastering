@@ -13,7 +13,8 @@
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify": "npm run typecheck && npm run verify:faust && npm test && npm run build"
   },
   "dependencies": {
     "@grame/faustwasm": "^0.16.3",

@@ -13,6 +13,7 @@ import {
   resolveEffectiveInputTrimDB,
   resolveLimiterCeilingOverride,
 } from './app-processing-context';
+import type { LimiterBackend } from './mastering-chain-builder';
 
 export type { ExportQualityReport };
 export {
@@ -39,6 +40,8 @@ export interface MasterExportResult {
   iterations: number;
   staged: boolean;
   inputTrimDB: number | undefined;
+  limiterBackend: Exclude<LimiterBackend, 'bypass'>;
+  latencySamples: number;
 }
 
 /**
@@ -84,5 +87,7 @@ export async function runMasterExport(
     iterations: exportResult.iterations,
     staged: exportResult.staged,
     inputTrimDB,
+    limiterBackend: exportResult.limiterBackend,
+    latencySamples: exportResult.latencySamples,
   };
 }

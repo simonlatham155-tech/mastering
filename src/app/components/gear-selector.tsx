@@ -165,8 +165,8 @@ export function GearSelector({ selectedProfile, onChange, variant = 'default' }:
           <div className="grid grid-cols-2 gap-x-3 gap-y-1">
             <div className="text-sm text-zinc-600 font-mono">Width: <span className="text-purple-400">{profile?.stereoWidth}%</span></div>
             <div className="text-sm text-zinc-600 font-mono">Color: <span className="text-amber-400">{profile?.saturationAmount}%</span></div>
-            <div className="text-sm text-zinc-600 font-mono">Low: <span className="text-emerald-400">{profile?.lowShelfBoost > 0 ? '+' : ''}{profile?.lowShelfBoost.toFixed(1)}dB</span></div>
-            <div className="text-sm text-zinc-600 font-mono">High: <span className="text-blue-400">{profile?.highShelfBoost > 0 ? '+' : ''}{profile?.highShelfBoost.toFixed(1)}dB</span></div>
+            <div className="text-sm text-zinc-600 font-mono">Low: <span className="text-emerald-400">{profile && profile.lowShelfBoost > 0 ? '+' : ''}{profile?.lowShelfBoost.toFixed(1)}dB</span></div>
+            <div className="text-sm text-zinc-600 font-mono">High: <span className="text-blue-400">{profile && profile.highShelfBoost > 0 ? '+' : ''}{profile?.highShelfBoost.toFixed(1)}dB</span></div>
           </div>
         </div>
       </div>

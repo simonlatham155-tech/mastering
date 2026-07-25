@@ -17,6 +17,8 @@ import { SignalChainVisualizer } from './components/signal-chain-visualizer';
 import { GenreProfileInfo } from './components/genre-profile-info';
 import { ProfileAdjustmentsPanel, ProfileAdjustments } from './components/profile-adjustments';
 import { ProDynamicsPanel } from './components/pro-dynamics-panel';
+import { RackStageControls } from './components/rack-stage-controls';
+import { AIRecommendationPanel } from './components/ai-recommendation-panel';
 import { getExportPreset } from './data/export-presets';
 import {
   appliedRecommendationFromAI,
@@ -25,6 +27,7 @@ import {
   buildAppProcessingPlan,
   buildAppProcessingSettings,
   DEFAULT_PRO_DYNAMICS,
+  DEFAULT_RACK_STAGE_OVERRIDES,
   DEFAULT_TONAL_MATCH_STRENGTH,
   buildProDynamicsForGear,
   NEUTRAL_PROFILE_ADJUSTMENTS,
@@ -32,16 +35,22 @@ import {
   resolveLimiterCeilingOverride,
   type AppProcessingContext,
   type ProDynamicsSettings,
+  type RackStageOverrides,
 } from './services/app-processing-context';
 import { toast, Toaster } from 'sonner';
-import { audioProcessor, AudioAnalysis, HeritageProfile } from './services/audio-processor';
+import { audioProcessor, AudioAnalysis } from './services/audio-processor';
 import { buildInputAnalysisFromProcessor, AudioAnalysisResult } from './utils/audio-analyzer';
 import { AIMasteringEngine, AIMasteringRecommendation } from './services/ai-mastering-engine';
 import { MixSetupPanel, type MixSetupSummary } from './components/mix-setup-panel';
-import { RealtimeAudioPlayer, type LufsMeterData } from './services/realtime-audio-player';
+import {
+  RealtimeAudioPlayer,
+  type LiveChainStatus,
+  type LufsMeterData,
+} from './services/realtime-audio-player';
 import { buildExportQualityReport } from './utils/measure-buffer-loudness';
 import { preloadLufsMeterWorkletScript } from './services/lufs-meter-worklet';
 import { preloadFaustLimiterFactory, faustVendorModuleUrl } from './services/faust-limiter';
+import type { LimiterBackend } from './services/mastering-chain-builder';
 import {
   computeAutoInputTrimDB,
   masterExportFilename,
@@ -91,6 +100,7 @@ function buildProcessingContext(
     circuitDrive: number;
     profileAdjustments: ProfileAdjustments;
     proDynamics: ProDynamicsSettings;
+    rackStages: RackStageOverrides;
   },
   overrides?: Partial<AppProcessingContext>
 ): AppProcessingContext {
@@ -101,6 +111,7 @@ function buildProcessingContext(
     circuitDrive: overrides?.circuitDrive ?? state.circuitDrive,
     profileAdjustments: overrides?.profileAdjustments ?? state.profileAdjustments,
     proDynamics: overrides?.proDynamics ?? state.proDynamics,
+    rackStages: overrides?.rackStages ?? state.rackStages,
   };
 }
 
@@ -109,6 +120,15 @@ function syncProfileAdjustmentsForGear(
 ): ProfileAdjustments {
   // Sliders are offsets from genre defaults — reset tweaks when gear changes.
   return { ...NEUTRAL_PROFILE_ADJUSTMENTS };
+}
+
+function formatLimiterBackendLabel(
+  backend: Exclude<LimiterBackend, 'bypass'>
+): string {
+  if (backend === 'faust-fir') return 'Faust + FIR';
+  if (backend === 'faust') return 'Faust fallback';
+  if (backend === 'fir') return 'FIR fallback';
+  return 'WaveShaper fallback';
 }
 
 export default function App() {
@@ -140,8 +160,6 @@ export default function App() {
   const [originalBuffer, setOriginalBuffer] = useState<AudioBuffer | null>(null);
   const [isWaveformRendering, setIsWaveformRendering] = useState(false);
   const [meterValues, setMeterValues] = useState({ peak: 0, lra: 0 });
-  const [heritageProfile, setHeritageProfile] = useState<HeritageProfile>('none');
-  
   // Auto Input Trim — if the mix peaks above -3dB, attenuate to give the chain headroom.
   const autoInputTrimDB = analysis
     ? computeAutoInputTrimDB(analysis.peakLevel)
@@ -159,7 +177,6 @@ export default function App() {
   const waveformDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playbackState, setPlaybackState] = useState({ isPlaying: false, currentTime: 0, duration: 0 });
   const [bypassMode, setBypassMode] = useState(false); // A/B comparison: false = processed, true = original
-  const [expertMode, setExpertMode] = useState(false);
   /** Ozone-style level-matched A/B — boosts bypass to processed loudness (export unchanged). */
   const [gainMatchEnabled, setGainMatchEnabled] = useState(false);
   const [bypassGainMatchDB, setBypassGainMatchDB] = useState(0);
@@ -184,9 +201,20 @@ export default function App() {
   );
 
   const [proDynamics, setProDynamics] = useState<ProDynamicsSettings>(DEFAULT_PRO_DYNAMICS);
+  const [rackStages, setRackStages] = useState<RackStageOverrides>(
+    DEFAULT_RACK_STAGE_OVERRIDES
+  );
+  const [pendingRecommendation, setPendingRecommendation] =
+    useState<AIMasteringRecommendation | null>(null);
   const [outputLufs, setOutputLufs] = useState<LufsMeterData | null>(null);
+  const [liveChainStatus, setLiveChainStatus] = useState<LiveChainStatus | null>(null);
   const [lastExportReport, setLastExportReport] = useState<ReturnType<typeof buildExportQualityReport> | null>(null);
   const [lastExportStaging, setLastExportStaging] = useState<{ iterations: number; outputTrimDB: number } | null>(null);
+  const [lastExportLimiter, setLastExportLimiter] = useState<{
+    backend: Exclude<LimiterBackend, 'bypass'>;
+    latencySamples: number;
+    sampleRate: number;
+  } | null>(null);
   const [pendingDownload, setPendingDownload] = useState<{
     blob: Blob;
     filename: string;
@@ -225,6 +253,7 @@ export default function App() {
     player.setLufsMeterCallback((data) => {
       setOutputLufs(data);
     });
+    player.setChainStatusCallback(setLiveChainStatus);
   }, []);
 
   const registerPendingDownload = useCallback((blob: Blob, filename: string, label: string) => {
@@ -364,6 +393,28 @@ export default function App() {
   const referenceCurve = useMemo(
     () => (isReady ? getReferenceCurveForGear(gearProfile) : null),
     [isReady, gearProfile]
+  );
+
+  const activeProcessingPlan = useMemo(
+    () =>
+      buildAppProcessingPlan({
+        gearProfile,
+        exportPreset,
+        logicMode,
+        circuitDrive,
+        profileAdjustments,
+        proDynamics,
+        rackStages,
+      }),
+    [
+      gearProfile,
+      exportPreset,
+      logicMode,
+      circuitDrive,
+      profileAdjustments,
+      proDynamics,
+      rackStages,
+    ]
   );
 
   const previewMatchingGains = useMemo(() => {
@@ -540,6 +591,7 @@ export default function App() {
       player.setMeterCallback(null);
       player.setSSLMeterCallback(null);
       player.setLufsMeterCallback(null);
+      player.setChainStatusCallback(null);
     };
   }, [isReady, playerEpoch, wireRealtimePlayerMeters]);
 
@@ -555,6 +607,7 @@ export default function App() {
     setProfileAdjustments({ ...NEUTRAL_PROFILE_ADJUSTMENTS });
     setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
     setProDynamics(buildProDynamicsForGear(gearProfile, exportPreset, autoInputTrimDB));
+    setRackStages({ ...DEFAULT_RACK_STAGE_OVERRIDES });
   }, [gearProfile]);
 
   const prevExportPresetRef = useRef(exportPreset);
@@ -668,6 +721,7 @@ export default function App() {
     forceMonoBass: proDynamics.forceMonoBass,
     monoBassHz: proDynamics.monoBassHz,
     sslGlue: proDynamics.sslGlue,
+    rackStages,
   });
   
   useEffect(() => {
@@ -681,7 +735,8 @@ export default function App() {
       prev.limiterCeilingDBTP !== proDynamics.limiterCeilingDBTP ||
       prev.forceMonoBass !== proDynamics.forceMonoBass ||
       prev.monoBassHz !== proDynamics.monoBassHz ||
-      prev.sslGlue !== proDynamics.sslGlue
+      prev.sslGlue !== proDynamics.sslGlue ||
+      prev.rackStages !== rackStages
     );
     prevChainSettingsRef.current = {
       logicMode,
@@ -693,6 +748,7 @@ export default function App() {
       forceMonoBass: proDynamics.forceMonoBass,
       monoBassHz: proDynamics.monoBassHz,
       sslGlue: proDynamics.sslGlue,
+      rackStages,
     };
     
     if (!changed) return;
@@ -720,6 +776,7 @@ export default function App() {
           circuitDrive,
           profileAdjustments,
           proDynamics,
+          rackStages,
         });
         const plan = buildAppProcessingPlan(ctx);
         const settings = buildAppProcessingSettings(ctx);
@@ -769,6 +826,7 @@ export default function App() {
     proDynamics.forceMonoBass,
     proDynamics.monoBassHz,
     proDynamics.sslGlue,
+    rackStages,
     analysis,
   ]);
 
@@ -793,6 +851,7 @@ export default function App() {
         circuitDrive,
         profileAdjustments,
         proDynamics,
+        rackStages,
       });
       scheduleWaveformPreviewRender(buildAppProcessingSettings(ctx));
     }, 400);
@@ -818,6 +877,7 @@ export default function App() {
     proDynamics.inputTrimDB,
     proDynamics.autoStageOnExport,
     proDynamics.sslGlue,
+    rackStages,
     proDynamics.limiterCeilingDBTP,
   ]);
 
@@ -835,6 +895,24 @@ export default function App() {
     }
 
     return { applied, syncedProfile };
+  };
+
+  const handleApplyRecommendation = () => {
+    if (!pendingRecommendation || !analysis) return;
+
+    const { applied } = applyRecommendationToState(pendingRecommendation);
+    const inputTrim = computeAutoInputTrimDB(analysis.peakLevel);
+    setProDynamics(buildProDynamicsForGear(
+      applied.gearProfile,
+      applied.exportPreset,
+      inputTrim
+    ));
+    setRackStages({ ...DEFAULT_RACK_STAGE_OVERRIDES });
+    setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+    setPendingRecommendation(null);
+    toast.success(
+      `Suggested ${pendingRecommendation.gearProfile} rack settings applied — every stage remains editable`
+    );
   };
 
   const analyzeAudioFile = async () => {
@@ -903,6 +981,8 @@ export default function App() {
       });
 
       const recommendation = AIMasteringEngine.recommend(inputResult);
+      setPendingRecommendation(recommendation);
+      setRecommendedCircuitDrive(recommendation.circuitDrive);
 
       setMixSetup({
         reasoning: recommendation.reasoning,
@@ -911,22 +991,20 @@ export default function App() {
         suggestedGenre: inputResult.suggestedGenre,
       });
 
-      const { applied } = applyRecommendationToState(recommendation);
-
       const inputTrim = computeAutoInputTrimDB(analysisResult.peakLevel);
       const proDefaults = buildProDynamicsForGear(
-        applied.gearProfile,
-        applied.exportPreset,
+        gearProfile,
+        exportPreset,
         inputTrim
       );
       setProDynamics(proDefaults);
-      setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+      setRackStages({ ...DEFAULT_RACK_STAGE_OVERRIDES });
+      setMatchStrength(0);
 
       toast.success(
-        `Pre-master analysed: ${recommendation.gearProfile} strategy • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
+        `Pre-master analysed at ${inputResult.lufs.toFixed(1)} LUFS — review the suggested ${recommendation.gearProfile} rack setup`
       );
 
-      const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile);
       const processingContext = buildProcessingContext(
         {
           gearProfile,
@@ -935,14 +1013,12 @@ export default function App() {
           circuitDrive,
           profileAdjustments,
           proDynamics,
+          rackStages,
         },
         {
-          gearProfile: applied.gearProfile,
-          exportPreset: applied.exportPreset,
-          logicMode: applied.logicMode,
-          circuitDrive: applied.circuitDrive,
-          profileAdjustments: syncedProfile ?? profileAdjustments,
+          profileAdjustments: { ...NEUTRAL_PROFILE_ADJUSTMENTS },
           proDynamics: proDefaults,
+          rackStages: { ...DEFAULT_RACK_STAGE_OVERRIDES },
         }
       );
 
@@ -991,6 +1067,7 @@ export default function App() {
       circuitDrive,
       profileAdjustments,
       proDynamics,
+      rackStages,
     });
     const settings = buildAppProcessingSettings(ctx);
 
@@ -1033,9 +1110,29 @@ export default function App() {
 
   const handleFileSelect = async (file: File) => {
     uploadGenRef.current += 1;
+    setCircuitDrive(50);
+    setRecommendedCircuitDrive(null);
+    setLogicMode('dynamics');
+    setGearProfile('progressivehouse');
+    setExportPreset('spotify');
+    setProfileAdjustments({ ...NEUTRAL_PROFILE_ADJUSTMENTS });
+    setProDynamics({ ...DEFAULT_PRO_DYNAMICS });
+    setRackStages({ ...DEFAULT_RACK_STAGE_OVERRIDES });
+    setMatchStrength(0);
+    setPendingRecommendation(null);
+    setAnalysis(null);
+    setOriginalBuffer(null);
+    setProcessedBuffer(null);
+    setSpectralProfile(null);
+    setOutputLufs(null);
+    setLastExportReport(null);
+    setLastExportStaging(null);
+    setLastExportLimiter(null);
+    setLiveChainStatus(null);
     setSelectedFile(file);
     setInputAnalysis(null);
     setMixSetup(null);
+    setPendingRecommendation(null);
   };
 
   const handleClearFile = () => {
@@ -1054,8 +1151,14 @@ export default function App() {
     setIsWaveformRendering(false);
     setOriginalBuffer(null);
     setSpectralProfile(null);
-    setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
+    setMatchStrength(0);
+    setPendingRecommendation(null);
     setProDynamics(DEFAULT_PRO_DYNAMICS);
+    setRackStages({ ...DEFAULT_RACK_STAGE_OVERRIDES });
+    setLiveChainStatus(null);
+    setLastExportReport(null);
+    setLastExportStaging(null);
+    setLastExportLimiter(null);
     setMeterValues({ peak: 0, lra: 0 });
   };
 
@@ -1075,6 +1178,7 @@ export default function App() {
         circuitDrive,
         profileAdjustments,
         proDynamics,
+        rackStages,
       });
       const settings = buildAppProcessingSettings({ ...ctx, exportPreset: presetId });
       const preset = getExportPreset(presetId);
@@ -1097,6 +1201,11 @@ export default function App() {
       setLastExportStaging({
         iterations: exportResult.iterations,
         outputTrimDB: exportResult.outputTrimDB,
+      });
+      setLastExportLimiter({
+        backend: exportResult.limiterBackend,
+        latencySamples: exportResult.latencySamples,
+        sampleRate: originalBuffer?.sampleRate ?? 48_000,
       });
 
       if (exportResult.staged) {
@@ -1157,6 +1266,7 @@ export default function App() {
       circuitDrive,
       profileAdjustments,
       proDynamics,
+      rackStages,
     });
 
     const restoreFile = selectedFile;
@@ -1254,6 +1364,7 @@ export default function App() {
         circuitDrive,
         profileAdjustments,
         proDynamics,
+        rackStages,
       });
       const plan = buildAppProcessingPlan(ctx);
       const settings = buildAppProcessingSettings(ctx);
@@ -1326,6 +1437,7 @@ export default function App() {
       circuitDrive,
       profileAdjustments,
       proDynamics,
+      rackStages,
     });
     toast.info(`Rendering HQ waveform preview (export quality, first ${formatWaveformPreviewDuration(
       resolveWaveformPreviewSeconds(
@@ -1489,6 +1601,12 @@ export default function App() {
               isUpdatingPreview={isWaveformRendering}
             />
 
+            <AIRecommendationPanel
+              recommendation={pendingRecommendation}
+              onApply={handleApplyRecommendation}
+              onDismiss={() => setPendingRecommendation(null)}
+            />
+
             <ActiveSettingsStrip
               gearProfile={gearProfile}
               exportPreset={exportPreset}
@@ -1497,6 +1615,7 @@ export default function App() {
               tonalMatchStrength={matchStrength}
               proDynamics={proDynamics}
               hqMode={hqMode}
+              liveChainStatus={liveChainStatus}
               hasInputTrim={effectiveInputTrimDB != null && effectiveInputTrimDB < 0}
               inputTrimDB={effectiveInputTrimDB}
             />
@@ -1539,7 +1658,7 @@ export default function App() {
                 gainMatchEnabled={gainMatchEnabled}
                 onGainMatchToggle={() => setGainMatchEnabled((v) => !v)}
                 bypassGainMatchDB={bypassGainMatchDB}
-                onHqWaveformPreview={expertMode ? handleHqWaveformPreview : undefined}
+                onHqWaveformPreview={handleHqWaveformPreview}
                 originalBuffer={originalBuffer}
                 processedBuffer={processedBuffer}
                 isWaveformRendering={isWaveformRendering}
@@ -1622,6 +1741,17 @@ export default function App() {
                     {lastExportStaging.outputTrimDB.toFixed(1)} dB
                   </>
                 )}
+                {lastExportLimiter && (
+                  <>
+                    {' · '}
+                    {formatLimiterBackendLabel(lastExportLimiter.backend)}
+                    {' · '}
+                    {(
+                      (lastExportLimiter.latencySamples / lastExportLimiter.sampleRate) *
+                      1000
+                    ).toFixed(1)} ms compensated
+                  </>
+                )}
                 {lastExportReport.onTarget && lastExportReport.peakOk
                   ? ' — passes quality gate'
                   : ' — review levels before delivery'}
@@ -1662,57 +1792,16 @@ export default function App() {
               </div>
             )}
 
-            {!expertMode && (
-              <div
-                className="relative border-2 rounded-lg p-6 mb-6"
-                style={{
-                  borderColor: '#2a2a2a',
-                  background: 'linear-gradient(180deg, #1a1a1a, #0f0f0f)',
-                }}
-              >
-                <div className="text-xs font-mono text-zinc-500 tracking-[0.3em] uppercase mb-2">
-                  Export
-                </div>
-                <p className="text-[10px] font-mono text-zinc-600 mb-4 max-w-xl">
-                  Uses your delivery target from Mix Setup ({getExportPreset(exportPreset).name},{' '}
-                  {getExportPreset(exportPreset).lufs} LUFS). Listen first, then download.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => handleExport(exportPreset)}
-                  disabled={!selectedFile || !analysis || isExporting || isBatchExporting}
-                  className="w-full sm:w-auto px-6 py-3 rounded-lg font-mono text-sm uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{
-                    background: 'linear-gradient(180deg, #10b981, #059669)',
-                    color: '#fff',
-                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
-                  }}
-                >
-                  Download mastered WAV
-                </button>
-              </div>
-            )}
-
-            {/* Expert controls toggle */}
-            <div className="mb-6 flex justify-center">
-              <button
-                type="button"
-                onClick={() => setExpertMode(prev => !prev)}
-                className="px-4 py-2 rounded-lg border border-zinc-700 bg-zinc-900 text-xs font-mono text-zinc-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
-              >
-                {expertMode ? '▲ Hide pro controls' : '▼ Pro controls: meters, tonal match, album export, EQ…'}
-              </button>
-            </div>
-
-            {expertMode && (
-              <>
             <ProRackSection
               title="Output meters"
               subtitle="Live loudness, peaks, and limiter gain reduction — play to measure."
             >
               <ProOutputMeters
                 hqMode={hqMode}
-                onHqToggle={setHQMode}
+                onHqToggle={(enabled) => {
+                  setLiveChainStatus(null);
+                  setHQMode(enabled);
+                }}
                 cpuUsage={cpuUsage}
                 truePeakDBTP={truePeakDBTP}
                 digitalPeakDB={digitalPeakDB}
@@ -1766,6 +1855,17 @@ export default function App() {
             </ProRackSection>
 
             <ProRackSection
+              title="Stage routing"
+              subtitle="Real bypass controls for every optional hardware-style stage."
+            >
+              <RackStageControls
+                plan={activeProcessingPlan}
+                overrides={rackStages}
+                onChange={setRackStages}
+              />
+            </ProRackSection>
+
+            <ProRackSection
               title="Chain reference"
               subtitle="Signal path and genre characteristics for the active gear profile."
             >
@@ -1775,6 +1875,9 @@ export default function App() {
                   gearProfile={gearProfile}
                   logicMode={logicMode}
                   hqMode={hqMode}
+                  processingPlan={activeProcessingPlan}
+                  limiterBackend={liveChainStatus?.limiterBackend ?? null}
+                  limiterLatencyMS={liveChainStatus?.latencyMS ?? null}
                 />
                 <GenreProfileInfo gearProfile={gearProfile} />
               </div>
@@ -1804,8 +1907,6 @@ export default function App() {
                 onBatchExport={handleBatchExport}
               />
             </ProRackSection>
-              </>
-            )}
               </>
             )}
 

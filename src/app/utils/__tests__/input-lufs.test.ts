@@ -43,7 +43,7 @@ describe('analyzeAudioBuffer sync fallback', () => {
         }
         return data;
       },
-    } as AudioBuffer;
+    } as unknown as AudioBuffer;
 
     const result = analyzeAudioBuffer(buffer);
     expect(Number.isFinite(result.lufs)).toBe(true);

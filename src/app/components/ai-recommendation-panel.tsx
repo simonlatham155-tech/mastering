@@ -1,4 +1,4 @@
-import { Sparkles, TrendingUp, Zap, CheckCircle } from 'lucide-react';
+import { Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AIMasteringRecommendation } from '../services/ai-mastering-engine';
 
@@ -192,7 +192,7 @@ export function AIRecommendationPanel({
               >
                 <Zap className="w-4 h-4" />
               </motion.div>
-              Applying AI Settings...
+              Applying suggested settings...
             </span>
           ) : (
             <span className="flex items-center justify-center gap-2">

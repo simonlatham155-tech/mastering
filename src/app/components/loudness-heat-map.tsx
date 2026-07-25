@@ -265,7 +265,7 @@ export function LoudnessHeatMap({
             <div className="text-[9px] font-mono text-zinc-500 uppercase">Limiter Mode</div>
           </div>
           <div className="text-2xl font-mono font-bold text-white">
-            {LIMITER_MODES[limiterMode]}
+            {LIMITER_MODES[limiterMode].mode.toUpperCase()}
           </div>
         </div>
       )}

@@ -2,6 +2,8 @@ import { Cpu, Zap, Radio, Sliders, Disc3, Maximize2, Volume2 } from 'lucide-reac
 import { motion, AnimatePresence } from 'motion/react';
 import { getGenrePreset } from '../data/genre-presets';
 import type { GearProfileId } from './gear-selector';
+import type { ProcessingPlan } from '../data/preset-resolution';
+import type { LimiterBackend } from '../services/mastering-chain-builder';
 
 // PerformanceMode removed (2026-02-16) - studio mastering only
 
@@ -10,6 +12,9 @@ interface SignalChainVisualizerProps {
   gearProfile: GearProfileId;
   logicMode: 'brickwall' | 'dynamics';
   hqMode: boolean;
+  processingPlan?: ProcessingPlan;
+  limiterBackend?: Exclude<LimiterBackend, 'bypass'> | null;
+  limiterLatencyMS?: number | null;
 }
 
 interface ChainNode {
@@ -26,11 +31,40 @@ export function SignalChainVisualizer({
   gearProfile,
   logicMode,
   hqMode,
+  processingPlan,
+  limiterBackend = null,
+  limiterLatencyMS = null,
 }: SignalChainVisualizerProps) {
   const preset = getGenrePreset(gearProfile);
-  const usesColor = (preset?.biases.colorAmount ?? 0) > 0;
-  const toggles = preset?.toggles;
+  const behavior = processingPlan?.genreBehavior;
+  const usesTransformer =
+    behavior?.useTransformer ?? (preset?.biases.colorAmount ?? 0) > 0;
+  const usesTape =
+    behavior?.useTape ?? (preset?.biases.colorAmount ?? 0) > 0;
+  const usesMultiband =
+    behavior?.useMultiband ?? preset?.toggles.useMultiband ?? false;
+  const usesMidSide =
+    behavior?.useMidSide ?? preset?.toggles.useMidSide ?? false;
+  const usesClipper =
+    behavior?.useClipper ?? preset?.toggles.useClipper ?? false;
   const pressure = logicMode === 'brickwall';
+  const limiterName =
+    limiterBackend === 'faust-fir'
+      ? 'Faust + FIR'
+      : limiterBackend === 'faust'
+        ? 'Faust Limiter'
+        : limiterBackend === 'fir'
+          ? 'FIR Fallback'
+          : limiterBackend === 'waveshaper'
+            ? 'WaveShaper Fallback'
+            : hqMode
+              ? 'HQ Limiter Pending'
+              : 'Preview Ceiling Pending';
+  const limiterDescription = limiterBackend
+    ? `${limiterBackendDescription(limiterBackend)}${
+        limiterLatencyMS != null ? ` · ${limiterLatencyMS.toFixed(1)} ms` : ''
+      }`
+    : 'The requested limiter backend is verified when playback first builds the audio graph';
 
   const studioChain: ChainNode[] = [
     {
@@ -47,7 +81,7 @@ export function SignalChainVisualizer({
       description: 'Transformer-style saturation (WaveShaper + asymmetric curve)',
       icon: <Zap className="w-4 h-4" />,
       color: '#06b6d4',
-      active: usesColor,
+      active: usesTransformer,
     },
     {
       id: 'tape',
@@ -55,7 +89,7 @@ export function SignalChainVisualizer({
       description: 'Magnetic hysteresis modeling (tanh saturation + head bump)',
       icon: <Radio className="w-4 h-4" />,
       color: '#8b5cf6',
-      active: usesColor,
+      active: usesTape,
     },
     {
       id: 'multiband',
@@ -63,7 +97,7 @@ export function SignalChainVisualizer({
       description: '4-band crossover with per-band compression (BiquadFilter)',
       icon: <Sliders className="w-4 h-4" />,
       color: '#f59e0b',
-      active: toggles?.useMultiband ?? false,
+      active: usesMultiband,
     },
     {
       id: 'ssl',
@@ -79,7 +113,7 @@ export function SignalChainVisualizer({
       description: 'Mid-Side stereo imaging (gain matrix)',
       icon: <Maximize2 className="w-4 h-4" />,
       color: '#ec4899',
-      active: toggles?.useMidSide ?? false,
+      active: usesMidSide,
     },
     {
       id: 'clipper',
@@ -87,14 +121,12 @@ export function SignalChainVisualizer({
       description: 'Pressure-only transient clipping, enabled only by compatible genre strategies',
       icon: <Cpu className="w-4 h-4" />,
       color: '#fb7185',
-      active: pressure && (toggles?.useClipper ?? false),
+      active: pressure && usesClipper,
     },
     {
       id: 'limiter',
-      name: hqMode ? 'Faust Limiter' : 'Preview Ceiling',
-      description: hqMode
-        ? 'Stereo-linked 5 ms look-ahead Faust gain control with FIR true-peak verification'
-        : 'Low-latency 2× WaveShaper ceiling with FIR true-peak metering',
+      name: limiterName,
+      description: limiterDescription,
       icon: <Volume2 className="w-4 h-4" />,
       color: '#ef4444',
       active: true,
@@ -246,4 +278,19 @@ export function SignalChainVisualizer({
       </div>
     </div>
   );
+}
+
+function limiterBackendDescription(
+  backend: Exclude<LimiterBackend, 'bypass'>
+): string {
+  if (backend === 'faust-fir') {
+    return 'Stereo-linked Faust gain control followed by the 4× FIR true-peak guard';
+  }
+  if (backend === 'faust') {
+    return 'Stereo-linked 5 ms Faust look-ahead gain control';
+  }
+  if (backend === 'fir') {
+    return 'Stereo-linked 4× FIR true-peak fallback';
+  }
+  return 'Oversampled WaveShaper safety fallback';
 }

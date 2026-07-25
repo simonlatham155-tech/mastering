@@ -2,7 +2,7 @@ import type { GearProfileId } from '../components/gear-selector';
 import { getReferenceCurve, type ReferenceCurve } from '../data/reference-curves';
 
 /** Map mastering gear profile → reference-curves.ts key. */
-const GEAR_TO_REFERENCE_KEY: Partial<Record<GearProfileId, string>> = {
+const GEAR_TO_REFERENCE_KEY: Record<string, string> = {
   dnb: 'dnb',
   techno: 'techno',
   melodictechno: 'techno',

@@ -1,9 +1,9 @@
 import { motion } from 'motion/react';
 import { TrendingDown, TrendingUp, Minus } from 'lucide-react';
-import { MatchingDelta } from '../services/spectral-analyzer';
+import type { IsoMatchingDelta } from '../services/reference-matching-controller';
 
 interface BalanceViewProps {
-  matchingDelta: MatchingDelta | null;
+  matchingDelta: IsoMatchingDelta | null;
   matchStrength: number; // 0-100
 }
 

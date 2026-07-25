@@ -28,8 +28,10 @@
 
 import {
   buildMasteringChain,
-  buildMasteringChainAsync,
+  buildMasteringChainWithFallbacks,
+  resolveLiveLimiterTopology,
   type MasteringChain,
+  type LimiterBackend,
 } from './mastering-chain-builder';
 import type { ProcessingSettings } from './audio-processor';
 import type { ProcessingPlan } from '../data/preset-resolution';
@@ -55,7 +57,16 @@ export interface SSLMeterData {
   inputLevelDB: number;
 }
 
-function analyserPeakDb(analyser: AnalyserNode, buffer: Float32Array): number {
+export interface LiveChainStatus {
+  limiterBackend: Exclude<LimiterBackend, 'bypass'>;
+  latencySamples: number;
+  latencyMS: number;
+}
+
+function analyserPeakDb(
+  analyser: AnalyserNode,
+  buffer: Float32Array<ArrayBuffer>
+): number {
   analyser.getFloatTimeDomainData(buffer);
   let peak = 0;
   for (let i = 0; i < buffer.length; i++) {
@@ -85,12 +96,14 @@ export class RealtimeAudioPlayer {
   private sslMeterCallback: ((data: SSLMeterData) => void) | null = null;
   private lufsMeterCallback: ((data: LufsMeterData) => void) | null = null;
   private meterPollId: number | null = null;
-  private sslInputBuffer: Float32Array | null = null;
-  private sslOutputBuffer: Float32Array | null = null;
+  private sslInputBuffer: Float32Array<ArrayBuffer> | null = null;
+  private sslOutputBuffer: Float32Array<ArrayBuffer> | null = null;
   private currentLimiterCeilingOverride: number | undefined = undefined;
   private currentSslGlue: 'auto' | 'gentle' | 'firm' = 'auto';
   private currentHqMode = true;
   private currentOutputTrimDB = 0;
+  private currentProcessedLatencySamples = 0;
+  private chainStatusCallback: ((status: LiveChainStatus) => void) | null = null;
   /** When set, dry bypass boosts original to processed level (Gain Match). */
   private currentBypassGainMatchDB: number | null = null;
   
@@ -180,6 +193,25 @@ export class RealtimeAudioPlayer {
     this.lufsMeter.setMeterCallback(callback);
   }
 
+  setChainStatusCallback(
+    callback: ((status: LiveChainStatus) => void) | null
+  ): void {
+    this.chainStatusCallback = callback;
+    if (
+      callback &&
+      this.masteringChain &&
+      this.masteringChain.limiterBackend !== 'bypass'
+    ) {
+      callback({
+        limiterBackend: this.masteringChain.limiterBackend,
+        latencySamples: this.masteringChain.latencySamples,
+        latencyMS:
+          (this.masteringChain.latencySamples / this.masteringChain.input.context.sampleRate) *
+          1000,
+      });
+    }
+  }
+
   /** @deprecated Use setLufsMeterCallback — kept for compatibility */
   setOutputLevelCallback(callback: ((lufs: number) => void) | null): void {
     this.setLufsMeterCallback(
@@ -236,10 +268,8 @@ export class RealtimeAudioPlayer {
 
     if (!hasSSL) return;
 
-    if (hasSSL) {
-      this.sslInputBuffer = new Float32Array(chain.sslInputAnalyser!.fftSize);
-      this.sslOutputBuffer = new Float32Array(chain.sslOutputAnalyser!.fftSize);
-    }
+    this.sslInputBuffer = new Float32Array(chain.sslInputAnalyser!.fftSize);
+    this.sslOutputBuffer = new Float32Array(chain.sslOutputAnalyser!.fftSize);
 
     const poll = () => {
       if (!this.masteringChain) return;
@@ -308,25 +338,38 @@ export class RealtimeAudioPlayer {
           ? this.currentBypassGainMatchDB
           : undefined,
       sslGlue,
+      bypassLatencySamples: dryBypass
+        ? this.currentProcessedLatencySamples
+        : 0,
     };
 
     let chain: MasteringChain;
-    const quality = this.hqModeEnabled && !dryBypass ? 'export' : 'preview';
-    if (this.hqModeEnabled && !dryBypass) {
-      try {
-        chain = await buildMasteringChainAsync({
-          ...chainConfig,
-          quality,
-          useFaustLimiter: true,
-          useTruePeakWorklet: false,
-        });
-        console.log('✅ HQ live chain: Faust linked look-ahead limiter + FIR meter tap');
-      } catch (error) {
-        console.warn('[Faust] HQ live limiter unavailable — using 4× WaveShaper ceiling', error);
-        chain = buildMasteringChain({ ...chainConfig, quality });
-      }
+    const limiterTopology = resolveLiveLimiterTopology(
+      this.hqModeEnabled,
+      dryBypass
+    );
+    if (limiterTopology.premium) {
+      chain = await buildMasteringChainWithFallbacks({
+        ...chainConfig,
+        quality: limiterTopology.quality,
+        useFaustLimiter: limiterTopology.useFaustLimiter,
+        useTruePeakWorklet: limiterTopology.useTruePeakWorklet,
+      });
+      console.log(`✅ HQ live limiter backend: ${chain.limiterBackend}`);
     } else {
-      chain = buildMasteringChain({ ...chainConfig, quality });
+      chain = buildMasteringChain({
+        ...chainConfig,
+        quality: limiterTopology.quality,
+      });
+    }
+
+    if (!dryBypass && chain.limiterBackend !== 'bypass') {
+      this.currentProcessedLatencySamples = chain.latencySamples;
+      this.chainStatusCallback?.({
+        limiterBackend: chain.limiterBackend,
+        latencySamples: chain.latencySamples,
+        latencyMS: (chain.latencySamples / this.audioContext.sampleRate) * 1000,
+      });
     }
 
     this.wireLiveMeters(chain);
@@ -417,9 +460,15 @@ export class RealtimeAudioPlayer {
     }
     
     // Create source node
-    this.sourceNode = this.audioContext.createBufferSource();
+    const audioContext = this.audioContext;
+    const masteringChain = this.masteringChain;
+    if (!audioContext || !masteringChain) {
+      throw new Error('Mastering chain was not initialized');
+    }
+
+    this.sourceNode = audioContext.createBufferSource();
     this.sourceNode.buffer = this.audioBuffer;
-    this.sourceNode.connect(this.masteringChain.input);
+    this.sourceNode.connect(masteringChain.input);
     
     // Handle end of playback
     // PATCH: Check isSwitchingBypass to prevent race condition during A/B toggle
@@ -432,7 +481,7 @@ export class RealtimeAudioPlayer {
     // Start playback from pause point
     const offset = this.pauseTime;
     this.sourceNode.start(0, offset);
-    this.startTime = this.audioContext.currentTime - offset;
+    this.startTime = audioContext.currentTime - offset;
     this.isPlaying = true;
     
     console.log(`▶️  Playing from ${offset.toFixed(1)}s`);

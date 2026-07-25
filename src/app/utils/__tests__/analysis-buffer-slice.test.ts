@@ -13,7 +13,7 @@ function makeBuffer(durationSec: number, sampleRate = 48000): AudioBuffer {
     copyToChannel: (source: Float32Array, ch: number) => {
       channels[ch].set(source.subarray(0, length));
     },
-  } as AudioBuffer;
+  } as unknown as AudioBuffer;
 }
 
 describe('sliceBufferHead', () => {
@@ -44,7 +44,7 @@ describe('buildInputAnalysisFromProcessor', () => {
       length,
       duration: 1,
       getChannelData: () => data,
-    } as AudioBuffer;
+    } as unknown as AudioBuffer;
 
     const analysis = {
       lufs: -14.2,
