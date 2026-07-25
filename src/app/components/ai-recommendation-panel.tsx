@@ -55,7 +55,7 @@ export function AIRecommendationPanel({
             </div>
             <div>
               <div className="text-sm font-mono text-zinc-200 uppercase tracking-wider mb-1">
-                AI Mastering Recommendation
+                Pre-master Analysis Recommendation
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">
@@ -136,7 +136,7 @@ export function AIRecommendationPanel({
             </div>
           </div>
 
-          {/* Gear Profile */}
+          {/* Genre Strategy */}
           <div 
             className="p-3 rounded-lg"
             style={{
@@ -145,7 +145,7 @@ export function AIRecommendationPanel({
             }}
           >
             <div className="text-[9px] font-mono text-zinc-600 uppercase tracking-wider mb-1">
-              Gear Profile
+              Genre Strategy
             </div>
             <div className="text-xs font-mono text-purple-400 uppercase">
               {recommendation.gearProfile}
@@ -197,7 +197,7 @@ export function AIRecommendationPanel({
           ) : (
             <span className="flex items-center justify-center gap-2">
               <Sparkles className="w-4 h-4 group-hover:scale-110 transition-transform" />
-              Apply AI Mastering Settings
+              Apply Suggested Rack Settings
             </span>
           )}
         </button>

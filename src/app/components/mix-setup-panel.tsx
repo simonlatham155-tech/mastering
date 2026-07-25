@@ -63,10 +63,10 @@ export function MixSetupPanel({
           </div>
           <div>
             <div className="text-sm font-mono text-zinc-200 uppercase tracking-wider">
-              Mix Setup
+              Pre-master Analysis
             </div>
             <div className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider mt-0.5">
-              From your upload analysis — adjust anytime
+              Untouched input only — suggested rack settings remain editable
             </div>
           </div>
         </div>
@@ -103,7 +103,7 @@ export function MixSetupPanel({
           <div className="flex items-center gap-2 mb-2">
             <Radio className="w-3.5 h-3.5 text-cyan-400" />
             <div className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">
-              Why these settings
+              Why this starting strategy
             </div>
           </div>
           <p className="text-xs font-mono text-zinc-300 leading-relaxed">{summary.reasoning}</p>

@@ -164,13 +164,13 @@ export function HQModeToggle({
               <div className="flex items-start gap-2">
                 <span className="text-purple-400 shrink-0">Live preview:</span>
                 <span>
-                  Rebuilds the mastering chain with 4× ceiling oversampling. FIR worklet runs
-                  monitor-only on the meter tap (passthrough audio).
+                  Rebuilds the mastering chain with the Faust stereo-linked look-ahead limiter.
+                  FIR runs monitor-only on the true-peak meter tap.
                 </span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-emerald-400 shrink-0">Export file:</span>
-                <span>4× FIR true-peak limiter in the offline chain (Faust / WaveShaper fallback).</span>
+                <span>Faust look-ahead gain control into a 4× FIR true-peak guard.</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-orange-400">⚠</span>

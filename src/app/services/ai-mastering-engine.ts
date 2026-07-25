@@ -1,4 +1,4 @@
-// AI Mastering Engine - Intelligent Parameter Selection
+// Pre-master Analysis Engine - recommends visible rack parameter selections
 // Based on audio analysis, automatically configures optimal mastering settings
 
 import { AudioAnalysisResult } from '../utils/audio-analyzer';
@@ -44,7 +44,7 @@ export class AIMasteringEngine {
       reasoning = `${analysis.suggestedGenre} profile selected. `;
     }
 
-    // STEP 2: Select Gear Profile based on detected genre
+    // STEP 2: Select a visible genre strategy based on detected genre
     gearProfile = this.mapGenreToProfile(analysis);
 
     // STEP 3: Calculate optimal Circuit Drive (THD) based on profile + spectral content
