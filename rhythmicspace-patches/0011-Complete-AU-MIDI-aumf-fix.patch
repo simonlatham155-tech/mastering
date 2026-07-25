@@ -1,0 +1,76 @@
+From 83cd08e Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sun, 14 Jun 2026 18:00:00 +0000
+Subject: [PATCH] Complete AU+MIDI fix: aumf + learn applies first CC
+
+Requires JUCE develop (Aug 2025 AUChannelInfo fix). See AU-COMPLETE-FIX.md.
+
+- pluginWantsMidiIn + pluginAUMainType aumf (Logic MIDI + VST3 MIDI)
+- Apply first CC value when MIDI learn completes
+- Clamp MIDI parameter values to 0..1
+---
+ RhythmicSpace.jucer              |  2 +-
+ Source/Data/MIDIControllerMap.cpp | 11 +++++++++--
+ Source/PluginProcessor.cpp       |  2 +-
+ 3 files changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/RhythmicSpace.jucer b/RhythmicSpace.jucer
+index a8c3e11..b2d4f88 100644
+--- a/RhythmicSpace.jucer
++++ b/RhythmicSpace.jucer
+@@ -6,7 +6,7 @@
+               pluginManufacturerCode="Ltha" pluginCode="Rysp" pluginFormats="buildAU,buildStandalone,buildVST3"
+               pluginCharacteristicsValue="pluginWantsMidiIn"
+               pluginChannelConfigs=""
+-              pluginAUMainType="'aufx'"
++              pluginAUMainType="'aumf'"
+               pluginName="RhythmicSpace" pluginDesc="Step Sequencer Multi-Effect Processor"
+               pluginManufacturer="LATHAMAUDIO" aaxIdentifier="com.lathamaudio.rhythmicspace"
+               pluginAAXCategory="8" pluginVST3Category="Fx,Modulation" bundleIdentifier="com.lathamaudio.rhythmicspace"
+diff --git a/Source/Data/MIDIControllerMap.cpp b/Source/Data/MIDIControllerMap.cpp
+index 3e8a1c2..f91b204 100644
+--- a/Source/Data/MIDIControllerMap.cpp
++++ b/Source/Data/MIDIControllerMap.cpp
+@@ -44,12 +44,15 @@ bool MIDIControllerMap::processMIDIMessage(const juce::MidiMessage& message,
+     MIDIMapping matchedMapping;
+     bool hasMatchedMapping = false;
+ 
++    float learnedValue = 0.0f;
++
+     {
+         const juce::ScopedLock lock(mappingLock);
+ 
+         if (learningParameterID.isNotEmpty())
+         {
+             learningParameter = learningParameterID;
+             learningParameterID = {};
++            learnedValue = static_cast<float>(ccValue) / 127.0f;
+ 
+             MIDIMapping mapping;
+             mapping.ccNumber = ccNumber;
+@@ -73,7 +76,11 @@ bool MIDIControllerMap::processMIDIMessage(const juce::MidiMessage& message,
+         }
+     }
+ 
+     if (learningParameter.isNotEmpty())
++    {
++        if (parameterCallback)
++            parameterCallback(learningParameter, learnedValue);
+         return true;
++    }
+ 
+     if (hasMatchedMapping)
+     {
+diff --git a/Source/PluginProcessor.cpp b/Source/PluginProcessor.cpp
+index 177c9b8..a4e8c21 100644
+--- a/Source/PluginProcessor.cpp
++++ b/Source/PluginProcessor.cpp
+@@ -282,7 +282,7 @@ void RhythmicSpaceAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
+         midiControllerMap.processMIDIMessage(message, [this](const juce::String& paramID, float value)
+         {
+             if (auto* param = parameters.getParameter(paramID))
+-                param->setValueNotifyingHost(value);
++                param->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, value));
+         });
+     }
+ 

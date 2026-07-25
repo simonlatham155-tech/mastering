@@ -1,0 +1,59 @@
+From 14e09c25b7c65f6b8e6855877375ef54c06f27f8 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 9 Jun 2026 17:47:25 +0000
+Subject: [PATCH] Fix AU Initialize -10868: accept mono/stereo and disabled
+ input bus
+
+Logic auval FIRST TIME test requires flexible bus layouts for aumf plugins.
+---
+ Source/PluginProcessor.cpp | 24 +++++++++++++++++++++---
+ 1 file changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/Source/PluginProcessor.cpp b/Source/PluginProcessor.cpp
+index 392f239..f182050 100644
+--- a/Source/PluginProcessor.cpp
++++ b/Source/PluginProcessor.cpp
+@@ -156,7 +156,7 @@ void RhythmicSpaceAudioProcessor::prepareToPlay (double sampleRate, int samplesP
+     juce::dsp::ProcessSpec spec;
+     spec.sampleRate = sampleRate;
+     spec.maximumBlockSize = static_cast<uint32_t>(samplesPerBlock);
+-    spec.numChannels = 2;
++    spec.numChannels = static_cast<uint32_t>(juce::jmax(getTotalNumOutputChannels(), 1));
+     
+     stepSequencer.prepare(sampleRate, bpm.load());
+     modulationSmoother.prepare(sampleRate);
+@@ -183,11 +183,29 @@ bool RhythmicSpaceAudioProcessor::isBusesLayoutSupported (const BusesLayout& lay
+     juce::ignoreUnused (layouts);
+     return true;
+   #else
+-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
++    const auto out = layouts.getMainOutputChannelSet();
++    const auto in  = layouts.getMainInputChannelSet();
++
++    if (out.isDisabled())
++        return false;
++
++    const auto isMonoOrStereo = [] (const juce::AudioChannelSet& set)
++    {
++        return set == juce::AudioChannelSet::mono()
++            || set == juce::AudioChannelSet::stereo();
++    };
++
++    if (! isMonoOrStereo (out))
+         return false;
+ 
+    #if ! JucePlugin_IsSynth
+-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
++    if (in.isDisabled())
++        return true;
++
++    if (! isMonoOrStereo (in))
++        return false;
++
++    if (in != out)
+         return false;
+    #endif
+ 
+-- 
+2.43.0
+

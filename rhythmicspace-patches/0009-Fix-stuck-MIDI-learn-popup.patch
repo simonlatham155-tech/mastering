@@ -1,0 +1,32 @@
+From 9b68ad469d6bc5465e6dd41a0eee1a619b12a7d2 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sun, 14 Jun 2026 12:00:00 +0000
+Subject: [PATCH] Fix stuck MIDI Learn popup in Ableton
+
+Remove disabled PopupMenu on right-click — it floated outside the
+plugin window and could not be dismissed in some hosts. Learning
+state is already shown in MIDILearnComponent (LEARNING: / CANCEL).
+---
+ Source/UI/KnobComponent.cpp | 10 ----------
+ 1 file changed, 10 deletions(-)
+
+diff --git a/Source/UI/KnobComponent.cpp b/Source/UI/KnobComponent.cpp
+index 8a3c1f2..b7e2d91 100644
+--- a/Source/UI/KnobComponent.cpp
++++ b/Source/UI/KnobComponent.cpp
+@@ -72,16 +72,6 @@ void KnobComponent::mouseDown(const juce::MouseEvent& e)
+     {
+         if (onMIDILearnRequest)
+-        {
+             onMIDILearnRequest(paramID);
+-            
+-            // Show popup notification
+-            juce::PopupMenu menu;
+-            menu.addItem(1, "MIDI Learn: " + label.getText(), false);
+-            menu.addSeparator();
+-            menu.addItem(2, "Move a MIDI controller to assign...", false);
+-            menu.showMenuAsync(juce::PopupMenu::Options());
+-        }
+     }
+     else
+     {

@@ -1,0 +1,134 @@
+From 5e1af64e8cb043277b45878e4cc9701eb5295747 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Thu, 11 Jun 2026 16:47:58 +0000
+Subject: [PATCH] Fix AU Initialize -10868: register as aufx Effect not aumf
+ Music Effect
+
+- Remove pluginWantsMidiIn; set pluginAUMainType to aufx in jucer
+- acceptsMidi() returns true for MIDI Learn without aumf classification
+- Standard JUCE mono/stereo isBusesLayoutSupported
+- getPosition() playhead API for JUCE 8.0.13
+---
+ RhythmicSpace.jucer        |  4 ++-
+ Source/PluginProcessor.cpp | 64 ++++++++++++++------------------------
+ 2 files changed, 27 insertions(+), 41 deletions(-)
+
+diff --git a/RhythmicSpace.jucer b/RhythmicSpace.jucer
+index d03f8b7..f577a92 100644
+--- a/RhythmicSpace.jucer
++++ b/RhythmicSpace.jucer
+@@ -4,7 +4,9 @@
+               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" version="1.0.0"
+               companyName="LATHAMAUDIO" companyCopyright="2025 LATHAMAUDIO"
+               pluginManufacturerCode="Ltha" pluginCode="Rysp" pluginFormats="buildAU,buildStandalone,buildVST3"
+-              pluginCharacteristicsValue="pluginWantsMidiIn"
++              pluginCharacteristicsValue=""
++              pluginChannelConfigs=""
++              pluginAUMainType="'aufx'"
+               pluginName="RhythmicSpace" pluginDesc="Step Sequencer Multi-Effect Processor"
+               pluginManufacturer="LATHAMAUDIO" aaxIdentifier="com.lathamaudio.rhythmicspace"
+               pluginAAXCategory="8" pluginVST3Category="Fx,Modulation" bundleIdentifier="com.lathamaudio.rhythmicspace"
+diff --git a/Source/PluginProcessor.cpp b/Source/PluginProcessor.cpp
+index f182050..177c9b8 100644
+--- a/Source/PluginProcessor.cpp
++++ b/Source/PluginProcessor.cpp
+@@ -87,11 +87,7 @@ const juce::String RhythmicSpaceAudioProcessor::getName() const
+ 
+ bool RhythmicSpaceAudioProcessor::acceptsMidi() const
+ {
+-   #if JucePlugin_WantsMidiInput
+     return true;
+-   #else
+-    return false;
+-   #endif
+ }
+ 
+ bool RhythmicSpaceAudioProcessor::producesMidi() const
+@@ -183,33 +179,15 @@ bool RhythmicSpaceAudioProcessor::isBusesLayoutSupported (const BusesLayout& lay
+     juce::ignoreUnused (layouts);
+     return true;
+   #else
+-    const auto out = layouts.getMainOutputChannelSet();
+-    const auto in  = layouts.getMainInputChannelSet();
+-
+-    if (out.isDisabled())
++    if (layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
++     || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::disabled())
+         return false;
+ 
+-    const auto isMonoOrStereo = [] (const juce::AudioChannelSet& set)
+-    {
+-        return set == juce::AudioChannelSet::mono()
+-            || set == juce::AudioChannelSet::stereo();
+-    };
+-
+-    if (! isMonoOrStereo (out))
+-        return false;
+-
+-   #if ! JucePlugin_IsSynth
+-    if (in.isDisabled())
+-        return true;
+-
+-    if (! isMonoOrStereo (in))
++    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
++     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+         return false;
+ 
+-    if (in != out)
+-        return false;
+-   #endif
+-
+-    return true;
++    return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
+   #endif
+ }
+ #endif
+@@ -221,26 +199,32 @@ void RhythmicSpaceAudioProcessor::updateHostTransportState()
+ 
+     if (auto* playHead = getPlayHead())
+     {
+-        juce::AudioPlayHead::CurrentPositionInfo pos;
+-
+-        if (playHead->getCurrentPosition (pos))
++        if (auto position = playHead->getPosition())
+         {
+-            if (pos.bpm > 0.0 && pos.bpm != bpm.load())
++            if (position->getBpm().hasValue())
+             {
+-                bpm.store(pos.bpm);
+-                stepSequencer.setBPM(pos.bpm);
++                const double hostBpm = *position->getBpm();
++
++                if (hostBpm != bpm.load())
++                {
++                    bpm.store(hostBpm);
++                    stepSequencer.setBPM(hostBpm);
++                }
+             }
+ 
+-            playing.store(pos.isPlaying);
++            playing.store(position->getIsPlaying());
+ 
+-            const double hostPpq = pos.ppqPosition;
+-            const bool hostJumped = lastHostPpq < 0.0
+-                                 || std::abs(hostPpq - lastHostPpq) > 0.25;
++            if (position->getPpqPosition().hasValue())
++            {
++                const double hostPpq = *position->getPpqPosition();
++                const bool hostJumped = lastHostPpq < 0.0
++                                     || std::abs(hostPpq - lastHostPpq) > 0.25;
+ 
+-            if (pos.isPlaying || hostJumped)
+-                stepSequencer.syncToHostPpq(hostPpq);
++                if (playing.load() || hostJumped)
++                    stepSequencer.syncToHostPpq(hostPpq);
+ 
+-            lastHostPpq = hostPpq;
++                lastHostPpq = hostPpq;
++            }
+         }
+     }
+ }
+-- 
+2.43.0
+

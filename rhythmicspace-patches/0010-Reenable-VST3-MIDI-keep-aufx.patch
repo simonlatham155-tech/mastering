@@ -1,0 +1,25 @@
+From 66c51d7 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sun, 14 Jun 2026 14:00:00 +0000
+Subject: [PATCH] Re-enable VST3 MIDI input while keeping AU as aufx
+
+pluginWantsMidiIn is required for hosts (Ableton VST3) to route MIDI
+into processBlock. pluginAUMainType="'aufx'" overrides the default
+aumf classification so Logic AU validation should still pass.
+---
+ RhythmicSpace.jucer | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/RhythmicSpace.jucer b/RhythmicSpace.jucer
+index f577a92..a8c3e11 100644
+--- a/RhythmicSpace.jucer
++++ b/RhythmicSpace.jucer
+@@ -4,7 +4,7 @@
+               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" version="1.0.0"
+               companyName="LATHAMAUDIO" companyCopyright="2025 LATHAMAUDIO"
+               pluginManufacturerCode="Ltha" pluginCode="Rysp" pluginFormats="buildAU,buildStandalone,buildVST3"
+-              pluginCharacteristicsValue=""
++              pluginCharacteristicsValue="pluginWantsMidiIn"
+               pluginChannelConfigs=""
+               pluginAUMainType="'aufx'"
+               pluginName="RhythmicSpace" pluginDesc="Step Sequencer Multi-Effect Processor"

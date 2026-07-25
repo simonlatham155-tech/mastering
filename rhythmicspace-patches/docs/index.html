@@ -479,6 +479,15 @@
             margin-top: 2px;
         }
 
+        .dl-btn .install-path {
+            display: block;
+            font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+            font-size: 9px;
+            color: var(--cyan);
+            margin-top: 4px;
+            word-break: break-all;
+        }
+
         .free-badge {
             display: inline-block;
             font-size: 9px;
@@ -694,15 +703,18 @@
             <div class="download-links">
                 <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-VST3-macOS-v1.0.0.zip" class="dl-btn">
                     <span class="free-badge">Free</span> VST3 Plugin
-                    <span class="format">Ableton, Cubase, Reaper · ~10 MB</span>
+                    <span class="format">Ableton, Cubase, Reaper · unzip, then copy RhythmicSpace.vst3</span>
+                    <span class="install-path">→ ~/Library/Audio/Plug-Ins/VST3/</span>
                 </a>
                 <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-AU-macOS-v1.0.0.zip" class="dl-btn">
                     <span class="free-badge">Free</span> AU Component
-                    <span class="format">Logic Pro, GarageBand · ~10 MB</span>
+                    <span class="format">Logic Pro, GarageBand · unzip, then copy RhythmicSpace.component</span>
+                    <span class="install-path">→ ~/Library/Audio/Plug-Ins/Components/</span>
                 </a>
                 <a href="https://github.com/simonlatham155-tech/RhythmicSpace/releases/latest/download/RhythmicSpace-Standalone-macOS-v1.0.0.zip" class="dl-btn">
                     <span class="free-badge">Free</span> Standalone App
-                    <span class="format">No DAW required · ~10 MB</span>
+                    <span class="format">No DAW required · unzip, then copy RhythmicSpace.app</span>
+                    <span class="install-path">→ /Applications/</span>
                 </a>
             </div>
             <a href="https://lathamaudio.com" class="site-link">lathamaudio.com</a>
