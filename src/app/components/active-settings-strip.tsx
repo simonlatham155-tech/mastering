@@ -65,11 +65,11 @@ export function ActiveSettingsStrip({
         Active on your master
       </div>
       <p className="text-[10px] font-mono text-zinc-500 mb-3 leading-relaxed">
-        Full quality stack is applied on upload — genre chain, staging, tonal match, and delivery
-        prep. Open <span className="text-zinc-400">Pro controls</span> below to adjust anything.
+        Pre-master analysis has applied a visible starting setup — genre chain, staging, tonal match,
+        and delivery prep. Open <span className="text-zinc-400">Pro controls</span> below to inspect or edit every stage.
       </p>
       <div className="space-y-1.5">
-        <AppliedRow label="Gear profile" detail={`${gearName} (genre EQ + chain)`} />
+        <AppliedRow label="Genre strategy" detail={`${gearName} (visible EQ + rack routing)`} />
         <AppliedRow
           label="Delivery target"
           detail={`${preset.name} · ${preset.lufs} LUFS · ${preset.ceiling} dBTP ceiling`}
@@ -102,13 +102,13 @@ export function ActiveSettingsStrip({
           label="Live limiter"
           detail={
             hqMode
-              ? 'Flow WaveShaper ceiling (4× OS) + FIR true-peak meter tap'
+              ? 'Faust stereo-linked look-ahead ceiling + FIR true-peak meter tap'
               : 'Flow WaveShaper ceiling (2× OS) + FIR true-peak meter tap'
           }
         />
         <AppliedRow
           label="Export limiter"
-          detail="4× FIR true-peak ceiling in-file (Faust / WaveShaper fallback)"
+          detail="Faust look-ahead gain control → 4× FIR true-peak guard (explicit fallbacks)"
         />
       </div>
     </div>

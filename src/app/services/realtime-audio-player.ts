@@ -28,6 +28,7 @@
 
 import {
   buildMasteringChain,
+  buildMasteringChainAsync,
   type MasteringChain,
 } from './mastering-chain-builder';
 import type { ProcessingSettings } from './audio-processor';
@@ -310,15 +311,22 @@ export class RealtimeAudioPlayer {
     };
 
     let chain: MasteringChain;
-    // Live: Flow ceiling in-chain (WaveShaper). FIR worklet runs monitor-only on the
-    // meter tap (see PATCH 2026-06-07) — same true-peak readout as export, no block buzz.
-    // HQ toggles 2× vs 4× ceiling oversampling to match preview/export quality modes.
-    chain = buildMasteringChain({
-      ...chainConfig,
-      quality: this.hqModeEnabled && !dryBypass ? 'export' : 'preview',
-    });
+    const quality = this.hqModeEnabled && !dryBypass ? 'export' : 'preview';
     if (this.hqModeEnabled && !dryBypass) {
-      console.log('✅ HQ live chain: Flow ceiling (4× OS WaveShaper, FIR meter tap only)');
+      try {
+        chain = await buildMasteringChainAsync({
+          ...chainConfig,
+          quality,
+          useFaustLimiter: true,
+          useTruePeakWorklet: false,
+        });
+        console.log('✅ HQ live chain: Faust linked look-ahead limiter + FIR meter tap');
+      } catch (error) {
+        console.warn('[Faust] HQ live limiter unavailable — using 4× WaveShaper ceiling', error);
+        chain = buildMasteringChain({ ...chainConfig, quality });
+      }
+    } else {
+      chain = buildMasteringChain({ ...chainConfig, quality });
     }
 
     this.wireLiveMeters(chain);

@@ -1,11 +1,15 @@
 import { Cpu, Zap, Radio, Sliders, Disc3, Maximize2, Volume2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { getGenrePreset } from '../data/genre-presets';
+import type { GearProfileId } from './gear-selector';
 
 // PerformanceMode removed (2026-02-16) - studio mastering only
 
 interface SignalChainVisualizerProps {
   isProcessing: boolean;
-  gearProfile: string;
+  gearProfile: GearProfileId;
+  logicMode: 'brickwall' | 'dynamics';
+  hqMode: boolean;
 }
 
 interface ChainNode {
@@ -19,17 +23,31 @@ interface ChainNode {
 
 export function SignalChainVisualizer({ 
   isProcessing,
-  gearProfile 
+  gearProfile,
+  logicMode,
+  hqMode,
 }: SignalChainVisualizerProps) {
-  
+  const preset = getGenrePreset(gearProfile);
+  const usesColor = (preset?.biases.colorAmount ?? 0) > 0;
+  const toggles = preset?.toggles;
+  const pressure = logicMode === 'brickwall';
+
   const studioChain: ChainNode[] = [
     {
+      id: 'profile-eq',
+      name: 'Profile EQ',
+      description: 'Visible low shelf, mud bell, and air shelf from the active genre strategy',
+      icon: <Sliders className="w-4 h-4" />,
+      color: '#38bdf8',
+      active: true,
+    },
+    {
       id: 'transformer',
-      name: 'Harmonic Saturator',
+      name: 'Transformer',
       description: 'Transformer-style saturation (WaveShaper + asymmetric curve)',
       icon: <Zap className="w-4 h-4" />,
       color: '#06b6d4',
-      active: true // Show in studio or no mode (default preview)
+      active: usesColor,
     },
     {
       id: 'tape',
@@ -37,7 +55,7 @@ export function SignalChainVisualizer({
       description: 'Magnetic hysteresis modeling (tanh saturation + head bump)',
       icon: <Radio className="w-4 h-4" />,
       color: '#8b5cf6',
-      active: true
+      active: usesColor,
     },
     {
       id: 'multiband',
@@ -45,15 +63,15 @@ export function SignalChainVisualizer({
       description: '4-band crossover with per-band compression (BiquadFilter)',
       icon: <Sliders className="w-4 h-4" />,
       color: '#f59e0b',
-      active: true
+      active: toggles?.useMultiband ?? false,
     },
     {
       id: 'ssl',
-      name: 'Glue',
-      description: 'VCA-style bus compression (DynamicsCompressor)',
+      name: 'VCA Bus Glue',
+      description: 'VCA-style bus compression with visible threshold, ratio, attack, and release',
       icon: <Disc3 className="w-4 h-4" />,
       color: '#10b981',
-      active: true // Always show
+      active: true,
     },
     {
       id: 'ms',
@@ -61,15 +79,25 @@ export function SignalChainVisualizer({
       description: 'Mid-Side stereo imaging (gain matrix)',
       icon: <Maximize2 className="w-4 h-4" />,
       color: '#ec4899',
-      active: true
+      active: toggles?.useMidSide ?? false,
+    },
+    {
+      id: 'clipper',
+      name: 'Clipper',
+      description: 'Pressure-only transient clipping, enabled only by compatible genre strategies',
+      icon: <Cpu className="w-4 h-4" />,
+      color: '#fb7185',
+      active: pressure && (toggles?.useClipper ?? false),
     },
     {
       id: 'limiter',
-      name: 'Finish',
-      description: 'Cascaded multi-stage limiting (brick-wall ceiling)',
+      name: hqMode ? 'Faust Limiter' : 'Preview Ceiling',
+      description: hqMode
+        ? 'Stereo-linked 5 ms look-ahead Faust gain control with FIR true-peak verification'
+        : 'Low-latency 2× WaveShaper ceiling with FIR true-peak metering',
       icon: <Volume2 className="w-4 h-4" />,
       color: '#ef4444',
-      active: true // Always show
+      active: true,
     }
   ];
 
@@ -88,7 +116,7 @@ export function SignalChainVisualizer({
             Signal Processing Chain
           </div>
           <div className="text-[9px] font-mono text-zinc-600">
-            {activeChain.length}-Stage Algorithmic Mastering • Web Audio API
+            {activeChain.length} active of {studioChain.length} visible hardware-style stages
           </div>
         </div>
         
@@ -108,15 +136,15 @@ export function SignalChainVisualizer({
       {/* Signal Chain Flow */}
       <div className="relative">
         <div className="flex items-center gap-3 overflow-x-auto pb-2">
-          {activeChain.map((node, index) => (
+          {studioChain.map((node, index) => (
             <div key={node.id} className="flex items-center gap-3 flex-shrink-0">
               {/* Node */}
               <motion.div
                 initial={{ scale: 0.8, opacity: 0 }}
                 animate={{ 
                   scale: 1, 
-                  opacity: 1,
-                  boxShadow: isProcessing 
+                  opacity: node.active ? 1 : 0.38,
+                  boxShadow: isProcessing && node.active
                     ? [`0 0 0px ${node.color}`, `0 0 20px ${node.color}`, `0 0 0px ${node.color}`]
                     : `0 0 0px ${node.color}`
                 }}
@@ -124,7 +152,7 @@ export function SignalChainVisualizer({
                   delay: index * 0.1,
                   boxShadow: {
                     duration: 1.5,
-                    repeat: isProcessing ? Infinity : 0,
+                    repeat: isProcessing && node.active ? Infinity : 0,
                     delay: index * 0.2
                   }
                 }}
@@ -146,6 +174,9 @@ export function SignalChainVisualizer({
                   >
                     {node.name}
                   </div>
+                  <div className="text-[7px] font-mono uppercase tracking-wider text-zinc-500">
+                    {node.active ? 'Active' : 'Bypassed'}
+                  </div>
                 </div>
 
                 {/* Tooltip */}
@@ -160,7 +191,7 @@ export function SignalChainVisualizer({
               </motion.div>
 
               {/* Arrow */}
-              {index < activeChain.length - 1 && (
+              {index < studioChain.length - 1 && (
                 <motion.div
                   initial={{ scaleX: 0, opacity: 0 }}
                   animate={{ scaleX: 1, opacity: 1 }}
@@ -170,20 +201,20 @@ export function SignalChainVisualizer({
                   <svg width="24" height="12" viewBox="0 0 24 12" className="flex-shrink-0">
                     <motion.path
                       d="M 0 6 L 18 6 M 18 6 L 14 2 M 18 6 L 14 10"
-                      stroke={isProcessing ? node.color : '#3f3f46'}
+                      stroke={isProcessing && node.active ? node.color : '#3f3f46'}
                       strokeWidth="2"
                       fill="none"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      animate={isProcessing ? {
+                      animate={isProcessing && node.active ? {
                         strokeDashoffset: [40, 0],
                       } : {}}
                       style={{
-                        strokeDasharray: isProcessing ? "4 4" : "none"
+                        strokeDasharray: isProcessing && node.active ? "4 4" : "none"
                       }}
                       transition={{
                         duration: 1,
-                        repeat: isProcessing ? Infinity : 0,
+                        repeat: isProcessing && node.active ? Infinity : 0,
                         ease: "linear",
                         delay: index * 0.2
                       }}
@@ -206,9 +237,9 @@ export function SignalChainVisualizer({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              <span className="text-cyan-400 font-semibold">STUDIO MODE:</span> Full algorithmic chain using Web Audio API primitives. 
-              Suitable for content creation, YouTube, podcasts, and DJ sets. 
-              Not a replacement for professional mastering services.
+              <span className="text-cyan-400 font-semibold">VISIBLE RACK:</span>{' '}
+              Pre-master analysis selects a starting strategy; every audible stage is shown here
+              as active or bypassed and remains editable in the rack controls.
             </motion.div>
           </AnimatePresence>
         </div>

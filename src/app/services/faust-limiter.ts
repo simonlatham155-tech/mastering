@@ -1,5 +1,7 @@
 /**
- * Precompiled Faust WASM true-peak limiter (export / offline render).
+ * Precompiled Faust WASM stereo-linked look-ahead limiter.
+ *
+ * The 4× FIR worklet remains the true-peak measurement/guard layer.
  *
  * Runtime loads the unminified @grame/faustwasm esm-bundle from /vendor/faustwasm.js.
  * Vite production minification breaks Faust's AudioWorklet injection (.toString() → "V is not defined").
@@ -37,11 +39,11 @@ export function faustVendorModuleUrl(): string {
   return faustPublicPath('vendor/faustwasm.js');
 }
 
-function faustLimiterWasmUrl(): string {
+export function faustLimiterWasmUrl(): string {
   return faustPublicPath('faust/compiled/limiter/dsp-module.wasm');
 }
 
-function faustLimiterMetaUrl(): string {
+export function faustLimiterMetaUrl(): string {
   return faustPublicPath('faust/compiled/limiter/dsp-meta.json');
 }
 
@@ -113,7 +115,7 @@ export async function createFaustLimiterNode(
   const { FaustMonoDspGenerator } = await loadFaustRuntime();
   const factory = await loadFaustLimiterFactory();
   const generator = new FaustMonoDspGenerator();
-  generator.factory = factory;
+  generator.factory = factory as Required<LooseFaustDspFactory>;
 
   // OfflineAudioContext: ScriptProcessor avoids AudioWorklet registration failures.
   const offline =
@@ -125,7 +127,7 @@ export async function createFaustLimiterNode(
 
   const node = await generator.createNode(
     context,
-    'Latham True Peak Limiter',
+    'Latham Master Limiter',
     factory,
     offline,
     1024,

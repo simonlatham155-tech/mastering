@@ -81,7 +81,7 @@ export function GearSelector({ selectedProfile, onChange, variant = 'default' }:
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-xs font-mono text-zinc-500 tracking-[0.3em] uppercase">Gear Profile</div>
+      <div className="text-xs font-mono text-zinc-500 tracking-[0.3em] uppercase">Genre Strategy</div>
 
       <Select.Root value={selectedProfile} onValueChange={(value) => onChange(value as GearProfileId)}>
         <Select.Trigger 

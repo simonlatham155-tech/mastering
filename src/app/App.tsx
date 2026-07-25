@@ -923,7 +923,7 @@ export default function App() {
       setMatchStrength(DEFAULT_TONAL_MATCH_STRENGTH);
 
       toast.success(
-        `Mix configured: ${recommendation.gearProfile} • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
+        `Pre-master analysed: ${recommendation.gearProfile} strategy • ${applied.circuitDrive}% warmth • ${inputResult.lufs.toFixed(1)} LUFS in`
       );
 
       const syncedProfile = syncProfileAdjustmentsForGear(applied.gearProfile);
@@ -1472,8 +1472,8 @@ export default function App() {
             {!isReady && !isAnalyzing && (
               <div className="mb-6 text-center py-8 px-6 rounded-lg border border-zinc-800 bg-zinc-950/50">
                 <p className="text-sm text-zinc-400 font-mono leading-relaxed max-w-2xl mx-auto">
-                  Upload your mix and define your objective. We&apos;ll analyze the recording, recommend a
-                  mastering strategy, and apply only the processing required to reach release standard.
+                  Upload your untouched pre-master and define the delivery objective. Analysis recommends
+                  a starting strategy; every audible change is applied through the visible, editable rack.
                 </p>
               </div>
             )}
@@ -1773,6 +1773,8 @@ export default function App() {
                 <SignalChainVisualizer
                   isProcessing={isProcessing}
                   gearProfile={gearProfile}
+                  logicMode={logicMode}
+                  hqMode={hqMode}
                 />
                 <GenreProfileInfo gearProfile={gearProfile} />
               </div>

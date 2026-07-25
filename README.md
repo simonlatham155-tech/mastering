@@ -44,7 +44,7 @@ src/
 │   │   ├── stages/
 │   │   │   ├── transformer-stage.ts    # Neve 1073 transformer emulation
 │   │   │   └── tape-stage.ts           # Studer A800 tape emulation
-│   │   ├── ai-mastering-engine.ts      # AI recommendation engine
+│   │   ├── ai-mastering-engine.ts      # Pre-master analysis + rack suggestions
 │   │   └── multi-stage-limiter.ts      # True peak limiter
 │   ├── utils/
 │   │   └── audio-analyzer.ts      # Input file analysis
@@ -52,15 +52,14 @@ src/
 │       ├── oversampling-limiter.js     # 4x oversampling true peak limiter
 │       └── lufs-metering-processor.js  # LUFS measurement
 ├── dsp/
-│   ├── limiter.dsp                # Faust export limiter (built to WASM)
-│   ├── limiter-lookahead.dsp      # Future look-ahead spec (not compiled yet)
+│   ├── limiter.dsp                # Faust stereo-linked look-ahead limiter
 │   └── BUILD_INSTRUCTIONS.md
 └── styles/                        # Tailwind v4 + VST theme
 
 public/
 ├── worklets/
 │   └── pro-compressor-worklet.js  # Pro compressor AudioWorklet
-└── faust/                         # Faust DSP sources (not yet compiled to WASM)
+└── faust/                         # Compiled Faust WASM + metadata
 ```
 
 ## Signal Chain
@@ -70,7 +69,7 @@ public/
 3. **SSL Bus Compressor** — Feed-forward, variable knee, sidechain HPF
 4. **Multiband Processing** — Genre-dependent crossovers and per-band dynamics
 5. **M/S Processing** — Stereo width control, mono bass enforcement
-6. **True Peak Limiter** — 31-tap FIR, 4x oversampling, look-ahead, dual-stage waveshapers
+6. **Final Limiting** — Faust stereo-linked look-ahead gain control into a 4× FIR true-peak guard
 
 ## Key Design Decisions
 

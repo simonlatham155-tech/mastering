@@ -1,5 +1,5 @@
 {
-    "name": "Latham True Peak Limiter",
+    "name": "Latham Master Limiter",
     "filename": "limiter",
     "version": "2.85.7",
     "compile_options": "-lang wasm-i -fpga-mem-th 4 -ct 1 -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 2",
@@ -8,9 +8,10 @@
         "/usr/share/faust/stdfaust.lib",
         "/usr/share/faust/maths.lib",
         "/usr/share/faust/platform.lib",
-        "/usr/share/faust/analyzers.lib",
+        "/usr/share/faust/basics.lib",
         "/usr/share/faust/signals.lib",
-        "/usr/share/faust/basics.lib"
+        "/usr/share/faust/analyzers.lib",
+        "/usr/share/faust/routes.lib"
     ],
     "include_pathnames": [
         "/faust/user/inc0",
@@ -19,8 +20,8 @@
         "/usr/share/faust",
         "."
     ],
-    "size": 64,
-    "code": "uHrR",
+    "size": 16488,
+    "code": "yGfe",
     "inputs": 2,
     "outputs": 2,
     "meta": [
@@ -40,6 +41,15 @@
             "basics.lib/name": "Faust Basic Element Library"
         },
         {
+            "basics.lib/peakholder:author": "Dario Sanfilippo"
+        },
+        {
+            "basics.lib/peakholder:copyright": "Copyright (C) 2022 Dario Sanfilippo <sanfilippo.dario@gmail.com>"
+        },
+        {
+            "basics.lib/peakholder:license": "MIT-style STK-4.3 license"
+        },
+        {
             "basics.lib/version": "1.22.0"
         },
         {
@@ -55,22 +65,22 @@
             "compressors.lib/compression_gain_mono:license": "MIT-style STK-4.3 license"
         },
         {
-            "compressors.lib/compressor_lad_mono:author": "Julius O. Smith III"
+            "compressors.lib/compressor_stereo:author": "Julius O. Smith III"
         },
         {
-            "compressors.lib/compressor_lad_mono:copyright": "Copyright (C) 2014-2020 by Julius O. Smith III <jos@ccrma.stanford.edu>"
+            "compressors.lib/compressor_stereo:copyright": "Copyright (C) 2014-2020 by Julius O. Smith III <jos@ccrma.stanford.edu>"
         },
         {
-            "compressors.lib/compressor_lad_mono:license": "MIT-style STK-4.3 license"
+            "compressors.lib/compressor_stereo:license": "MIT-style STK-4.3 license"
         },
         {
-            "compressors.lib/compressor_mono:author": "Julius O. Smith III"
+            "compressors.lib/limiter_lad_N:author": "Dario Sanfilippo"
         },
         {
-            "compressors.lib/compressor_mono:copyright": "Copyright (C) 2014-2020 by Julius O. Smith III <jos@ccrma.stanford.edu>"
+            "compressors.lib/limiter_lad_N:copyright": "Copyright (C) 2020 Dario Sanfilippo       <sanfilippo.dario@gmail.com>"
         },
         {
-            "compressors.lib/compressor_mono:license": "MIT-style STK-4.3 license"
+            "compressors.lib/limiter_lad_N:license": "GPLv3 license"
         },
         {
             "compressors.lib/name": "Faust Compressor Effect Library"
@@ -79,7 +89,7 @@
             "compressors.lib/version": "1.6.0"
         },
         {
-            "description": "Export limiter — compressor + brickwall ceiling"
+            "description": "Stereo-linked compressor and 5 ms look-ahead ceiling"
         },
         {
             "filename": "limiter"
@@ -100,13 +110,19 @@
             "maths.lib/version": "2.9.0"
         },
         {
-            "name": "Latham True Peak Limiter"
+            "name": "Latham Master Limiter"
         },
         {
             "platform.lib/name": "Generic Platform Library"
         },
         {
             "platform.lib/version": "1.3.0"
+        },
+        {
+            "routes.lib/name": "Faust Signal Routing Library"
+        },
+        {
+            "routes.lib/version": "1.3.0"
         },
         {
             "signals.lib/name": "Faust Routing Library"
@@ -121,7 +137,7 @@
             "signals.lib/version": "1.6.0"
         },
         {
-            "version": "1.0"
+            "version": "2.0"
         }
     ],
     "ui": [
@@ -132,10 +148,10 @@
                 {
                     "type": "hslider",
                     "label": "Attack",
-                    "varname": "fHslider4",
+                    "varname": "fHslider3",
                     "shortname": "Attack",
                     "address": "/Limiter/Attack",
-                    "index": 24,
+                    "index": 8224,
                     "meta": [
                         {
                             "unit": "ms"
@@ -149,13 +165,13 @@
                 {
                     "type": "hslider",
                     "label": "Ceiling",
-                    "varname": "fHslider1",
+                    "varname": "fHslider5",
                     "shortname": "Ceiling",
                     "address": "/Limiter/Ceiling",
-                    "index": 4,
+                    "index": 12344,
                     "meta": [
                         {
-                            "unit": "dBTP"
+                            "unit": "dBFS"
                         }
                     ],
                     "init": -1,
@@ -178,10 +194,10 @@
                 {
                     "type": "hslider",
                     "label": "Ratio",
-                    "varname": "fHslider2",
+                    "varname": "fHslider1",
                     "shortname": "Ratio",
                     "address": "/Limiter/Ratio",
-                    "index": 8,
+                    "index": 4116,
                     "init": 10,
                     "min": 1,
                     "max": 100,
@@ -190,10 +206,10 @@
                 {
                     "type": "hslider",
                     "label": "Release",
-                    "varname": "fHslider3",
+                    "varname": "fHslider2",
                     "shortname": "Release",
                     "address": "/Limiter/Release",
-                    "index": 12,
+                    "index": 8216,
                     "meta": [
                         {
                             "unit": "ms"
@@ -207,10 +223,10 @@
                 {
                     "type": "hslider",
                     "label": "Threshold",
-                    "varname": "fHslider5",
+                    "varname": "fHslider4",
                     "shortname": "Threshold",
                     "address": "/Limiter/Threshold",
-                    "index": 36,
+                    "index": 8236,
                     "meta": [
                         {
                             "unit": "dB"
