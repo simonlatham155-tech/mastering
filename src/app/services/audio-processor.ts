@@ -1,9 +1,13 @@
 import { GearProfileId } from '../components/gear-selector';
-import type { ExportPreset } from '../components/export-panel';
-import { getExportPreset } from '../data/export-presets';
+import { getExportPreset, type ExportPreset } from '../data/export-presets';
 import { resolveProcessingPlan } from '../data/preset-resolution';
 import { QualityMode, getQualityProfile } from '../data/quality-profiles';
-import { buildMasteringChain, buildOfflineMasteringChain, type MasteringChain } from './mastering-chain-builder';
+import {
+  buildMasteringChain,
+  buildOfflineMasteringChain,
+  type LimiterBackend,
+  type MasteringChain,
+} from './mastering-chain-builder';
 import { encodeWavBlob } from '../utils/wav-encode';
 import {
   measureBufferLoudness,
@@ -11,6 +15,10 @@ import {
   INPUT_ANALYSIS_MAX_SECONDS,
 } from '../utils/measure-buffer-loudness';
 import { getSharedAudioContext } from './shared-audio-context';
+import {
+  alignRenderedAudioBuffer,
+  OFFLINE_RENDER_LATENCY_PADDING_SECONDS,
+} from '../utils/align-rendered-buffer';
 
 /** Scan sample peak; decimate on very long files to keep upload responsive. */
 function scanSamplePeakLinear(buffer: AudioBuffer): number {
@@ -103,7 +111,7 @@ export interface ProcessingSettings {
   };
   
   // Legacy (temporary - remove after migration)
-  gearProfile?: GearProfileId;
+  gearProfile?: GearProfileId | 'realprog' | 'modernprog';
 }
 
 /**
@@ -523,6 +531,10 @@ export class AudioProcessor {
       limiterCeilingOverride?: number;
       outputTrimDB?: number;
       sslGlue?: 'auto' | 'gentle' | 'firm';
+      onLimiterBackend?: (
+        backend: Exclude<LimiterBackend, 'bypass'>,
+        latencySamples: number
+      ) => void;
     }
   ): Promise<AudioBuffer> {
     if (!this.audioBuffer) {
@@ -543,24 +555,19 @@ export class AudioProcessor {
       userOverrides: settings.userOverrides
     });
 
-    // Determine minimal master mode — skip for waveform viz (must match live preview)
-    const inputLUFS = this.analysis?.lufs ?? -16;
-    const inputPeakDBFS = this.analysis?.peakLevel ?? -1;
-    const inputCrestDBFS = this.analysis?.crestFactor ?? 12;
-    const targetLUFS = settings.targetLUFS ?? -14;
-    const requiredLoudnessChange = Math.abs(targetLUFS - inputLUFS);
-    
-    const isHotPeaks = inputPeakDBFS >= -1.5;
-    const isCompressed = inputCrestDBFS < 8.0;
-    const isCloseToTarget = requiredLoudnessChange <= 3.0;
-    const useMinimalMaster = forVisualization
-      ? false
-      : isHotPeaks && isCompressed && isCloseToTarget;
+    // The visible rack is the export rack. Analysis may warn about a hot or
+    // already-compressed input, but it must never substitute a hidden
+    // "minimal master" topology behind the user's controls.
+    const useMinimalMaster = false;
 
     // Create OfflineAudioContext for full track
     const sampleRate = this.audioBuffer.sampleRate;
     const numChannels = 2; // Always stereo mastering
-    const processLength = this.audioBuffer.length;
+    const sourceLength = this.audioBuffer.length;
+    const latencyPaddingSamples = Math.ceil(
+      sampleRate * OFFLINE_RENDER_LATENCY_PADDING_SECONDS
+    );
+    const processLength = sourceLength + latencyPaddingSamples;
 
     const offlineContext = new OfflineAudioContext(
       numChannels,
@@ -582,6 +589,9 @@ export class AudioProcessor {
       outputTrimDB: options?.outputTrimDB,
       sslGlue: options?.sslGlue,
     });
+    if (chain.limiterBackend !== 'bypass') {
+      options?.onLimiterBackend?.(chain.limiterBackend, chain.latencySamples);
+    }
 
     // Create source
     const source = offlineContext.createBufferSource();
@@ -590,7 +600,7 @@ export class AudioProcessor {
     let processingBuffer: AudioBuffer;
     if (this.audioBuffer.numberOfChannels === 1) {
       console.log('📻 Upmixing mono to dual-mono');
-      processingBuffer = offlineContext.createBuffer(2, processLength, sampleRate);
+      processingBuffer = offlineContext.createBuffer(2, sourceLength, sampleRate);
       const monoData = this.audioBuffer.getChannelData(0);
       processingBuffer.copyToChannel(monoData, 0);
       processingBuffer.copyToChannel(monoData, 1);
@@ -619,7 +629,11 @@ export class AudioProcessor {
     // Update damage report (if needed)
     // TODO: Calculate and attach damage report to this.analysis
 
-    return renderedBuffer;
+    return alignRenderedAudioBuffer(
+      renderedBuffer,
+      chain.latencySamples,
+      sourceLength
+    );
   }
 
   /**
@@ -665,7 +679,14 @@ export class AudioProcessor {
     const processLength = Math.min(chunkDuration * sampleRate, samplesRemaining);
 
     // Create OfflineAudioContext for chunk
-    const offlineContext = new OfflineAudioContext(2, processLength, sampleRate);
+    const latencyPaddingSamples = Math.ceil(
+      sampleRate * OFFLINE_RENDER_LATENCY_PADDING_SECONDS
+    );
+    const offlineContext = new OfflineAudioContext(
+      2,
+      processLength + latencyPaddingSamples,
+      sampleRate
+    );
 
     // Build mastering chain (export quality uses true-peak worklet on ceiling)
     const chain = await buildOfflineMasteringChain({
@@ -711,7 +732,11 @@ export class AudioProcessor {
     // Dispose chain
     chain.dispose();
 
-    return renderedBuffer;
+    return alignRenderedAudioBuffer(
+      renderedBuffer,
+      chain.latencySamples,
+      processLength
+    );
   }
 
   /**
@@ -1468,7 +1493,7 @@ export class AudioProcessor {
       
       // Calculate limiter makeup gain (matches createWeissLimiterStage)
       const currentLUFS = inputLUFS;
-      const targetLUFS = settings.targetLUFS;
+      const targetLUFS = settings.targetLUFS ?? -14;
       const requiredGainDB = targetLUFS - currentLUFS;
       const maxAllowedMakeup = 20;
       const limiterMakeupDB = Math.max(-10, Math.min(requiredGainDB, maxAllowedMakeup));
@@ -1672,7 +1697,12 @@ export class AudioProcessor {
     // Sample a few representative values to detect brick-walling
     const ch0 = renderedBuffer.getChannelData(0);
     const midPoint = Math.floor(ch0.length / 2);
-    console.log(`   Sample values (mid-section): ${ch0.slice(midPoint, midPoint + 10).map(v => v.toFixed(4)).join(', ')}`);
+    console.log(
+      `   Sample values (mid-section): ${Array.from(
+        ch0.slice(midPoint, midPoint + 10),
+        (value) => value.toFixed(4)
+      ).join(', ')}`
+    );
     
     // Count samples near ceiling to detect excessive limiting
     let samplesNearCeiling = 0;

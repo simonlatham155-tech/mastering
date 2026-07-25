@@ -36,6 +36,7 @@ class OversamplingLimiter extends AudioWorkletProcessor {
 
     // Per-channel DSP state — stereo channels must not share FIR/limiter memory
     this.channelState = [];
+    this.envelope = 1.0;
 
     this.truePeakDBTP = -Infinity;
     this.digitalPeakDB = -Infinity;
@@ -84,9 +85,7 @@ class OversamplingLimiter extends AudioWorkletProcessor {
       upsampleBuffer: new Float32Array(this.FIR_LENGTH),
       downsampleBuffer: new Float32Array(this.FIR_LENGTH),
       delayBuffer: new Float32Array(this.lookaheadSamples),
-      delayWriteIndex: 0,
-      delayReadIndex: 0,
-      envelope: 1.0,
+      delayIndex: 0,
     };
   }
 
@@ -141,7 +140,7 @@ class OversamplingLimiter extends AudioWorkletProcessor {
     for (let i = 0; i < this.FIR_LENGTH; i++) {
       const sourceIndex = outputLength - this.FIR_LENGTH + i;
       if (sourceIndex >= 0) {
-        state.upsampleBuffer[i] = filtered[sourceIndex];
+        state.upsampleBuffer[i] = stuffed[sourceIndex];
       }
     }
 
@@ -179,23 +178,23 @@ class OversamplingLimiter extends AudioWorkletProcessor {
     for (let i = 0; i < this.FIR_LENGTH; i++) {
       const sourceIndex = inputLength - this.FIR_LENGTH + i;
       if (sourceIndex >= 0) {
-        state.downsampleBuffer[i] = filtered[sourceIndex];
+        state.downsampleBuffer[i] = input[sourceIndex];
       }
     }
 
     return output;
   }
 
-  limitOversampled(input, state) {
-    const length = input.length;
-    const output = new Float32Array(length);
+  limitOversampledLinked(inputs, states) {
+    const length = inputs[0].length;
+    const outputs = inputs.map(() => new Float32Array(length));
     let minEnvelope = 1.0;
 
     for (let i = 0; i < length; i++) {
-      state.delayBuffer[state.delayWriteIndex] = input[i];
-      state.delayWriteIndex = (state.delayWriteIndex + 1) % this.lookaheadSamples;
-
-      const peak = Math.abs(input[i]);
+      let peak = 0;
+      for (let channel = 0; channel < inputs.length; channel++) {
+        peak = Math.max(peak, Math.abs(inputs[channel][i]));
+      }
 
       if (peak > this.dbToLinear(this.truePeakDBTP)) {
         this.truePeakDBTP = this.linearToDb(peak);
@@ -203,43 +202,61 @@ class OversamplingLimiter extends AudioWorkletProcessor {
 
       if (peak > this.ceilingLinear) {
         const targetGain = this.ceilingLinear / peak;
-        state.envelope = targetGain + this.attackCoeff * (state.envelope - targetGain);
+        this.envelope = targetGain + this.attackCoeff * (this.envelope - targetGain);
       } else {
-        state.envelope = 1.0 + this.releaseCoeff * (state.envelope - 1.0);
+        this.envelope = 1.0 + this.releaseCoeff * (this.envelope - 1.0);
       }
 
-      state.envelope = Math.max(0, Math.min(1, state.envelope));
-      minEnvelope = Math.min(minEnvelope, state.envelope);
+      this.envelope = Math.max(0, Math.min(1, this.envelope));
+      minEnvelope = Math.min(minEnvelope, this.envelope);
 
-      const delayed = state.delayBuffer[state.delayReadIndex];
-      output[i] = delayed * state.envelope;
-      state.delayReadIndex = (state.delayReadIndex + 1) % this.lookaheadSamples;
+      const delayedSamples = new Float32Array(inputs.length);
+      let delayedPeak = 0;
+      for (let channel = 0; channel < inputs.length; channel++) {
+        const state = states[channel];
+        const delayed = state.delayBuffer[state.delayIndex];
+        state.delayBuffer[state.delayIndex] = inputs[channel][i];
+        state.delayIndex = (state.delayIndex + 1) % this.lookaheadSamples;
+        delayedSamples[channel] = delayed;
+        delayedPeak = Math.max(delayedPeak, Math.abs(delayed * this.envelope));
+      }
 
-      if (Math.abs(output[i]) > this.ceilingLinear) {
-        output[i] = Math.sign(output[i]) * this.ceilingLinear;
+      const safetyGain =
+        delayedPeak > this.ceilingLinear
+          ? this.ceilingLinear / delayedPeak
+          : 1;
+      for (let channel = 0; channel < inputs.length; channel++) {
+        outputs[channel][i] = delayedSamples[channel] * this.envelope * safetyGain;
       }
     }
 
     this.gainReductionDB = Math.min(this.gainReductionDB, this.linearToDb(minEnvelope));
 
-    return output;
+    return outputs;
   }
 
-  limitBasic(input) {
-    const length = input.length;
-    const output = new Float32Array(length);
+  limitBasicLinked(inputs) {
+    const length = inputs[0].length;
+    const outputs = inputs.map(() => new Float32Array(length));
 
     for (let i = 0; i < length; i++) {
-      const peak = Math.abs(input[i]);
+      let peak = 0;
+      for (let channel = 0; channel < inputs.length; channel++) {
+        peak = Math.max(peak, Math.abs(inputs[channel][i]));
+      }
 
       if (peak > this.dbToLinear(this.digitalPeakDB)) {
         this.digitalPeakDB = this.linearToDb(peak);
       }
 
-      output[i] = Math.max(-this.ceilingLinear, Math.min(this.ceilingLinear, input[i]));
+      const gain = peak > this.ceilingLinear ? this.ceilingLinear / peak : 1;
+      this.gainReductionDB = Math.min(this.gainReductionDB, this.linearToDb(gain));
+      for (let channel = 0; channel < inputs.length; channel++) {
+        outputs[channel][i] = inputs[channel][i] * gain;
+      }
     }
 
-    return output;
+    return outputs;
   }
 
   process(inputs, outputs) {
@@ -248,14 +265,11 @@ class OversamplingLimiter extends AudioWorkletProcessor {
 
     if (!input || input.length === 0) return true;
 
-    this.gainReductionDB = 0;
-
-    for (let channel = 0; channel < input.length; channel++) {
-      const inputChannel = input[channel];
-      const outputChannel = output[channel];
-      const state = this.getChannelState(channel);
-
-      if (this.monitorOnly) {
+    if (this.monitorOnly) {
+      for (let channel = 0; channel < input.length; channel++) {
+        const inputChannel = input[channel];
+        const outputChannel = output[channel];
+        const state = this.getChannelState(channel);
         outputChannel.set(inputChannel);
 
         for (let i = 0; i < inputChannel.length; i++) {
@@ -285,19 +299,41 @@ class OversamplingLimiter extends AudioWorkletProcessor {
           );
         }
 
-        continue;
       }
-
-      if (this.hqMode) {
-        const upsampled = this.upsample(inputChannel, state);
-        const limited = this.limitOversampled(upsampled, state);
-        const downsampled = this.downsample(limited, state);
-        outputChannel.set(downsampled);
-      } else {
-        const limited = this.limitBasic(inputChannel);
-        outputChannel.set(limited);
-        this.truePeakDBTP = this.digitalPeakDB;
+    } else if (this.hqMode) {
+      const states = input.map((_, channel) => this.getChannelState(channel));
+      const upsampled = input.map((inputChannel, channel) => {
+        for (let i = 0; i < inputChannel.length; i++) {
+          const peak = Math.abs(inputChannel[i]);
+          if (peak > this.dbToLinear(this.digitalPeakDB)) {
+            this.digitalPeakDB = this.linearToDb(peak);
+          }
+        }
+        return this.upsample(inputChannel, states[channel]);
+      });
+      const limited = this.limitOversampledLinked(upsampled, states);
+      const downsampled = limited.map((channel, index) =>
+        this.downsample(channel, states[index])
+      );
+      for (let i = 0; i < output[0].length; i++) {
+        let outputPeak = 0;
+        for (let channel = 0; channel < downsampled.length; channel++) {
+          outputPeak = Math.max(outputPeak, Math.abs(downsampled[channel][i]));
+        }
+        const outputSafetyGain =
+          outputPeak > this.ceilingLinear
+            ? this.ceilingLinear / outputPeak
+            : 1;
+        for (let channel = 0; channel < input.length; channel++) {
+          output[channel][i] = downsampled[channel][i] * outputSafetyGain;
+        }
       }
+    } else {
+      const limited = this.limitBasicLinked(input);
+      for (let channel = 0; channel < input.length; channel++) {
+        output[channel].set(limited[channel]);
+      }
+      this.truePeakDBTP = this.digitalPeakDB;
     }
 
     this.frameCount += input[0].length;
@@ -321,8 +357,9 @@ class OversamplingLimiter extends AudioWorkletProcessor {
       }
     });
 
-    this.truePeakDBTP *= 0.95;
-    this.digitalPeakDB *= 0.95;
+    this.truePeakDBTP = -Infinity;
+    this.digitalPeakDB = -Infinity;
+    this.gainReductionDB = 0;
   }
 }
 

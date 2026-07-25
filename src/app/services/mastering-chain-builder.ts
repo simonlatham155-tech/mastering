@@ -40,6 +40,36 @@ import type { IFaustMonoWebAudioNode } from '@grame/faustwasm';
 export type { ProcessingPlan } from '../data/preset-resolution';
 
 type LimiterAudioNode = AudioWorkletNode | IFaustMonoWebAudioNode;
+export type LimiterBackend =
+  | 'bypass'
+  | 'faust-fir'
+  | 'faust'
+  | 'fir'
+  | 'waveshaper';
+
+const FAUST_LOOKAHEAD_SECONDS = 0.005;
+const FIR_LOOKAHEAD_SECONDS = 0.005;
+const FIR_BASE_RATE_GROUP_DELAY_SAMPLES = 5;
+
+export function limiterBackendLatencySamples(
+  backend: LimiterBackend,
+  sampleRate: number
+): number {
+  // Faust `int(...)` truncates at base rate. The FIR worklet truncates its
+  // 4× delay length, then decimation exposes that as the next base-rate frame.
+  const faustSamples = Math.floor(sampleRate * FAUST_LOOKAHEAD_SECONDS);
+  const firOversampledLookahead = Math.floor(
+    sampleRate * FIR_LOOKAHEAD_SECONDS * 4
+  );
+  const firSamples =
+    Math.ceil(firOversampledLookahead / 4) +
+    FIR_BASE_RATE_GROUP_DELAY_SAMPLES;
+
+  if (backend === 'faust-fir') return faustSamples + firSamples;
+  if (backend === 'faust') return faustSamples;
+  if (backend === 'fir') return firSamples;
+  return 0;
+}
 
 export interface MasteringChainConfig {
   context: BaseAudioContext;
@@ -67,6 +97,8 @@ export interface MasteringChainConfig {
   limiterCeilingOverride?: number;
   /** SSL bus glue macro — gentle/firm override genre auto */
   sslGlue?: 'auto' | 'gentle' | 'firm';
+  /** Match processed-path latency while auditioning dry bypass */
+  bypassLatencySamples?: number;
 }
 
 export interface MasteringChain {
@@ -77,6 +109,8 @@ export interface MasteringChain {
   sslOutputAnalyser: AnalyserNode | null;
   truePeakLimiterNode: LimiterAudioNode | null;
   limiterCeilingDBTP: number;
+  limiterBackend: LimiterBackend;
+  latencySamples: number;
   outputAnalyser: AnalyserNode | null;
   dispose: () => void;
 }
@@ -232,14 +266,70 @@ export function resolveMasteringQualityMode(hqEnabled: boolean): QualityMode {
   return hqEnabled ? 'export' : 'preview';
 }
 
+export interface LiveLimiterTopology {
+  quality: QualityMode;
+  premium: boolean;
+  useFaustLimiter: boolean;
+  useTruePeakWorklet: boolean;
+}
+
+/** One limiter request contract for HQ playback and export-parity A/B. */
+export function resolveLiveLimiterTopology(
+  hqEnabled: boolean,
+  dryBypass: boolean
+): LiveLimiterTopology {
+  const premium = hqEnabled && !dryBypass;
+  return {
+    quality: premium ? 'export' : 'preview',
+    premium,
+    useFaustLimiter: premium,
+    useTruePeakWorklet: premium,
+  };
+}
+
+export interface LimiterFallbackFactories<T> {
+  faustFir: () => Promise<T>;
+  fir: () => Promise<T>;
+  faust: () => Promise<T>;
+  waveshaper: () => T | Promise<T>;
+}
+
+export async function resolveLimiterFallbacks<T>(
+  factories: LimiterFallbackFactories<T>,
+  onFailure?: (
+    backend: Exclude<LimiterBackend, 'bypass' | 'waveshaper'>,
+    error: unknown
+  ) => void
+): Promise<T> {
+  try {
+    return await factories.faustFir();
+  } catch (error) {
+    onFailure?.('faust-fir', error);
+  }
+
+  try {
+    return await factories.fir();
+  } catch (error) {
+    onFailure?.('fir', error);
+  }
+
+  try {
+    return await factories.faust();
+  } catch (error) {
+    onFailure?.('faust', error);
+  }
+
+  return factories.waveshaper();
+}
+
 /**
- * Build the offline chain.
+ * Build the premium limiter topology for live HQ playback or offline export.
  *
- * Export quality runs the stereo-linked Faust look-ahead stage into the 4× FIR
- * true-peak guard. If either runtime is unavailable, it degrades explicitly to
- * FIR-only, Faust-only, then the oversampled WaveShaper ceiling.
+ * HQ runs the stereo-linked Faust look-ahead stage into the 4× FIR true-peak
+ * guard. If either runtime is unavailable, it degrades explicitly to FIR-only,
+ * Faust-only, then the oversampled WaveShaper ceiling.
  */
-export async function buildOfflineMasteringChain(
+export async function buildMasteringChainWithFallbacks(
   config: MasteringChainConfig
 ): Promise<MasteringChain> {
   const usePremium = shouldUseTruePeakWorkletOffline(
@@ -268,48 +358,52 @@ export async function buildOfflineMasteringChain(
     });
   }
 
-  try {
-    return await buildMasteringChainAsync({
-      ...config,
-      useFaustLimiter: true,
-      useTruePeakWorklet: true,
-    });
-  } catch (dualErr) {
-    const dualDetail = dualErr instanceof Error ? dualErr.message : String(dualErr);
-    console.warn(
-      `Faust + FIR export ceiling unavailable — trying FIR only (${dualDetail})`
-    );
-    try {
-      return await buildMasteringChainAsync({
-        ...config,
-        useFaustLimiter: false,
-        useTruePeakWorklet: true,
-      });
-    } catch (firErr) {
-      const firDetail = firErr instanceof Error ? firErr.message : String(firErr);
-      console.warn(
-        `FIR true-peak guard unavailable — trying Faust only (${firDetail})`
-      );
-      try {
-        return await buildMasteringChainAsync({
+  return resolveLimiterFallbacks(
+    {
+      faustFir: () =>
+        buildMasteringChainAsync({
+          ...config,
+          useFaustLimiter: true,
+          useTruePeakWorklet: true,
+        }),
+      fir: () =>
+        buildMasteringChainAsync({
+          ...config,
+          useFaustLimiter: false,
+          useTruePeakWorklet: true,
+        }),
+      faust: () =>
+        buildMasteringChainAsync({
           ...config,
           useFaustLimiter: true,
           useTruePeakWorklet: false,
-        });
-      } catch (faustErr) {
-        const faustDetail = faustErr instanceof Error ? faustErr.message : String(faustErr);
-        console.warn(
-          `Faust limiter unavailable — WaveShaper ceiling fallback (${faustDetail})`
-        );
-        return buildMasteringChain({
+        }),
+      waveshaper: () =>
+        buildMasteringChain({
           ...config,
           quality: 'preview',
           useFaustLimiter: false,
           useTruePeakWorklet: false,
-        });
-      }
+        }),
+    },
+    (backend, error) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      const message =
+        backend === 'faust-fir'
+          ? 'Faust + FIR export ceiling unavailable — trying FIR only'
+          : backend === 'fir'
+            ? 'FIR true-peak guard unavailable — trying Faust only'
+            : 'Faust limiter unavailable — using WaveShaper ceiling';
+      console.warn(`${message} (${detail})`);
     }
-  }
+  );
+}
+
+/** Offline entry point retained to make render call sites explicit. */
+export async function buildOfflineMasteringChain(
+  config: MasteringChainConfig
+): Promise<MasteringChain> {
+  return buildMasteringChainWithFallbacks(config);
 }
 
 /**
@@ -410,6 +504,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     limiterCeilingOverride,
     outputTrimDB,
     bypassGainMatchDB,
+    bypassLatencySamples = 0,
     sslGlue,
   } = config;
   
@@ -471,7 +566,17 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   
   // === DRY BYPASS (A/B original) ===
   if (dryBypass) {
-    chainInput.connect(chainOutput);
+    if (bypassLatencySamples > 0) {
+      const bypassDelay = context.createDelay(
+        Math.max(0.1, bypassLatencySamples / context.sampleRate + 0.01)
+      );
+      bypassDelay.delayTime.value = bypassLatencySamples / context.sampleRate;
+      chainInput.connect(bypassDelay);
+      bypassDelay.connect(chainOutput);
+      nodesToDispose.push(bypassDelay);
+    } else {
+      chainInput.connect(chainOutput);
+    }
     const bypassOutDB =
       bypassGainMatchDB != null && Number.isFinite(bypassGainMatchDB)
         ? bypassGainMatchDB
@@ -492,6 +597,8 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
       sslOutputAnalyser: null,
       truePeakLimiterNode: null,
       limiterCeilingDBTP,
+      limiterBackend: 'bypass',
+      latencySamples: bypassLatencySamples,
       outputAnalyser: null,
       dispose: () => {
         nodesToDispose.forEach(node => {
@@ -521,7 +628,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   nodesToDispose.push(profileEQ.input, profileEQ.output);
   
   // === STAGE 1: TRANSFORMER (Harmonic Enhancement) ===
-  if (!useMinimalMaster && params.genreBehavior.colorAmount > 0) {
+  if (!useMinimalMaster && params.genreBehavior.useTransformer) {
     console.log('   [1] Transformer: ACTIVE');
     const transformerConfig = getTransformerConfig(settings.genreId);
     const transformer = buildTransformerStage(context, quality, transformerConfig);
@@ -534,7 +641,7 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
   }
   
   // === STAGE 2: TAPE SATURATION ===
-  if (!useMinimalMaster && params.genreBehavior.colorAmount > 0) {
+  if (!useMinimalMaster && params.genreBehavior.useTape) {
     console.log('   [2] Tape: ACTIVE');
     const tapeConfig = getTapeConfig(settings.genreId, settings.circuitDrive);
     const tape = buildTapeStage(context, quality, tapeConfig);
@@ -658,6 +765,11 @@ export function buildMasteringChain(config: MasteringChainConfig): MasteringChai
     sslOutputAnalyser,
     truePeakLimiterNode: limiter.truePeakGuardNode ?? limiter.truePeakNode,
     limiterCeilingDBTP,
+    limiterBackend: limiter.backend,
+    latencySamples: limiterBackendLatencySamples(
+      limiter.backend,
+      context.sampleRate
+    ),
     outputAnalyser,
     dispose: () => {
       const tp = limiter.truePeakNode;
@@ -923,6 +1035,7 @@ function createLimiterStage(
   truePeakNode: LimiterAudioNode | null;
   truePeakGuardNode: AudioWorkletNode | null;
   ceilingDBTP: number;
+  backend: Exclude<LimiterBackend, 'bypass'>;
 } {
   const input = context.createGain();
   const output = context.createGain();
@@ -969,10 +1082,6 @@ function createLimiterStage(
   const makeupGain = context.createGain();
   makeupGain.gain.value = makeupGainLinear;
 
-  // === LOOK-AHEAD DELAY ===
-  const lookAheadDelay = context.createDelay(0.015);
-  lookAheadDelay.delayTime.value = limParams.lookAhead;
-
   const truePeakNode = truePeakLimiterNode ?? null;
   const truePeakGuard = truePeakGuardNode ?? null;
   const usesFaustLimiter =
@@ -1004,6 +1113,7 @@ function createLimiterStage(
       truePeakNode,
       truePeakGuardNode: truePeakGuard,
       ceilingDBTP: finalCeiling,
+      backend: truePeakGuard ? 'faust-fir' : 'faust',
     };
   }
 
@@ -1035,8 +1145,7 @@ function createLimiterStage(
     const ceilingNode = truePeakNode ?? type2Shaper;
 
     input.connect(makeupGain);
-    makeupGain.connect(lookAheadDelay);
-    lookAheadDelay.connect(ceilingNode);
+    makeupGain.connect(ceilingNode);
     ceilingNode.connect(truePeakGuard ?? output);
     truePeakGuard?.connect(output);
 
@@ -1055,6 +1164,7 @@ function createLimiterStage(
       truePeakNode,
       truePeakGuardNode: truePeakGuard,
       ceilingDBTP: finalCeiling,
+      backend: truePeakNode ? 'fir' : 'waveshaper',
     };
   }
 
@@ -1124,8 +1234,7 @@ function createLimiterStage(
   const ceilingNode = truePeakNode ?? type2Shaper;
 
   input.connect(makeupGain);
-  makeupGain.connect(lookAheadDelay);
-  lookAheadDelay.connect(limiter);
+  makeupGain.connect(limiter);
   limiter.connect(type1Shaper);
   type1Shaper.connect(ceilingNode);
   ceilingNode.connect(truePeakGuard ?? output);
@@ -1146,6 +1255,7 @@ function createLimiterStage(
     truePeakNode,
     truePeakGuardNode: truePeakGuard,
     ceilingDBTP: finalCeiling,
+    backend: truePeakNode ? 'fir' : 'waveshaper',
   };
 }
 

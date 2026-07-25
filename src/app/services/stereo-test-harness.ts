@@ -234,7 +234,7 @@ export class StereoTestHarness {
     // Chain connection (mimics audio-processor.ts processAudio method)
     let currentNode: AudioNode = source;
     
-    const isLiveMode = settings.performanceMode === 'live';
+    const isLiveMode = false;
     
     // Create temporary processor to access stage methods
     // Note: This is a bit of a hack - ideally we'd refactor AudioProcessor

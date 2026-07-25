@@ -32,6 +32,22 @@ export type { ProDynamicsSettings, SSLGlueMode };
 /** Default tonal balance match — conservative with EQ clamps so genre + match stack safely. */
 export const DEFAULT_TONAL_MATCH_STRENGTH = 20;
 
+export interface RackStageOverrides {
+  transformer: boolean | null;
+  tape: boolean | null;
+  multiband: boolean | null;
+  midSide: boolean | null;
+  clipper: boolean | null;
+}
+
+export const DEFAULT_RACK_STAGE_OVERRIDES: RackStageOverrides = {
+  transformer: null,
+  tape: null,
+  multiband: null,
+  midSide: null,
+  clipper: null,
+};
+
 const SSL_GLUE_PRESETS: Record<Exclude<SSLGlueMode, 'auto'>, { threshold: number; ratio: number }> = {
   gentle: { threshold: -14, ratio: 2 },
   firm: { threshold: -6, ratio: 4 },
@@ -53,7 +69,8 @@ export { NEUTRAL_PROFILE_ADJUSTMENTS };
 export function profileAdjustmentsToUserOverrides(
   profileAdjustments: ProfileAdjustments,
   gearProfile: GearProfileId,
-  proDynamics?: ProDynamicsSettings
+  proDynamics?: ProDynamicsSettings,
+  rackStages?: RackStageOverrides
 ): UserOverrides {
   const overrides: UserOverrides = {
     width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6,
@@ -61,6 +78,22 @@ export function profileAdjustmentsToUserOverrides(
     mudCut: profileAdjustments.midRangeAdjust,
     airTilt: profileAdjustments.highShelfBoost,
   };
+
+  if (rackStages?.transformer != null) {
+    overrides.useTransformer = rackStages.transformer;
+  }
+  if (rackStages?.tape != null) {
+    overrides.useTape = rackStages.tape;
+  }
+  if (rackStages?.multiband != null) {
+    overrides.useMultiband = rackStages.multiband;
+  }
+  if (rackStages?.midSide != null) {
+    overrides.useMidSide = rackStages.midSide;
+  }
+  if (rackStages?.clipper != null) {
+    overrides.useClipper = rackStages.clipper;
+  }
 
   if (proDynamics?.forceMonoBass != null) {
     overrides.forceMonoBass = proDynamics.forceMonoBass;
@@ -154,6 +187,7 @@ export interface AppProcessingContext {
   circuitDrive: number;
   profileAdjustments: ProfileAdjustments;
   proDynamics: ProDynamicsSettings;
+  rackStages?: RackStageOverrides;
 }
 
 export function buildAppProcessingPlan(context: AppProcessingContext): ProcessingPlan {
@@ -165,7 +199,8 @@ export function buildAppProcessingPlan(context: AppProcessingContext): Processin
     userOverrides: profileAdjustmentsToUserOverrides(
       context.profileAdjustments,
       context.gearProfile,
-      context.proDynamics
+      context.proDynamics,
+      context.rackStages
     ),
   });
 }
@@ -185,7 +220,8 @@ export function buildAppProcessingSettings(
     userOverrides: profileAdjustmentsToUserOverrides(
       context.profileAdjustments,
       context.gearProfile,
-      context.proDynamics
+      context.proDynamics,
+      context.rackStages
     ),
   };
 }

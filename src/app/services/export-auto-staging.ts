@@ -3,6 +3,7 @@ import { audioProcessor } from './audio-processor';
 import { isOnLufsTarget } from '../utils/auto-staging';
 import type { ExportQualityReport } from '../utils/measure-buffer-loudness';
 import { runOutputTrimStagingLoop } from './output-trim-staging-loop';
+import type { LimiterBackend } from './mastering-chain-builder';
 
 export interface AutoStageExportOptions {
   limiterCeilingOverride?: number;
@@ -13,6 +14,10 @@ export interface AutoStageExportOptions {
   autoStage?: boolean;
   toleranceLU?: number;
   maxIterations?: number;
+  onLimiterBackend?: (
+    backend: Exclude<LimiterBackend, 'bypass'>,
+    latencySamples: number
+  ) => void;
 }
 
 export interface AutoStageExportResult {
@@ -22,6 +27,8 @@ export interface AutoStageExportResult {
   iterations: number;
   /** True if trim was adjusted from initial */
   staged: boolean;
+  limiterBackend: Exclude<LimiterBackend, 'bypass'>;
+  latencySamples: number;
 }
 
 /**
@@ -42,7 +49,10 @@ export async function renderExportWithAutoStaging(
     autoStage = true,
     toleranceLU,
     maxIterations,
+    onLimiterBackend,
   } = options;
+  let limiterBackend: Exclude<LimiterBackend, 'bypass'> | null = null;
+  let latencySamples = 0;
 
   const result = await runOutputTrimStagingLoop({
     initialOutputTrimDB,
@@ -57,8 +67,17 @@ export async function renderExportWithAutoStaging(
         limiterCeilingOverride,
         outputTrimDB,
         sslGlue,
+        onLimiterBackend: (backend, samples) => {
+          limiterBackend = backend;
+          latencySamples = samples;
+          onLimiterBackend?.(backend, samples);
+        },
       }),
   });
+
+  if (!limiterBackend) {
+    throw new Error('Export render completed without a limiter backend');
+  }
 
   return {
     buffer: result.buffer,
@@ -66,6 +85,8 @@ export async function renderExportWithAutoStaging(
     report: result.report,
     iterations: result.iterations,
     staged: result.staged,
+    limiterBackend,
+    latencySamples,
   };
 }
 

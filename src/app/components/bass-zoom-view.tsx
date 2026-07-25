@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { SpectralProfile } from '../services/spectral-analyzer';
 import { Activity, AlertCircle, CheckCircle } from 'lucide-react';
+import { profileToIsoBands } from '../utils/spectral-profile-iso';
 
 interface BassZoomViewProps {
   userProfile: SpectralProfile | null;
@@ -32,6 +33,7 @@ export function BassZoomView({
   
   // Analyze kick/sub relationship
   const bassAnalysis = userProfile ? analyzeBassRelationship(userProfile) : null;
+  const isoBands = userProfile ? profileToIsoBands(userProfile) : null;
   
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -127,7 +129,7 @@ export function BassZoomView({
           <div className="border border-zinc-800 rounded p-2 bg-zinc-950">
             <div className="text-[9px] font-mono text-zinc-500 uppercase">Sub</div>
             <div className="text-lg font-mono font-bold text-purple-400">
-              {userProfile.bands.hz31.toFixed(1)}
+              {isoBands!.hz31.toFixed(1)}
             </div>
             <div className="text-[8px] font-mono text-zinc-600">31 Hz</div>
           </div>
@@ -136,7 +138,7 @@ export function BassZoomView({
           <div className="border border-zinc-800 rounded p-2 bg-zinc-950">
             <div className="text-[9px] font-mono text-zinc-500 uppercase">Kick</div>
             <div className="text-lg font-mono font-bold text-blue-400">
-              {userProfile.bands.hz63.toFixed(1)}
+              {isoBands!.hz63.toFixed(1)}
             </div>
             <div className="text-[8px] font-mono text-zinc-600">63 Hz</div>
           </div>
@@ -145,7 +147,7 @@ export function BassZoomView({
           <div className="border border-zinc-800 rounded p-2 bg-zinc-950">
             <div className="text-[9px] font-mono text-zinc-500 uppercase">Low-End</div>
             <div className="text-lg font-mono font-bold text-cyan-400">
-              {userProfile.bands.hz125.toFixed(1)}
+              {isoBands!.hz125.toFixed(1)}
             </div>
             <div className="text-[8px] font-mono text-zinc-600">125 Hz</div>
           </div>
@@ -154,7 +156,7 @@ export function BassZoomView({
           <div className="border border-zinc-800 rounded p-2 bg-zinc-950">
             <div className="text-[9px] font-mono text-zinc-500 uppercase">Mud</div>
             <div className="text-lg font-mono font-bold text-amber-400">
-              {userProfile.bands.hz250.toFixed(1)}
+              {isoBands!.hz250.toFixed(1)}
             </div>
             <div className="text-[8px] font-mono text-zinc-600">250 Hz</div>
           </div>
@@ -200,10 +202,11 @@ function analyzeBassRelationship(profile: SpectralProfile): {
   kickSubRatio: number;
   issues: string[];
 } {
-  const sub = profile.bands.hz31;
-  const kick = profile.bands.hz63;
-  const lowEnd = profile.bands.hz125;
-  const mud = profile.bands.hz250;
+  const bands = profileToIsoBands(profile);
+  const sub = bands.hz31;
+  const kick = bands.hz63;
+  const lowEnd = bands.hz125;
+  const mud = bands.hz250;
   
   const kickSubRatio = kick - sub; // Should be +3 to +6 dB
   const issues: string[] = [];
@@ -305,7 +308,8 @@ function drawBassSpectrum(
   width: number,
   height: number
 ) {
-  const bands = [profile.bands.hz31, profile.bands.hz63, profile.bands.hz125, profile.bands.hz250];
+  const iso = profileToIsoBands(profile);
+  const bands = [iso.hz31, iso.hz63, iso.hz125, iso.hz250];
   const positions = [0.15, 0.40, 0.65, 0.90];
   const colors = ['#8b5cf6', '#3b82f6', '#06b6d4', '#f59e0b']; // Purple, Blue, Cyan, Amber
   

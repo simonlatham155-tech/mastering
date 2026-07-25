@@ -12,8 +12,14 @@
 
 import { finiteDB, sanitizeGainArray } from '../utils/finite-audio';
 import { ReferenceCurve } from '../data/reference-curves';
-import { SpectralAnalyzer, SpectralProfile, MatchingDelta } from './spectral-analyzer';
-import { isoBandsToArray, profileToIsoBands, profileToRelativeIsoShape, referenceCurveToRelativeShape } from '../utils/spectral-profile-iso';
+import { SpectralAnalyzer, SpectralProfile } from './spectral-analyzer';
+import {
+  isoBandsToArray,
+  profileToIsoBands,
+  profileToRelativeIsoShape,
+  referenceCurveToRelativeShape,
+  type IsoSpectralBands,
+} from '../utils/spectral-profile-iso';
 
 /**
  * Safety limits for matching
@@ -50,6 +56,11 @@ export interface MatchingGains {
     boomy: boolean;         // Too much sub
     harsh: boolean;         // Too much 4kHz
   };
+}
+
+export interface IsoMatchingDelta {
+  bands: IsoSpectralBands;
+  autoGain: number;
 }
 
 export class ReferenceMatchingController {
@@ -293,7 +304,7 @@ export class ReferenceMatchingController {
   calculateDelta(
     userProfile: SpectralProfile,
     referenceCurve: ReferenceCurve
-  ): MatchingDelta {
+  ): IsoMatchingDelta {
     
     const userArray = profileToRelativeIsoShape(userProfile);
     const refArray = referenceCurveToRelativeShape(referenceCurve.bands);

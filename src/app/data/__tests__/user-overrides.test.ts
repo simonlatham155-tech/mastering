@@ -85,6 +85,22 @@ describe('User Overrides Survive to Engine', () => {
     expect(plan.genreBehavior.useMultiband).toBe(false);
   });
 
+  test('User can independently bypass transformer and tape stages', () => {
+    const plan = resolveProcessingPlan({
+      genreId: 'tape',
+      exportPresetId: 'club',
+      performanceMode: 'studio',
+      logicMode: 'dynamics',
+      userOverrides: {
+        useTransformer: false,
+        useTape: true,
+      },
+    });
+
+    expect(plan.genreBehavior.useTransformer).toBe(false);
+    expect(plan.genreBehavior.useTape).toBe(true);
+  });
+
   test('User enables clipper on clean preset (RnB)', () => {
     const plan = resolveProcessingPlan({
       genreId: 'rnb',

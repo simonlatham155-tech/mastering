@@ -119,7 +119,7 @@ function drawGhostShape(
   opacity: number,
   shape: string,
   highlightRegion?: string,
-  dimRegion?: string
+  dimRegion?: string | null
 ) {
   // Convert relative dB offsets to canvas Y coordinates
   // Assuming typical range of -15 to +10 dB
@@ -203,7 +203,7 @@ function drawGhostShape(
   // Draw curve line
   ctx.strokeStyle = gradient;
   ctx.lineWidth = 3;
-  ctx.shadowColor = gradient;
+  ctx.shadowColor = getGenreColor(shape);
   ctx.shadowBlur = 15;
   
   ctx.beginPath();

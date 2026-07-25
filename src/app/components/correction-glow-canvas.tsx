@@ -304,7 +304,7 @@ function drawBentCurveWithGlow(
 /**
  * Check if band index is in specified region
  */
-function isInRegion(bandIndex: number, region: string | undefined): boolean {
+function isInRegion(bandIndex: number, region: string | null | undefined): boolean {
   if (!region) return false;
   
   const regions: Record<string, number[]> = {

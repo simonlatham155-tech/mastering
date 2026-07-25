@@ -12,9 +12,9 @@ export interface ClipperStage {
   output: AudioNode;
 }
 
-function buildSoftClipCurve(amount: number): Float32Array {
+function buildSoftClipCurve(amount: number): Float32Array<ArrayBuffer> {
   const samples = 65536;
-  const curve = new Float32Array(samples);
+  const curve = new Float32Array(new ArrayBuffer(samples * Float32Array.BYTES_PER_ELEMENT));
   const drive = 1 + amount * 1.8;
 
   for (let i = 0; i < samples; i++) {

@@ -30,6 +30,8 @@ export interface ProcessingPlan {
     mudCut: number;
     colorAmount: number;
     monoBassHz: number | undefined;
+    useTransformer: boolean;
+    useTape: boolean;
     useMultiband: boolean;
     useClipper: boolean;
     useMidSide: boolean;
@@ -68,6 +70,8 @@ export interface UserOverrides {
   airTilt?: number;
   mudCut?: number;
   colorAmount?: number;
+  useTransformer?: boolean;
+  useTape?: boolean;
   useMultiband?: boolean;
   useClipper?: boolean;
   useMidSide?: boolean;          // Expert override (rare, architectural)
@@ -145,6 +149,8 @@ export function resolveProcessingPlan(input: ResolutionInput): ProcessingPlan {
   const monoBassHz = userOverrides?.monoBassHz ?? genrePreset.biases.monoBassHz;
   
   // Toggles: User override OR genre default
+  const useTransformer = userOverrides?.useTransformer ?? colorAmount > 0;
+  const useTape = userOverrides?.useTape ?? colorAmount > 0;
   const requestedMultiband = userOverrides?.useMultiband ?? genrePreset.toggles.useMultiband;
   const useClipper = userOverrides?.useClipper ?? genrePreset.toggles.useClipper;
   const forceMonoBass = userOverrides?.forceMonoBass ?? genrePreset.toggles.forceMonoBass;
@@ -220,6 +226,8 @@ export function resolveProcessingPlan(input: ResolutionInput): ProcessingPlan {
       mudCut,
       colorAmount,
       monoBassHz,
+      useTransformer,
+      useTape,
       useMultiband,
       useClipper,
       useMidSide: finalUseMidSide,

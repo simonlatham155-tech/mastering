@@ -5,6 +5,7 @@ import { getExportPreset } from '../data/export-presets';
 import { getGenrePreset } from '../data/genre-presets';
 import { gearProfiles } from './gear-selector';
 import type { ProDynamicsSettings, SSLGlueMode } from './pro-dynamics-panel';
+import type { LiveChainStatus } from '../services/realtime-audio-player';
 
 type LogicMode = 'brickwall' | 'dynamics';
 
@@ -16,6 +17,7 @@ interface ActiveSettingsStripProps {
   tonalMatchStrength: number;
   proDynamics: ProDynamicsSettings;
   hqMode: boolean;
+  liveChainStatus: LiveChainStatus | null;
   hasInputTrim: boolean;
   inputTrimDB?: number;
 }
@@ -46,6 +48,7 @@ export function ActiveSettingsStrip({
   tonalMatchStrength,
   proDynamics,
   hqMode,
+  liveChainStatus,
   hasInputTrim,
   inputTrimDB,
 }: ActiveSettingsStripProps) {
@@ -65,8 +68,8 @@ export function ActiveSettingsStrip({
         Active on your master
       </div>
       <p className="text-[10px] font-mono text-zinc-500 mb-3 leading-relaxed">
-        Pre-master analysis has applied a visible starting setup — genre chain, staging, tonal match,
-        and delivery prep. Open <span className="text-zinc-400">Pro controls</span> below to inspect or edit every stage.
+        This is the audible setup currently routed through the master. Analysis recommendations are
+        applied only when you accept them; the complete rack remains visible and editable below.
       </p>
       <div className="space-y-1.5">
         <AppliedRow label="Genre strategy" detail={`${gearName} (visible EQ + rack routing)`} />
@@ -101,9 +104,11 @@ export function ActiveSettingsStrip({
         <AppliedRow
           label="Live limiter"
           detail={
-            hqMode
-              ? 'Faust stereo-linked look-ahead ceiling + FIR true-peak meter tap'
-              : 'Flow WaveShaper ceiling (2× OS) + FIR true-peak meter tap'
+            liveChainStatus
+              ? `${formatLimiterBackend(liveChainStatus.limiterBackend)} · ${liveChainStatus.latencyMS.toFixed(1)} ms compensated A/B latency`
+              : hqMode
+                ? 'HQ Faust requested — actual backend is confirmed on first play'
+                : 'Preview WaveShaper requested — actual backend is confirmed on first play'
           }
         />
         <AppliedRow
@@ -113,4 +118,11 @@ export function ActiveSettingsStrip({
       </div>
     </div>
   );
+}
+
+function formatLimiterBackend(backend: LiveChainStatus['limiterBackend']): string {
+  if (backend === 'faust-fir') return 'Faust + FIR true-peak';
+  if (backend === 'faust') return 'Faust stereo-linked look-ahead';
+  if (backend === 'fir') return 'Stereo-linked FIR fallback';
+  return 'Oversampled WaveShaper fallback';
 }

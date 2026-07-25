@@ -1,4 +1,4 @@
-import { AlertTriangle, Info, Sparkles, Gauge, Music } from 'lucide-react';
+import { AlertTriangle, Info, Sparkles, Gauge, Music, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export type HeritageAlertType = 
@@ -14,6 +14,7 @@ interface HeritageAlertProps {
   dynamicRange?: number;
   crestFactor?: number;
   onSwitchToDynamics: () => void;
+  onDismiss?: () => void;
 }
 
 const ALERT_CONFIG: Record<HeritageAlertType, {
@@ -65,6 +66,7 @@ export function HeritageAlert({
   dynamicRange,
   crestFactor,
   onSwitchToDynamics,
+  onDismiss,
 }: HeritageAlertProps) {
   // Fallback to 'info' if alertType is invalid or undefined
   const config = ALERT_CONFIG[alertType] || ALERT_CONFIG['info'];
@@ -107,6 +109,16 @@ export function HeritageAlert({
           transition={{ duration: 0.3, ease: 'easeOut' }}
           className={`border rounded-lg p-4 backdrop-blur-sm ${colors.bg} ${colors.border}`}
         >
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label="Dismiss mastering warning"
+              className="float-right ml-3 text-zinc-500 hover:text-zinc-300"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
           <div className="flex items-start gap-3">
             {/* Icon */}
             <div className={`mt-0.5 ${colors.icon}`}>
