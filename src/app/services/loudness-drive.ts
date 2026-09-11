@@ -13,28 +13,35 @@ export interface LoudnessDrivePlan {
   inputLUFS: number;
   targetLUFS: number;
   requiredGainDB: number;
+  /** Extra upstream gain required in addition to the limiter's existing allowance. */
   preLimiterDriveDB: number;
+  /** Existing Stage-6 makeup expected to contribute. */
+  limiterMakeupAllowanceDB: number;
+  /** Combined planned level development before output calibration. */
+  totalPlannedDriveDB: number;
   remainingLU: number;
+  /** Maximum combined transparent drive for this mode/style. */
   maxDriveDB: number;
   targetReachableByDrive: boolean;
   rationale: string;
 }
 
-const FLOW_MAX_DRIVE_DB: Record<string, number> = {
+const FLOW_MAX_TOTAL_DRIVE_DB: Record<string, number> = {
   clean: 3.0,
   balanced: 4.5,
   aggressive: 5.0,
 };
 
 /**
- * Decide how much level is deliberately developed before / through the limiter.
+ * Transitional loudness policy for the current chain.
  *
- * This is intentionally NOT a promise that LUFS will move 1:1 after limiting;
- * the export measurement loop remains the authority. The purpose here is to
- * stop post-limiter output trim being asked to create the master.
+ * Stage 6 still owns a small amount of makeup gain: Flow up to +1 dB and
+ * Pressure up to +8 dB. Therefore this function supplies ONLY the missing
+ * upstream drive. That prevents the new mastering drive from being counted
+ * twice while moving loudness creation away from post-limiter output trim.
  *
- * Flow mode gets enough drive to make a normal premaster sound finished, but
- * will not chase an extreme target indefinitely. Pressure can drive harder.
+ * Once Stage 6 is redesigned to accept an explicit drive plan, the two values
+ * can be collapsed into one pre-limiter control without changing this policy.
  */
 export function resolveLoudnessDrive(input: LoudnessDriveInput): LoudnessDrivePlan {
   const inputLUFS = finiteDB(input.inputLUFS ?? -16, -16);
@@ -44,28 +51,50 @@ export function resolveLoudnessDrive(input: LoudnessDriveInput): LoudnessDrivePl
 
   const maxDriveDB = isBrickwall
     ? 8
-    : FLOW_MAX_DRIVE_DB[input.style] ?? FLOW_MAX_DRIVE_DB.balanced;
+    : FLOW_MAX_TOTAL_DRIVE_DB[input.style] ?? FLOW_MAX_TOTAL_DRIVE_DB.balanced;
 
-  // If the source is already louder than target, attenuation is safe and does
-  // not consume limiter headroom. Keep the same -6 dB lower guard as before.
-  const preLimiterDriveDB = requiredGainDB <= 0
-    ? Math.max(-6, requiredGainDB)
-    : Math.min(requiredGainDB, maxDriveDB);
+  // The legacy Stage-6 implementation already attenuates when source is above
+  // target, so do not duplicate that attenuation upstream.
+  if (requiredGainDB <= 0) {
+    const limiterMakeupAllowanceDB = Math.max(-6, requiredGainDB);
+    return {
+      inputLUFS,
+      targetLUFS,
+      requiredGainDB,
+      preLimiterDriveDB: 0,
+      limiterMakeupAllowanceDB,
+      totalPlannedDriveDB: limiterMakeupAllowanceDB,
+      remainingLU: 0,
+      maxDriveDB,
+      targetReachableByDrive: true,
+      rationale: 'Source is already at/above target; Stage 6 handles the required attenuation without duplicate upstream trim.',
+    };
+  }
 
-  const remainingLU = Math.max(0, requiredGainDB - preLimiterDriveDB);
+  const limiterMakeupAllowanceDB = isBrickwall
+    ? Math.min(requiredGainDB, 8)
+    : Math.min(requiredGainDB, 1);
+
+  const allowedCombinedDriveDB = Math.min(requiredGainDB, maxDriveDB);
+  const preLimiterDriveDB = Math.max(
+    0,
+    allowedCombinedDriveDB - limiterMakeupAllowanceDB
+  );
+  const totalPlannedDriveDB = preLimiterDriveDB + limiterMakeupAllowanceDB;
+  const remainingLU = Math.max(0, requiredGainDB - totalPlannedDriveDB);
   const targetReachableByDrive = remainingLU <= 0.05;
 
-  const rationale = requiredGainDB <= 0
-    ? 'Source is already at/above the requested loudness; attenuate before ceiling control.'
-    : targetReachableByDrive
-      ? 'Develop requested loudness before/through the limiter; reserve output trim for calibration.'
-      : 'Stop at the transparent drive guardrail; measurement may report a best-result loudness miss.';
+  const rationale = targetReachableByDrive
+    ? 'Develop the required level upstream plus the existing Stage-6 allowance; reserve output trim for final calibration.'
+    : 'Stop at the transparent combined-drive guardrail; delivery QC may report a best-result loudness miss.';
 
   return {
     inputLUFS,
     targetLUFS,
     requiredGainDB,
     preLimiterDriveDB,
+    limiterMakeupAllowanceDB,
+    totalPlannedDriveDB,
     remainingLU,
     maxDriveDB,
     targetReachableByDrive,
