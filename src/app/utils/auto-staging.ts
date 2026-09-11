@@ -1,10 +1,13 @@
-/** Post-chain output trim limits (match Pro Dynamics slider). */
-export const OUTPUT_TRIM_MIN_DB = -6;
-export const OUTPUT_TRIM_MAX_DB = 6;
+/**
+ * Post-chain output trim is fine delivery calibration only.
+ * Loudness must be developed before / through the limiter.
+ */
+export const OUTPUT_TRIM_MIN_DB = -1.5;
+export const OUTPUT_TRIM_MAX_DB = 1.5;
 
 export const DEFAULT_STAGING_TOLERANCE_LU = 0.5;
 export const DEFAULT_MAX_STAGING_ITERATIONS = 4;
-export const DEFAULT_MAX_STAGING_STEP_DB = 1.5;
+export const DEFAULT_MAX_STAGING_STEP_DB = 0.5;
 
 export function clampOutputTrimDB(trimDB: number): number {
   return Math.max(OUTPUT_TRIM_MIN_DB, Math.min(OUTPUT_TRIM_MAX_DB, trimDB));
@@ -22,8 +25,10 @@ export interface StagingStepInput {
 }
 
 /**
- * One iterative step toward target integrated LUFS via output trim.
- * Returns null when already on target or measurement invalid.
+ * One small calibration step toward target integrated LUFS via post-chain trim.
+ * This deliberately cannot create several dB of mastering loudness.
+ * Returns null when already on target, measurement invalid, or ceiling/headroom
+ * says further output gain would be unsafe.
  */
 export function computeStagingTrimStep(input: StagingStepInput): number | null {
   const {
@@ -45,7 +50,6 @@ export function computeStagingTrimStep(input: StagingStepInput): number | null {
     return null;
   }
 
-  // Integrated LUFS tracks broadband level ≈ 1:1 with small trim steps (iterative refine).
   let stepDB = Math.max(-maxStepDB, Math.min(maxStepDB, errorLU));
 
   if (stepDB > 0) {
