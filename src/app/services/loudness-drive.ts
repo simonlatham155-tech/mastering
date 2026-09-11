@@ -40,6 +40,11 @@ const FLOW_MAX_TOTAL_DRIVE_DB: Record<string, number> = {
  * upstream drive. That prevents the new mastering drive from being counted
  * twice while moving loudness creation away from post-limiter output trim.
  *
+ * The values here are engineering guardrails, not claims that LUFS follows gain
+ * 1:1 after nonlinear processing. The rendered export measurement remains the
+ * delivery authority. If the measured master still misses target, QC reports a
+ * transparent loudness-limited result instead of forcing more gain.
+ *
  * Once Stage 6 is redesigned to accept an explicit drive plan, the two values
  * can be collapsed into one pre-limiter control without changing this policy.
  */
