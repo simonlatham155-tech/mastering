@@ -44,7 +44,7 @@ function physicalPreGain(drive: number): number {
   return 1 + clamp01(drive) * 0.25;
 }
 
-function buildTransformerCurve(saturationAmount: number): Float32Array {
+function buildTransformerCurve(saturationAmount: number): Float32Array<ArrayBuffer> {
   const curve = new Float32Array(65536);
   const sat = Math.max(0.5, Math.min(1.5, saturationAmount));
 
@@ -53,8 +53,6 @@ function buildTransformerCurve(saturationAmount: number): Float32Array {
     const biased = x + 0.045 * x * x;
     const driven = biased * (1 + sat * 0.18);
 
-    // Mastering-oriented transformer behaviour: linear through most of the
-    // range, with progressive core rounding only near the top.
     const threshold = 0.68;
     let shaped = driven;
     if (Math.abs(driven) > threshold) {
@@ -81,8 +79,6 @@ export function buildTransformerStage(
 
   const driveGain = context.createGain();
 
-  // Keep the hardware fingerprint extremely subtle. This is no longer an
-  // unconditional +1.5 dB bass shelf.
   const lowShelf = context.createBiquadFilter();
   lowShelf.type = 'lowshelf';
   lowShelf.frequency.value = 180;
