@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveLoudnessDrive } from '../loudness-drive';
 
 describe('pre-limiter loudness drive', () => {
-  it('lets a normal quiet premaster reach a streaming target in Flow', () => {
+  it('lets a normal quiet premaster reach a streaming target in Flow without double-counting limiter makeup', () => {
     const plan = resolveLoudnessDrive({
       inputLUFS: -18,
       targetLUFS: -14,
@@ -10,12 +10,14 @@ describe('pre-limiter loudness drive', () => {
       logicMode: 'dynamics',
     });
 
-    expect(plan.preLimiterDriveDB).toBe(4);
+    expect(plan.preLimiterDriveDB).toBe(3);
+    expect(plan.limiterMakeupAllowanceDB).toBe(1);
+    expect(plan.totalPlannedDriveDB).toBe(4);
     expect(plan.targetReachableByDrive).toBe(true);
     expect(plan.remainingLU).toBe(0);
   });
 
-  it('does not add gain when source is already louder than target', () => {
+  it('does not duplicate attenuation when source is already louder than target', () => {
     const plan = resolveLoudnessDrive({
       inputLUFS: -10,
       targetLUFS: -14,
@@ -23,7 +25,9 @@ describe('pre-limiter loudness drive', () => {
       logicMode: 'dynamics',
     });
 
-    expect(plan.preLimiterDriveDB).toBe(-4);
+    expect(plan.preLimiterDriveDB).toBe(0);
+    expect(plan.limiterMakeupAllowanceDB).toBe(-4);
+    expect(plan.totalPlannedDriveDB).toBe(-4);
     expect(plan.remainingLU).toBe(0);
   });
 
@@ -35,12 +39,14 @@ describe('pre-limiter loudness drive', () => {
       logicMode: 'dynamics',
     });
 
-    expect(plan.preLimiterDriveDB).toBe(4.5);
+    expect(plan.preLimiterDriveDB).toBe(3.5);
+    expect(plan.limiterMakeupAllowanceDB).toBe(1);
+    expect(plan.totalPlannedDriveDB).toBe(4.5);
     expect(plan.targetReachableByDrive).toBe(false);
     expect(plan.remainingLU).toBeCloseTo(3.5, 5);
   });
 
-  it('allows Pressure to drive harder for club delivery', () => {
+  it('does not double-drive Pressure because Stage 6 already owns its club makeup allowance', () => {
     const plan = resolveLoudnessDrive({
       inputLUFS: -16,
       targetLUFS: -8,
@@ -48,7 +54,9 @@ describe('pre-limiter loudness drive', () => {
       logicMode: 'brickwall',
     });
 
-    expect(plan.preLimiterDriveDB).toBe(8);
+    expect(plan.preLimiterDriveDB).toBe(0);
+    expect(plan.limiterMakeupAllowanceDB).toBe(8);
+    expect(plan.totalPlannedDriveDB).toBe(8);
     expect(plan.targetReachableByDrive).toBe(true);
   });
 
@@ -66,7 +74,9 @@ describe('pre-limiter loudness drive', () => {
       logicMode: 'dynamics',
     });
 
-    expect(clean.preLimiterDriveDB).toBe(3);
-    expect(balanced.preLimiterDriveDB).toBe(4.5);
+    expect(clean.preLimiterDriveDB).toBe(2);
+    expect(clean.totalPlannedDriveDB).toBe(3);
+    expect(balanced.preLimiterDriveDB).toBe(3.5);
+    expect(balanced.totalPlannedDriveDB).toBe(4.5);
   });
 });
