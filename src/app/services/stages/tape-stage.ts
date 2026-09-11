@@ -46,7 +46,7 @@ const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
  * The curve is intentionally independent of the user drive control.
  * Drive is applied once, by driveGain, before this transfer function.
  */
-function buildTapeCurve(): Float32Array {
+function buildTapeCurve(): Float32Array<ArrayBuffer> {
   const curve = new Float32Array(65536);
 
   for (let i = 0; i < curve.length; i++) {
@@ -72,8 +72,6 @@ function buildTapeCurve(): Float32Array {
 
 function physicalPreGain(drive: number, genreMultiplier: number): number {
   const effectiveDrive = clamp01(drive) * Math.max(0.5, Math.min(1.3, genreMultiplier));
-  // 1.00x .. ~1.55x is enough to obtain tape density without smashing the
-  // compressor/limiter downstream.
   return 1 + effectiveDrive * 0.55;
 }
 
@@ -104,20 +102,16 @@ export function buildTapeStage(
   const headBump = context.createBiquadFilter();
   headBump.type = 'peaking';
   headBump.frequency.value = headBumpFreq;
-  // Character, not EQ correction. Genre target EQ owns tonal correction.
   headBump.gain.value = 0.25;
   headBump.Q.value = 1.0;
 
   const biasShelf = context.createBiquadFilter();
   biasShelf.type = 'highshelf';
   biasShelf.frequency.value = 9000;
-  // Keep bias colour below half a dB in normal presets.
   biasShelf.gain.value = (config.biasAmount - 0.5) * 0.8;
   biasShelf.Q.value = 0.7;
 
   const tapeCompressor = context.createDynamicsCompressor();
-  // A mastering tape stage should gently catch hot peaks, not behave as a
-  // second bus compressor.
   tapeCompressor.threshold.value = -4;
   tapeCompressor.knee.value = 14;
   tapeCompressor.ratio.value = 1.8;
@@ -135,8 +129,6 @@ export function buildTapeStage(
 
   const tapeRolloff = context.createBiquadFilter();
   tapeRolloff.type = 'lowpass';
-  // Preserve the tape-speed identity without unnecessarily dulling a modern
-  // master. The slow 7.5 IPS mode remains deliberately darker.
   tapeRolloff.frequency.value =
     config.tapeSpeed === 30 ? 22000 : config.tapeSpeed === 15 ? 20000 : 15000;
   tapeRolloff.Q.value = 0.5;
