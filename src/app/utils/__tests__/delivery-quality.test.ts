@@ -21,7 +21,7 @@ describe('auto-staging trim correction', () => {
     ).toBeNull();
   });
 
-  test('boosts when quiet with headroom', () => {
+  test('boosts only a small calibration step when quiet with headroom', () => {
     const next = computeStagingTrimStep({
       integratedLUFS: -16,
       targetLUFS: -14,
@@ -29,7 +29,7 @@ describe('auto-staging trim correction', () => {
       peakDB: -4,
       ceilingDBTP: -1,
     });
-    expect(next).toBeGreaterThan(0);
+    expect(next).toBe(0.5);
   });
 
   test('blocks boost when at ceiling', () => {
@@ -43,9 +43,9 @@ describe('auto-staging trim correction', () => {
     expect(next).toBeNull();
   });
 
-  test('clamps output trim to ±6 dB', () => {
-    expect(clampOutputTrimDB(8)).toBe(6);
-    expect(clampOutputTrimDB(-9)).toBe(-6);
+  test('clamps automatic output trim to fine-calibration ±1.5 dB', () => {
+    expect(clampOutputTrimDB(8)).toBe(1.5);
+    expect(clampOutputTrimDB(-9)).toBe(-1.5);
   });
 });
 
