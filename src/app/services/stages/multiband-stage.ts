@@ -1,8 +1,11 @@
 /**
  * Multiband Processing Stage (4-band split)
  *
- * Linkwitz-Riley-style crossovers with per-band dynamics + saturation.
- * Preserves stereo by processing L and R independently.
+ * MASTERING RULES:
+ * - The crossover/sum path must be nominally unity: no mystery output trim.
+ * - Multiband is corrective dynamics, not four permanently saturated bands.
+ * - Compression is deliberately gentle so the stage cannot become the main
+ *   loudness generator or create low-end pumping by default.
  */
 
 import type { QualityMode } from '../../data/quality-profiles';
@@ -13,29 +16,66 @@ export interface MultibandStage {
   output: AudioNode;
 }
 
-function normalizeCurve(curve: Float32Array): Float32Array {
-  const n = curve.length;
-  const mid = (n / 2) | 0;
-  const dx = 2 / (n - 1);
-  const slope = (curve[mid + 1] - curve[mid - 1]) / (2 * dx);
-  const slopeGain = slope !== 0 ? 1 / slope : 1;
-
-  for (let i = 0; i < n; i++) curve[i] *= slopeGain;
-
-  let maxAbs = 0;
-  for (let i = 0; i < n; i++) maxAbs = Math.max(maxAbs, Math.abs(curve[i]));
-  const peakGain = maxAbs > 0 ? 1 / maxAbs : 1;
-
-  for (let i = 0; i < n; i++) curve[i] *= peakGain;
-
-  return curve;
-}
-
 type MonoChain = { input: AudioNode; output: AudioNode };
 
-/**
- * Build 4-band multiband stage for realtime and offline rendering.
- */
+type BandComp = {
+  threshold: number;
+  knee: number;
+  ratio: number;
+  attack: number;
+  release: number;
+};
+
+const BAND_COMPS: BandComp[] = [
+  // Low band: slow, low ratio to avoid kick/bass pumping.
+  { threshold: -8, knee: 12, ratio: 1.45, attack: 0.03, release: 0.18 },
+  // Low-mid: slightly firmer for mud/boxiness control.
+  { threshold: -10, knee: 12, ratio: 1.6, attack: 0.02, release: 0.16 },
+  // Mid band: transparent density control.
+  { threshold: -10, knee: 12, ratio: 1.5, attack: 0.015, release: 0.14 },
+  // High band: softest ratio and fast enough to catch brittle peaks.
+  { threshold: -12, knee: 14, ratio: 1.35, attack: 0.008, release: 0.12 },
+];
+
+function createLR4Lowpass(context: BaseAudioContext, frequency: number): AudioNode[] {
+  const a = context.createBiquadFilter();
+  const b = context.createBiquadFilter();
+  a.type = 'lowpass';
+  b.type = 'lowpass';
+  a.frequency.value = frequency;
+  b.frequency.value = frequency;
+  a.Q.value = 0.70710678;
+  b.Q.value = 0.70710678;
+  return [a, b];
+}
+
+function createLR4Highpass(context: BaseAudioContext, frequency: number): AudioNode[] {
+  const a = context.createBiquadFilter();
+  const b = context.createBiquadFilter();
+  a.type = 'highpass';
+  b.type = 'highpass';
+  a.frequency.value = frequency;
+  b.frequency.value = frequency;
+  a.Q.value = 0.70710678;
+  b.Q.value = 0.70710678;
+  return [a, b];
+}
+
+function chainNodes(nodes: AudioNode[]): void {
+  for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i + 1]);
+}
+
+function createCompressor(context: BaseAudioContext, cfg: BandComp): DynamicsCompressorNode {
+  const compressor = context.createDynamicsCompressor();
+  compressor.threshold.value = cfg.threshold;
+  compressor.knee.value = cfg.knee;
+  compressor.ratio.value = cfg.ratio;
+  compressor.attack.value = cfg.attack;
+  compressor.release.value = cfg.release;
+  return compressor;
+}
+
+/** Build 4-band multiband stage for realtime and offline rendering. */
 export function buildMultibandStage(
   context: BaseAudioContext,
   _settings: ProcessingSettings,
@@ -59,203 +99,52 @@ export function buildMultibandStage(
     inputJunction.channelCount = 1;
     inputJunction.channelInterpretation = 'speakers';
 
-    const output = context.createGain();
-    output.channelCountMode = 'explicit';
-    output.channelCount = 1;
-    output.channelInterpretation = 'speakers';
+    const sum = context.createGain();
+    sum.channelCountMode = 'explicit';
+    sum.channelCount = 1;
+    sum.channelInterpretation = 'speakers';
+    // Unity by design. Do not hide reconstruction errors with a global trim.
+    sum.gain.value = 1;
 
-    const mbTrim = context.createGain();
-    mbTrim.gain.value = 0.891;
-    mbTrim.channelCountMode = 'explicit';
-    mbTrim.channelCount = 1;
-    mbTrim.channelInterpretation = 'speakers';
+    // Band 1: < 100 Hz
+    const b1 = createLR4Lowpass(context, crossover1);
+    const c1 = createCompressor(context, BAND_COMPS[0]);
+    inputJunction.connect(b1[0]);
+    chainNodes(b1);
+    b1[b1.length - 1].connect(c1);
+    c1.connect(sum);
 
-    const band1_LP1 = context.createBiquadFilter();
-    band1_LP1.type = 'lowpass';
-    band1_LP1.frequency.value = crossover1;
-    band1_LP1.Q.value = 0.707;
+    // Band 2: 100..300 Hz
+    const b2hp = createLR4Highpass(context, crossover1);
+    const b2lp = createLR4Lowpass(context, crossover2);
+    const c2 = createCompressor(context, BAND_COMPS[1]);
+    inputJunction.connect(b2hp[0]);
+    chainNodes(b2hp);
+    b2hp[b2hp.length - 1].connect(b2lp[0]);
+    chainNodes(b2lp);
+    b2lp[b2lp.length - 1].connect(c2);
+    c2.connect(sum);
 
-    const band1_LP2 = context.createBiquadFilter();
-    band1_LP2.type = 'lowpass';
-    band1_LP2.frequency.value = crossover1;
-    band1_LP2.Q.value = 0.707;
+    // Band 3: 300..3500 Hz
+    const b3hp = createLR4Highpass(context, crossover2);
+    const b3lp = createLR4Lowpass(context, crossover3);
+    const c3 = createCompressor(context, BAND_COMPS[2]);
+    inputJunction.connect(b3hp[0]);
+    chainNodes(b3hp);
+    b3hp[b3hp.length - 1].connect(b3lp[0]);
+    chainNodes(b3lp);
+    b3lp[b3lp.length - 1].connect(c3);
+    c3.connect(sum);
 
-    const band2_HP1 = context.createBiquadFilter();
-    band2_HP1.type = 'highpass';
-    band2_HP1.frequency.value = crossover1;
-    band2_HP1.Q.value = 0.707;
+    // Band 4: > 3500 Hz
+    const b4 = createLR4Highpass(context, crossover3);
+    const c4 = createCompressor(context, BAND_COMPS[3]);
+    inputJunction.connect(b4[0]);
+    chainNodes(b4);
+    b4[b4.length - 1].connect(c4);
+    c4.connect(sum);
 
-    const band2_HP2 = context.createBiquadFilter();
-    band2_HP2.type = 'highpass';
-    band2_HP2.frequency.value = crossover1;
-    band2_HP2.Q.value = 0.707;
-
-    const band2_LP1 = context.createBiquadFilter();
-    band2_LP1.type = 'lowpass';
-    band2_LP1.frequency.value = crossover2;
-    band2_LP1.Q.value = 0.707;
-
-    const band2_LP2 = context.createBiquadFilter();
-    band2_LP2.type = 'lowpass';
-    band2_LP2.frequency.value = crossover2;
-    band2_LP2.Q.value = 0.707;
-
-    const band3_HP1 = context.createBiquadFilter();
-    band3_HP1.type = 'highpass';
-    band3_HP1.frequency.value = crossover2;
-    band3_HP1.Q.value = 0.707;
-
-    const band3_HP2 = context.createBiquadFilter();
-    band3_HP2.type = 'highpass';
-    band3_HP2.frequency.value = crossover2;
-    band3_HP2.Q.value = 0.707;
-
-    const band3_LP1 = context.createBiquadFilter();
-    band3_LP1.type = 'lowpass';
-    band3_LP1.frequency.value = crossover3;
-    band3_LP1.Q.value = 0.707;
-
-    const band3_LP2 = context.createBiquadFilter();
-    band3_LP2.type = 'lowpass';
-    band3_LP2.frequency.value = crossover3;
-    band3_LP2.Q.value = 0.707;
-
-    const band4_HP1 = context.createBiquadFilter();
-    band4_HP1.type = 'highpass';
-    band4_HP1.frequency.value = crossover3;
-    band4_HP1.Q.value = 0.707;
-
-    const band4_HP2 = context.createBiquadFilter();
-    band4_HP2.type = 'highpass';
-    band4_HP2.frequency.value = crossover3;
-    band4_HP2.Q.value = 0.707;
-
-    const band1Compressor = context.createDynamicsCompressor();
-    band1Compressor.threshold.value = -14;
-    band1Compressor.knee.value = 8;
-    band1Compressor.ratio.value = 2.5;
-    band1Compressor.attack.value = 0.015;
-    band1Compressor.release.value = 0.12;
-
-    const band1Saturation = context.createWaveShaper();
-    const band1Curve = new Float32Array(65536);
-    for (let i = 0; i < 65536; i++) {
-      const x = (i * 2 - 65536) / 65536;
-      band1Curve[i] = Math.tanh(x * 1.2);
-    }
-    normalizeCurve(band1Curve);
-    band1Saturation.curve = band1Curve;
-    band1Saturation.oversample = '2x';
-
-    const band1Post = context.createGain();
-    band1Post.gain.value = 1.0;
-
-    const band2Compressor = context.createDynamicsCompressor();
-    band2Compressor.threshold.value = -10;
-    band2Compressor.knee.value = 6;
-    band2Compressor.ratio.value = 4;
-    band2Compressor.attack.value = 0.008;
-    band2Compressor.release.value = 0.10;
-
-    const band2Saturation = context.createWaveShaper();
-    const band2Curve = new Float32Array(65536);
-    for (let i = 0; i < 65536; i++) {
-      const x = (i * 2 - 65536) / 65536;
-      band2Curve[i] = Math.tanh(x * 1.2);
-    }
-    normalizeCurve(band2Curve);
-    band2Saturation.curve = band2Curve;
-    band2Saturation.oversample = '2x';
-
-    const band2Post = context.createGain();
-    band2Post.gain.value = 1.0;
-
-    const band3Compressor = context.createDynamicsCompressor();
-    band3Compressor.threshold.value = -18;
-    band3Compressor.knee.value = 6;
-    band3Compressor.ratio.value = 2;
-    band3Compressor.attack.value = 0.006;
-    band3Compressor.release.value = 0.09;
-
-    const band3Saturation = context.createWaveShaper();
-    const band3Curve = new Float32Array(65536);
-    for (let i = 0; i < 65536; i++) {
-      const x = (i * 2 - 65536) / 65536;
-      const saturated = Math.tanh(x);
-      const thirdHarmonic = 0.08 * x * x * x;
-      band3Curve[i] = saturated + thirdHarmonic;
-    }
-    normalizeCurve(band3Curve);
-    band3Saturation.curve = band3Curve;
-    band3Saturation.oversample = '2x';
-
-    const band3Post = context.createGain();
-    band3Post.gain.value = 1.0;
-
-    const band4Compressor = context.createDynamicsCompressor();
-    band4Compressor.threshold.value = -20;
-    band4Compressor.knee.value = 6;
-    band4Compressor.ratio.value = 1.5;
-    band4Compressor.attack.value = 0.003;
-    band4Compressor.release.value = 0.08;
-
-    const band4Saturation = context.createWaveShaper();
-    const band4Curve = new Float32Array(65536);
-    for (let i = 0; i < 65536; i++) {
-      const x = (i * 2 - 65536) / 65536;
-      const clipThreshold = 0.794;
-      if (Math.abs(x) > clipThreshold) {
-        const excess = Math.abs(x) - clipThreshold;
-        const softClipped = clipThreshold + Math.tanh(excess * 2) * 0.2;
-        band4Curve[i] = x > 0 ? softClipped : -softClipped;
-      } else {
-        const saturated = Math.tanh(x * 0.8);
-        const thirdHarmonic = 0.05 * Math.sin(3 * Math.PI * saturated);
-        band4Curve[i] = saturated + thirdHarmonic;
-      }
-    }
-    normalizeCurve(band4Curve);
-    band4Saturation.curve = band4Curve;
-    band4Saturation.oversample = '2x';
-
-    const band4Post = context.createGain();
-    band4Post.gain.value = 1.0;
-
-    inputJunction.connect(band1_LP1);
-    band1_LP1.connect(band1_LP2);
-    band1_LP2.connect(band1Compressor);
-    band1Compressor.connect(band1Saturation);
-    band1Saturation.connect(band1Post);
-    band1Post.connect(output);
-
-    inputJunction.connect(band2_HP1);
-    band2_HP1.connect(band2_HP2);
-    band2_HP2.connect(band2_LP1);
-    band2_LP1.connect(band2_LP2);
-    band2_LP2.connect(band2Compressor);
-    band2Compressor.connect(band2Saturation);
-    band2Saturation.connect(band2Post);
-    band2Post.connect(output);
-
-    inputJunction.connect(band3_HP1);
-    band3_HP1.connect(band3_HP2);
-    band3_HP2.connect(band3_LP1);
-    band3_LP1.connect(band3_LP2);
-    band3_LP2.connect(band3Compressor);
-    band3Compressor.connect(band3Saturation);
-    band3Saturation.connect(band3Post);
-    band3Post.connect(output);
-
-    inputJunction.connect(band4_HP1);
-    band4_HP1.connect(band4_HP2);
-    band4_HP2.connect(band4Compressor);
-    band4Compressor.connect(band4Saturation);
-    band4Saturation.connect(band4Post);
-    band4Post.connect(output);
-
-    output.connect(mbTrim);
-
-    return { input: inputJunction, output: mbTrim };
+    return { input: inputJunction, output: sum };
   };
 
   const left = buildMonoMultiband();
