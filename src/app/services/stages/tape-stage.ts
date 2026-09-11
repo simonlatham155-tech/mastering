@@ -1,219 +1,193 @@
 /**
- * Tape Saturation Stage (Studer A800 / Ampex ATR-102)
- * 
- * PURPOSE: Magnetic hysteresis modeling with harmonic coloration
- * OUTPUT: UNITY GAIN (with auto-gain compensation)
- * 
- * ARCHITECTURE:
- * - Tape head bump (subtle bass resonance @ 40-80Hz)
- * - Bias control (high-frequency response)
- * - Tape compression (soft limiting, -6dB threshold)
- * - Hysteresis saturation (arctangent + tanh blend)
- * - Tape harmonics: 3rd (1.5%), 5th (0.8%), 7th (0.3%)
- * - Auto-gain compensation (prevents drive from becoming loudness knob)
- * 
- * PATTERN: Self-contained stage factory
- * - Returns: { input, output, params, setDrive }
- * - No internal makeup gain (compensation is negative trim)
- * - Quality controls oversampling only
- * - Genre multipliers baked into config
+ * Tape Saturation Stage (Studer A800 / Ampex ATR-102 inspired)
+ *
+ * MASTERING RULES:
+ * - One physical drive stage only. The waveshaper must not multiply drive again.
+ * - Drive is level-compensated so it behaves as colour/density, not a loudness knob.
+ * - Tape compression and head/bias response remain deliberately subtle.
+ * - Preview/export share the same transfer curve; only oversampling changes.
  */
 
 import type { QualityMode } from '../../data/quality-profiles';
-import { tapeCompFromPreGainDB, dbToLinear, linearToDb, getCompProfile, smoothParam } from './stage-utils';
+import {
+  tapeCompFromPreGainDB,
+  dbToLinear,
+  linearToDb,
+  getCompProfile,
+  smoothParam,
+} from './stage-utils';
 
 export type TapeConfig = {
-  baseDrive: number;      // 0..1 normalized (base saturation amount)
-  genreMultiplier: number; // Genre-specific character (0.7 - 1.2)
-  biasAmount: number;     // Tape bias (0.3 - 0.7, affects HF response)
-  tapeSpeed: 7.5 | 15 | 30; // IPS (affects head bump & rolloff)
+  baseDrive: number;
+  genreMultiplier: number;
+  biasAmount: number;
+  tapeSpeed: 7.5 | 15 | 30;
 };
 
 export type TapeStage = {
   input: AudioNode;
   output: AudioNode;
   params: {
-    drive: AudioParam;  // Live-updateable drive (GainNode.gain)
-    comp: AudioParam;   // Auto-gain compensation trim
+    drive: AudioParam;
+    comp: AudioParam;
   };
-  setDrive: (ctx: BaseAudioContext, drive: number, genreMult: number, genreId: string) => void;
+  setDrive: (
+    ctx: BaseAudioContext,
+    drive: number,
+    genreMult: number,
+    genreId: string
+  ) => void;
   dispose: () => void;
 };
 
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
 /**
- * Build Tape saturation stage with Studer A800-style character
- * 
- * @param context - AudioContext or OfflineAudioContext
- * @param quality - 'draft' (no oversample) or 'export' (2x oversample)
- * @param config - Genre-specific tape configuration
+ * The curve is intentionally independent of the user drive control.
+ * Drive is applied once, by driveGain, before this transfer function.
  */
+function buildTapeCurve(): Float32Array {
+  const curve = new Float32Array(65536);
+
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i * 2 - curve.length) / curve.length;
+
+    // Gentle magnetic compression: mostly linear around zero, progressively
+    // rounded toward the rails. No hidden second drive multiplier here.
+    const primary = Math.tanh(x * 1.08) / Math.tanh(1.08);
+    const soft = (2 / Math.PI) * Math.atan(x * 1.25);
+    const saturated = primary * 0.72 + soft * 0.28;
+
+    // Fixed, low-level tape-like harmonic fingerprint. Loudness/colour depth is
+    // controlled by how hard driveGain feeds the curve.
+    const third = 0.006 * Math.sin(3 * Math.PI * saturated);
+    const fifth = 0.0025 * Math.sin(5 * Math.PI * saturated);
+    const asymmetry = 0.006 * saturated * saturated;
+
+    curve[i] = saturated + third + fifth + asymmetry;
+  }
+
+  return curve;
+}
+
+function physicalPreGain(drive: number, genreMultiplier: number): number {
+  const effectiveDrive = clamp01(drive) * Math.max(0.5, Math.min(1.3, genreMultiplier));
+  // 1.00x .. ~1.55x is enough to obtain tape density without smashing the
+  // compressor/limiter downstream.
+  return 1 + effectiveDrive * 0.55;
+}
+
+function compensationGain(
+  preGain: number,
+  genreMultiplier: number,
+  genreId: string
+): number {
+  const profile = getCompProfile(genreId);
+  const preGainDB = linearToDb(preGain);
+  const compDB = tapeCompFromPreGainDB(preGainDB, genreMultiplier);
+  return dbToLinear(compDB * profile.tapeCompScale);
+}
+
 export function buildTapeStage(
   context: BaseAudioContext,
   quality: QualityMode,
   config: TapeConfig
 ): TapeStage {
-  // === NODES ===
   const input = context.createGain();
   input.channelCountMode = 'max';
   input.channelInterpretation = 'speakers';
-  
+
   const driveGain = context.createGain();
-  
-  // === TAPE HEAD BUMP (Low-frequency resonance) ===
-  const headBumpFreq = config.tapeSpeed === 30 ? 80 : config.tapeSpeed === 15 ? 60 : 40;
+
+  const headBumpFreq =
+    config.tapeSpeed === 30 ? 80 : config.tapeSpeed === 15 ? 60 : 40;
   const headBump = context.createBiquadFilter();
   headBump.type = 'peaking';
   headBump.frequency.value = headBumpFreq;
-  headBump.gain.value = 0.5; // Subtle character only (+0.5dB)
-  headBump.Q.value = 1.2;
-  
-  // === HIGH-FREQUENCY BIAS CONTROL ===
-  // Higher bias = extended high-frequency response
+  // Character, not EQ correction. Genre target EQ owns tonal correction.
+  headBump.gain.value = 0.25;
+  headBump.Q.value = 1.0;
+
   const biasShelf = context.createBiquadFilter();
   biasShelf.type = 'highshelf';
-  biasShelf.frequency.value = 8000;
-  biasShelf.gain.value = (config.biasAmount - 0.5) * 2; // ±1dB range
+  biasShelf.frequency.value = 9000;
+  // Keep bias colour below half a dB in normal presets.
+  biasShelf.gain.value = (config.biasAmount - 0.5) * 0.8;
   biasShelf.Q.value = 0.7;
-  
-  // === TAPE COMPRESSION (Soft limiting before saturation) ===
-  // Tape naturally compresses extreme peaks only
+
   const tapeCompressor = context.createDynamicsCompressor();
-  tapeCompressor.threshold.value = -6; // Only compress HOT peaks
-  tapeCompressor.knee.value = 12; // Very soft knee
-  tapeCompressor.ratio.value = 2.5; // Gentle ratio
-  tapeCompressor.attack.value = 0.01; // Slow attack = preserve transients
-  tapeCompressor.release.value = 0.2; // Slow release = natural
-  
-  // === MAGNETIC HYSTERESIS SATURATION ===
+  // A mastering tape stage should gently catch hot peaks, not behave as a
+  // second bus compressor.
+  tapeCompressor.threshold.value = -4;
+  tapeCompressor.knee.value = 14;
+  tapeCompressor.ratio.value = 1.8;
+  tapeCompressor.attack.value = 0.015;
+  tapeCompressor.release.value = 0.22;
+
   const hysteresisSat = context.createWaveShaper();
-  
-  // DC blocker (prevents DC offset from waveshaper)
+  hysteresisSat.curve = buildTapeCurve();
+  hysteresisSat.oversample = quality === 'export' ? '4x' : '2x';
+
   const dcBlocker = context.createBiquadFilter();
   dcBlocker.type = 'highpass';
-  dcBlocker.frequency.value = 5; // Block below 5Hz
-  dcBlocker.Q.value = 0.7071; // Butterworth response
-  
-  // === HIGH-FREQUENCY ROLL-OFF (Tape losses) ===
+  dcBlocker.frequency.value = 5;
+  dcBlocker.Q.value = 0.7071;
+
   const tapeRolloff = context.createBiquadFilter();
   tapeRolloff.type = 'lowpass';
-  tapeRolloff.frequency.value = config.tapeSpeed === 30 ? 22000 : config.tapeSpeed === 15 ? 18000 : 12000;
+  // Preserve the tape-speed identity without unnecessarily dulling a modern
+  // master. The slow 7.5 IPS mode remains deliberately darker.
+  tapeRolloff.frequency.value =
+    config.tapeSpeed === 30 ? 22000 : config.tapeSpeed === 15 ? 20000 : 15000;
   tapeRolloff.Q.value = 0.5;
-  
-  // Auto-gain compensation (negative trim to prevent loudness increase)
+
   const compTrim = context.createGain();
-  
   const output = context.createGain();
   output.channelCountMode = 'max';
   output.channelInterpretation = 'speakers';
-  
-  // === WAVESHAPER CURVE (Studer A800 Hysteresis) ===
-  const satCurve = new Float32Array(65536);
-  
-  // Drive amount from config (will be modulated by user control)
-  const driveAmount = config.baseDrive * config.genreMultiplier;
-  
-  for (let i = 0; i < 65536; i++) {
-    const x = (i * 2 - 65536) / 65536;
-    
-    // Tape input gain staging — audible THD without over-driving into limiter
-    // PATCH v2: Was 0.3 (inaudible), then 1.5 (too hot). Now 0.8 (1x-1.8x)
-    const drive = 1 + driveAmount * 0.8; // 1x to 1.8x drive
-    const driven = x * drive;
-    
-    // === HYSTERESIS MODELING ===
-    // Tape has different saturation curves for rising vs falling signals
-    
-    // Primary saturation (arctangent for smooth tape curve)
-    const primarySat = (2 / Math.PI) * Math.atan(driven * 1.2);
-    
-    // Secondary saturation (tanh for hard limiting)
-    const secondarySat = Math.tanh(driven * 1.0);
-    
-    // Blend based on signal level (more tanh at high levels)
-    const blend = Math.min(1, Math.abs(driven) * 0.3);
-    const saturated = primarySat * (1 - blend) + secondarySat * blend;
-    
-    // === TAPE HARMONIC COLORATION ===
-    // Studer A800 spec: Harmonics scaled by drive for audible THD control
-    // PATCH v2: Harmonics scale with drive — audible but not overwhelming
-    const harmonicScale = 1 + driveAmount * 2; // 1x at 0%, 3x at 100%
-    const thirdHarmonic = 0.015 * harmonicScale * Math.sin(3 * Math.PI * saturated);
-    const fifthHarmonic = 0.008 * harmonicScale * Math.sin(5 * Math.PI * saturated);
-    const seventhHarmonic = 0.003 * harmonicScale * Math.sin(7 * Math.PI * saturated);
-    
-    // Asymmetric clipping (tape saturation is not perfectly symmetric)
-    // Studer A800 spec: ~3% asymmetry
-    const asymmetry = 0.03 * saturated * saturated;
-    
-    // Final output (UNITY - no makeup gain)
-    const finalSat = saturated + thirdHarmonic + fifthHarmonic + seventhHarmonic + asymmetry;
-    satCurve[i] = finalSat;
-  }
-  
-  hysteresisSat.curve = satCurve;
-  
-  // === OVERSAMPLING (Quality-Dependent) ===
-  // Oversampling prevents aliasing that destroys tape emulation character
-  // 4x export, 2x preview — keeps Studer emulation honest in both modes
-  hysteresisSat.oversample = quality === 'export' ? '4x' : '2x';
-  
-  // === SIGNAL CHAIN (with compensation) ===
+  output.gain.value = 1;
+
   input.connect(driveGain);
-  driveGain.connect(headBump);          // Tape head resonance
-  headBump.connect(biasShelf);          // Bias EQ
-  biasShelf.connect(tapeCompressor);    // Tape compression
-  tapeCompressor.connect(hysteresisSat); // Magnetic saturation
-  hysteresisSat.connect(dcBlocker);     // DC blocker
-  dcBlocker.connect(tapeRolloff);       // High-frequency loss
-  tapeRolloff.connect(compTrim);        // Compensation trim
+  driveGain.connect(headBump);
+  headBump.connect(biasShelf);
+  biasShelf.connect(tapeCompressor);
+  tapeCompressor.connect(hysteresisSat);
+  hysteresisSat.connect(dcBlocker);
+  dcBlocker.connect(tapeRolloff);
+  tapeRolloff.connect(compTrim);
   compTrim.connect(output);
-  
-  // === UNITY GAIN OUTPUT (Critical) ===
-  // Base unity, compensation is negative trim
-  output.gain.value = 1.0;
-  compTrim.gain.value = 1.0; // Will be updated based on drive
-  
-  // === INITIAL DRIVE + COMPENSATION ===
-  // Initial drive + preGain
-  const preGain = Math.max(0.1, 1.0 + driveAmount * 0.8); // PATCH v2: Match drive range
-  
-  // Apply preGain
+
+  const initialDrive = clamp01(config.baseDrive);
+  const preGain = physicalPreGain(initialDrive, config.genreMultiplier);
   driveGain.gain.value = preGain;
-  
-  // Compensation from preGain dB (NEW)
-  const preGainDB = linearToDb(preGain);
-  
-  const compProfile = getCompProfile('default');
-  const compDB = tapeCompFromPreGainDB(preGainDB, config.genreMultiplier);
-  const scaledCompDB = compDB * compProfile.tapeCompScale;
-  
-  compTrim.gain.value = dbToLinear(scaledCompDB);
-  
-  console.log(`📼 Tape: drive=${driveAmount.toFixed(2)}, preGain=${preGain.toFixed(3)}x (${preGainDB.toFixed(2)}dB), genreMult=${config.genreMultiplier.toFixed(2)}, comp=${scaledCompDB.toFixed(2)}dB, speed=${config.tapeSpeed}IPS`);
-  
-  // === RETURN STAGE ===
+  compTrim.gain.value = compensationGain(
+    preGain,
+    config.genreMultiplier,
+    'default'
+  );
+
+  console.log(
+    `📼 Tape: drive=${initialDrive.toFixed(2)}, preGain=${preGain.toFixed(3)}x, genreMult=${config.genreMultiplier.toFixed(2)}, speed=${config.tapeSpeed}IPS`
+  );
+
   return {
     input,
     output,
     params: {
-      drive: driveGain.gain, // Expose for live updates
-      comp: compTrim.gain,   // Expose for live updates
+      drive: driveGain.gain,
+      comp: compTrim.gain,
     },
-    setDrive(ctx: BaseAudioContext, drive: number, genreMult: number, genreId: string) {
-      const compProfile = getCompProfile(genreId);
-      
-      // Physical preGain from control signal — PATCH v2: Match drive range
-      const preGain = Math.max(0.1, 1.0 + drive * 0.8);
-      const preGainDB = linearToDb(preGain);
-      
-      // Compensation from physical signal
-      const compDB = tapeCompFromPreGainDB(preGainDB, genreMult);
-      const scaledCompDB = compDB * compProfile.tapeCompScale;
-      
-      smoothParam(ctx, driveGain.gain, preGain, 0.05);
-      smoothParam(ctx, compTrim.gain, dbToLinear(scaledCompDB), 0.05);
+    setDrive(ctx, drive, genreMult, genreId) {
+      const pre = physicalPreGain(drive, genreMult);
+      smoothParam(ctx, driveGain.gain, pre, 0.05);
+      smoothParam(
+        ctx,
+        compTrim.gain,
+        compensationGain(pre, genreMult, genreId),
+        0.05
+      );
     },
-    dispose: () => {
+    dispose() {
       try { input.disconnect(); } catch {}
       try { driveGain.disconnect(); } catch {}
       try { headBump.disconnect(); } catch {}
@@ -228,69 +202,28 @@ export function buildTapeStage(
   };
 }
 
-/**
- * Get genre-specific tape configuration
- */
-export function getTapeConfig(genreId: string, circuitDrive: number): TapeConfig {
-  // Base drive from circuit drive control (0-100)
-  const baseDrive = circuitDrive / 100;
-  
+export function getTapeConfig(
+  genreId: string,
+  circuitDrive: number
+): TapeConfig {
+  const baseDrive = clamp01(circuitDrive / 100);
+
   switch (genreId) {
     case 'trance':
-      return {
-        baseDrive,
-        genreMultiplier: 0.9,
-        biasAmount: 0.6, // Higher bias = brighter, less distortion
-        tapeSpeed: 30, // High speed = extended highs
-      };
+      return { baseDrive, genreMultiplier: 0.9, biasAmount: 0.6, tapeSpeed: 30 };
     case 'house':
-      return {
-        baseDrive,
-        genreMultiplier: 1.0,
-        biasAmount: 0.5, // Balanced
-        tapeSpeed: 15, // Standard speed
-      };
+      return { baseDrive, genreMultiplier: 1.0, biasAmount: 0.5, tapeSpeed: 15 };
     case 'techno':
-      return {
-        baseDrive,
-        genreMultiplier: 1.15,
-        biasAmount: 0.3, // Low bias = darker, more distortion
-        tapeSpeed: 15,
-      };
+      return { baseDrive, genreMultiplier: 1.1, biasAmount: 0.35, tapeSpeed: 15 };
     case 'rnb':
-      return {
-        baseDrive,
-        genreMultiplier: 0.7,
-        biasAmount: 0.7, // Clean, minimal distortion
-        tapeSpeed: 30, // High fidelity
-      };
+      return { baseDrive, genreMultiplier: 0.7, biasAmount: 0.65, tapeSpeed: 30 };
     case 'realprog':
-      return {
-        baseDrive,
-        genreMultiplier: 0.95,
-        biasAmount: 0.55,
-        tapeSpeed: 15,
-      };
+      return { baseDrive, genreMultiplier: 0.9, biasAmount: 0.55, tapeSpeed: 15 };
     case 'modernprog':
-      return {
-        baseDrive,
-        genreMultiplier: 1.05,
-        biasAmount: 0.5,
-        tapeSpeed: 15,
-      };
+      return { baseDrive, genreMultiplier: 1.0, biasAmount: 0.5, tapeSpeed: 15 };
     case 'tape':
-      return {
-        baseDrive,
-        genreMultiplier: 1.2,
-        biasAmount: 0.35, // Vintage = low bias, maximum color
-        tapeSpeed: 7.5, // Slow speed = vintage character
-      };
+      return { baseDrive, genreMultiplier: 1.15, biasAmount: 0.35, tapeSpeed: 7.5 };
     default:
-      return {
-        baseDrive,
-        genreMultiplier: 1.0,
-        biasAmount: 0.5,
-        tapeSpeed: 15,
-      };
+      return { baseDrive, genreMultiplier: 1.0, biasAmount: 0.5, tapeSpeed: 15 };
   }
 }
