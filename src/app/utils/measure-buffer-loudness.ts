@@ -16,11 +16,8 @@ export { INPUT_ANALYSIS_MAX_SECONDS, sliceBufferHead };
 export { preloadLufsMeterWorkletScript };
 
 export interface MeasureBufferLoudnessOptions {
-  /** Cap offline render length (upload path). Default: full buffer. */
   maxDurationSec?: number;
-  /** Abort offline render and fall back to RMS if exceeded. */
   renderTimeoutMs?: number;
-  /** Abort worklet module load if exceeded. */
   moduleLoadTimeoutMs?: number;
 }
 
@@ -40,7 +37,6 @@ const EMPTY_LUFS: LufsMeterData = {
   totalBlocks: 0,
 };
 
-/** Offline loudness result — includes peak momentary over the full buffer. */
 export interface BufferLoudnessResult extends LufsMeterData {
   maxMomentary: number;
 }
@@ -50,10 +46,6 @@ const EMPTY_BUFFER_LUFS: BufferLoudnessResult = {
   maxMomentary: -Infinity,
 };
 
-/**
- * Measure integrated / momentary LUFS on a rendered AudioBuffer using the same
- * BS.1770 worklet as live playback (parity guaranteed).
- */
 export async function measureBufferLoudness(
   buffer: AudioBuffer,
   options: MeasureBufferLoudnessOptions = {}
@@ -74,12 +66,16 @@ export async function measureBufferLoudness(
   const moduleLoadTimeoutMs = options.moduleLoadTimeoutMs ?? 15_000;
 
   try {
-    await ensureLufsMeterWorkletModule(offline, {
-      moduleLoadTimeoutMs,
-      retries: 1,
-    });
+    await withTimeout(
+      ensureLufsMeterWorkletModule(offline, {
+        moduleLoadTimeoutMs,
+        retries: 1,
+      }),
+      moduleLoadTimeoutMs + 1000,
+      'LUFS worklet module load'
+    );
   } catch (err) {
-    console.warn('LUFS worklet unavailable for offline measure (using RMS estimate):', err);
+    console.warn('LUFS worklet unavailable for offline measure:', err);
     return { ...EMPTY_BUFFER_LUFS };
   }
 
@@ -120,12 +116,7 @@ export async function measureBufferLoudness(
   source.start(0);
 
   try {
-    await Promise.race([
-      offline.startRendering(),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('LUFS offline render timeout')), renderTimeoutMs);
-      }),
-    ]);
+    await withTimeout(offline.startRendering(), renderTimeoutMs, 'LUFS offline render');
   } catch (err) {
     console.warn('LUFS offline measure failed:', err);
     meter.disconnect();
@@ -133,7 +124,6 @@ export async function measureBufferLoudness(
     return { ...EMPTY_BUFFER_LUFS };
   }
 
-  // Allow final port message to arrive
   await new Promise((r) => setTimeout(r, 0));
 
   meter.disconnect();
@@ -145,7 +135,6 @@ export async function measureBufferLoudness(
   };
 }
 
-/** Resolve integrated LUFS with RMS fallback when the worklet is unavailable. */
 export function resolveIntegratedLUFS(
   loudness: BufferLoudnessResult,
   rmsFallbackLUFS: number
@@ -155,6 +144,12 @@ export function resolveIntegratedLUFS(
   }
   return rmsFallbackLUFS;
 }
+
+export type DeliveryQualityStatus =
+  | 'pass'
+  | 'loudness-limited'
+  | 'peak-fail'
+  | 'measurement-fail';
 
 export interface ExportQualityReport {
   integratedLUFS: number;
@@ -170,6 +165,44 @@ export interface ExportQualityReport {
   lufsDelta: number;
   onTarget: boolean;
   peakOk: boolean;
+  deliveryStatus: DeliveryQualityStatus;
+  deliveryMessage: string;
+}
+
+function deliveryStatusFor(
+  integratedLUFS: number,
+  targetLUFS: number,
+  truePeakDBTP: number,
+  ceilingDBTP: number,
+  toleranceLU: number
+): { status: DeliveryQualityStatus; message: string } {
+  if (!Number.isFinite(integratedLUFS) || integratedLUFS === -Infinity) {
+    return {
+      status: 'measurement-fail',
+      message: 'Loudness measurement was unavailable; do not treat this export as delivery-verified.',
+    };
+  }
+
+  if (truePeakDBTP > ceilingDBTP + 0.05) {
+    return {
+      status: 'peak-fail',
+      message: `True peak ${truePeakDBTP.toFixed(1)} dBTP exceeds the ${ceilingDBTP.toFixed(1)} dBTP ceiling.`,
+    };
+  }
+
+  const delta = integratedLUFS - targetLUFS;
+  if (Math.abs(delta) <= toleranceLU) {
+    return {
+      status: 'pass',
+      message: `Delivery verified at ${integratedLUFS.toFixed(1)} LUFS / ${truePeakDBTP.toFixed(1)} dBTP.`,
+    };
+  }
+
+  const direction = delta < 0 ? 'below' : 'above';
+  return {
+    status: 'loudness-limited',
+    message: `Best verified result is ${integratedLUFS.toFixed(1)} LUFS, ${Math.abs(delta).toFixed(1)} LU ${direction} the requested target, while respecting the true-peak ceiling.`,
+  };
 }
 
 export function buildExportQualityReport(
@@ -185,6 +218,13 @@ export function buildExportQualityReport(
 
   const truePeakDBTP = peaks.truePeakDBTP;
   const digitalPeakDB = peaks.digitalPeakDB;
+  const delivery = deliveryStatusFor(
+    integratedLUFS,
+    targetLUFS,
+    truePeakDBTP,
+    ceilingDBTP,
+    toleranceLU
+  );
 
   return {
     integratedLUFS,
@@ -202,5 +242,7 @@ export function buildExportQualityReport(
       integratedLUFS !== -Infinity &&
       Math.abs(integratedLUFS - targetLUFS) <= toleranceLU,
     peakOk: truePeakDBTP <= ceilingDBTP + 0.05,
+    deliveryStatus: delivery.status,
+    deliveryMessage: delivery.message,
   };
 }

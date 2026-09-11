@@ -3,6 +3,7 @@
 
 import { AudioAnalysisResult } from '../utils/audio-analyzer';
 import { GearProfileId, gearProfiles } from '../components/gear-selector';
+import { setMasteringSourceAnalysis } from './mastering-source-analysis';
 
 export interface AIMasteringRecommendation {
   circuitDrive: number;           // 0-100 THD knob
@@ -18,6 +19,8 @@ export class AIMasteringEngine {
    * Analyze input audio and recommend optimal mastering settings
    */
   static recommend(analysis: AudioAnalysisResult): AIMasteringRecommendation {
+    setMasteringSourceAnalysis(analysis);
+
     let circuitDrive = 50;
     let logicMode: 'brickwall' | 'dynamics' = 'dynamics';
     let gearProfile: GearProfileId = 'progressivehouse';
@@ -73,10 +76,10 @@ export class AIMasteringEngine {
   private static selectLogicModeForGenre(genre: string): 'brickwall' | 'dynamics' {
     // Aggressive genres use brickwall, organic/dynamic genres use dynamics
     const brickwallGenres = [
-      'Hardstyle', 'Hardcore', 'Hard Techno', 'Psytrance', 
+      'Hardstyle', 'Hardcore', 'Hard Techno', 'Psytrance',
       'Dubstep', 'Techno', 'EDM'
     ];
-    
+
     return brickwallGenres.some(g => genre.includes(g)) ? 'brickwall' : 'dynamics';
   }
 

@@ -1,5 +1,5 @@
 // Audio Analysis Utility for LATHAM AUDIO AI MASTERING SUITE
-// ITU-R BS.1770-4 compliant LUFS measurement + spectral analysis
+// ITU-R BS.1770-4 compliant LUFS measurement + FFT spectral analysis
 
 import {
   measureBufferLoudness,
@@ -7,22 +7,23 @@ import {
   INPUT_ANALYSIS_MAX_SECONDS,
 } from './measure-buffer-loudness';
 import { analysisFeatureBuffer } from './analysis-buffer-slice';
+import { analyzeFFTSpectralBalance } from './fft-spectral-balance';
 import type { AudioAnalysis } from '../services/audio-processor';
 
 export interface AudioAnalysisResult {
-  lufs: number;          // Integrated LUFS (BS.1770 when async path used)
-  truePeak: number;      // True peak in dBTP
-  digitalPeakDB: number; // Sample peak in dBFS
-  dynamicRange: number;  // DR value (crest factor based)
-  rms: number;           // RMS level in dB
+  lufs: number;
+  truePeak: number;
+  digitalPeakDB: number;
+  dynamicRange: number;
+  rms: number;
   spectralBalance: {
-    bass: number;        // <200Hz energy
-    mids: number;        // 200Hz-4kHz energy
-    highs: number;       // >4kHz energy
+    bass: number;        // <200 Hz frequency-bin energy
+    mids: number;        // 200 Hz–4 kHz frequency-bin energy
+    highs: number;       // >4 kHz frequency-bin energy up to 20 kHz/Nyquist
   };
-  suggestedGenre: string; // Auto-detected genre based on spectral content
-  isHeritage: boolean;    // True if DR > 12dB (high dynamic range)
-  tempo?: number;          // BPM detection (optional)
+  suggestedGenre: string;
+  isHeritage: boolean;
+  tempo?: number;
 }
 
 interface AudioFeatures {
@@ -50,13 +51,13 @@ function analyzeAudioFeatures(audioBuffer: AudioBuffer): AudioFeatures {
     truePeak = Math.max(truePeak, Math.abs(sample));
   }
 
-  const rms = Math.sqrt(sumSquares / numSamples);
+  const rms = Math.sqrt(sumSquares / Math.max(1, numSamples));
   const rmsDb = 20 * Math.log10(Math.max(rms, 1e-12));
   const samplePeakDB = 20 * Math.log10(Math.max(truePeak, 1e-12));
-  const rmsFallbackLUFS = -0.691 + 10 * Math.log10(rms * rms);
+  const rmsFallbackLUFS = -0.691 + 10 * Math.log10(Math.max(rms * rms, 1e-12));
 
   const dynamicRange = calculateDynamicRange(channelData);
-  const spectralBalance = analyzeSpectralContent(featureBuffer);
+  const spectralBalance = analyzeFFTSpectralBalance(featureBuffer).broad;
   const suggestedGenre = detectGenre(spectralBalance, dynamicRange);
   const isHeritage = dynamicRange > 12;
 
@@ -89,10 +90,6 @@ function featuresToResult(
   };
 }
 
-/**
- * Analyze an already-decoded buffer with BS.1770 integrated LUFS and true peak.
- * Preferred path for upload / mix setup.
- */
 export async function analyzeAudioBufferAsync(
   audioBuffer: AudioBuffer
 ): Promise<AudioAnalysisResult> {
@@ -114,7 +111,7 @@ export async function analyzeAudioBufferAsync(
   );
 }
 
-/** Mix-setup UI result from a single AudioProcessor analysis pass (no duplicate worklet renders). */
+/** Mix-setup UI result from a single AudioProcessor analysis pass. */
 export function buildInputAnalysisFromProcessor(
   audioBuffer: AudioBuffer,
   analysis: AudioAnalysis
@@ -142,7 +139,6 @@ export function analyzeAudioBuffer(audioBuffer: AudioBuffer): AudioAnalysisResul
   );
 }
 
-/** Rough ISP headroom estimate when worklet is unavailable (sync path only). */
 function peaksApproxDB(samplePeakDB: number): number {
   if (samplePeakDB > -0.1) return 0.3;
   if (samplePeakDB > -3) return 0.15;
@@ -164,6 +160,7 @@ export async function analyzeAudioFile(file: File): Promise<AudioAnalysisResult>
 function calculateDynamicRange(samples: Float32Array): number {
   const windowSize = 4096;
   const numWindows = Math.floor(samples.length / windowSize);
+  if (numWindows === 0) return 0;
 
   const peakValues: number[] = [];
   const rmsValues: number[] = [];
@@ -176,8 +173,8 @@ function calculateDynamicRange(samples: Float32Array): number {
     let sumSquares = 0;
 
     for (let i = start; i < end; i++) {
-      const sample = Math.abs(samples[i]);
-      peak = Math.max(peak, sample);
+      const absSample = Math.abs(samples[i]);
+      peak = Math.max(peak, absSample);
       sumSquares += samples[i] * samples[i];
     }
 
@@ -188,140 +185,67 @@ function calculateDynamicRange(samples: Float32Array): number {
   peakValues.sort((a, b) => b - a);
   rmsValues.sort((a, b) => b - a);
 
-  const percentile20Index = Math.floor(peakValues.length * 0.2);
-  const peak20 = peakValues[percentile20Index];
-  const rms20 = rmsValues[percentile20Index];
-
+  const percentile20Index = Math.min(
+    peakValues.length - 1,
+    Math.floor(peakValues.length * 0.2)
+  );
+  const peak20 = Math.max(peakValues[percentile20Index], 1e-12);
+  const rms20 = Math.max(rmsValues[percentile20Index], 1e-12);
   const dr = 20 * Math.log10(peak20 / rms20);
 
-  return Math.max(0, Math.min(20, dr));
+  return Number.isFinite(dr) ? Math.max(0, Math.min(20, dr)) : 0;
 }
 
-function analyzeSpectralContent(audioBuffer: AudioBuffer): { bass: number; mids: number; highs: number } {
-  const channelData = audioBuffer.getChannelData(0);
-  const segmentSize = 4096;
-  const numSegments = Math.floor(channelData.length / segmentSize);
-
-  let bassEnergy = 0;
-  let midsEnergy = 0;
-  let highsEnergy = 0;
-
-  for (let s = 0; s < Math.min(numSegments, 10); s++) {
-    const start = s * segmentSize;
-
-    let lowFreqEnergy = 0;
-    for (let i = start; i < start + segmentSize / 4; i += 8) {
-      lowFreqEnergy += Math.abs(channelData[i]);
-    }
-
-    let midFreqEnergy = 0;
-    for (let i = start; i < start + segmentSize / 2; i += 4) {
-      midFreqEnergy += Math.abs(channelData[i]);
-    }
-
-    let highFreqEnergy = 0;
-    for (let i = start; i < start + segmentSize - 1; i++) {
-      highFreqEnergy += Math.abs(channelData[i + 1] - channelData[i]);
-    }
-
-    bassEnergy += lowFreqEnergy;
-    midsEnergy += midFreqEnergy;
-    highsEnergy += highFreqEnergy;
-  }
-
-  const total = bassEnergy + midsEnergy + highsEnergy;
-
-  return {
-    bass: (bassEnergy / total) * 100,
-    mids: (midsEnergy / total) * 100,
-    highs: (highsEnergy / total) * 100,
-  };
-}
-
-function detectGenre(spectral: { bass: number; mids: number; highs: number }, dr: number): string {
+function detectGenre(
+  spectral: { bass: number; mids: number; highs: number },
+  dr: number
+): string {
   if (dr > 12 && spectral.mids > 35) {
     return spectral.highs > 25 ? 'Jazz' : 'Classical';
   }
-
-  if (dr > 14) {
-    return 'Cinematic';
-  }
-
-  if (spectral.mids > 45 && spectral.bass < 25) {
-    return 'Podcast';
-  }
+  if (dr > 14) return 'Cinematic';
+  if (spectral.mids > 45 && spectral.bass < 25) return 'Podcast';
 
   if (spectral.bass > 50 && dr < 5) {
     return spectral.bass > 55 ? 'Hardcore' : 'Hardstyle';
   }
-
-  if (spectral.bass > 45 && spectral.mids > 35 && dr < 7) {
-    return 'Dubstep';
-  }
-
-  if (spectral.bass > 42 && spectral.highs > 25 && dr < 7) {
-    return 'Drum & Bass';
-  }
-
-  if (spectral.bass > 40 && spectral.mids < 35 && dr < 9) {
-    return 'Trap';
-  }
-
-  if (spectral.bass > 38 && spectral.highs > 30 && dr >= 7 && dr <= 10) {
-    return 'Future Bass';
-  }
-
-  if (spectral.bass > 45 && spectral.highs < 20 && dr < 6) {
-    return 'Hard Techno';
-  }
-
+  if (spectral.bass > 45 && spectral.mids > 35 && dr < 7) return 'Dubstep';
+  if (spectral.bass > 42 && spectral.highs > 25 && dr < 7) return 'Drum & Bass';
+  if (spectral.bass > 40 && spectral.mids < 35 && dr < 9) return 'Trap';
+  if (spectral.bass > 38 && spectral.highs > 30 && dr >= 7 && dr <= 10) return 'Future Bass';
+  if (spectral.bass > 45 && spectral.highs < 20 && dr < 6) return 'Hard Techno';
   if (spectral.bass > 40 && spectral.highs < 25 && dr < 8) {
     return spectral.highs > 20 ? 'Melodic Techno' : 'Techno';
   }
+  if (spectral.bass > 38 && spectral.highs > 28 && dr < 7) return 'Psytrance';
 
-  if (spectral.bass > 38 && spectral.highs > 28 && dr < 7) {
-    return 'Psytrance';
-  }
-
-  if (spectral.highs > 30 && spectral.bass >= 32 && spectral.bass <= 40 && dr >= 7 && dr <= 10) {
+  if (
+    spectral.highs > 30 &&
+    spectral.bass >= 32 &&
+    spectral.bass <= 40 &&
+    dr >= 7 &&
+    dr <= 10
+  ) {
     return spectral.mids > 35 ? 'Uplifting Trance' : 'Progressive Trance';
   }
 
   if (spectral.bass > 38 && spectral.bass < 45 && spectral.mids < 32 && dr >= 9) {
     return 'Deep House';
   }
-
   if (spectral.bass >= 35 && spectral.bass < 42 && spectral.mids > 32 && dr >= 7 && dr <= 9) {
     return 'Tech House';
   }
-
   if (spectral.bass >= 35 && spectral.bass < 42 && spectral.highs > 25 && dr >= 8 && dr <= 11) {
     return 'Progressive House';
   }
-
-  if (spectral.bass >= 32 && spectral.bass < 40 && dr >= 8 && dr <= 10) {
-    return 'House';
-  }
-
-  if (spectral.bass >= 30 && spectral.bass < 38 && spectral.mids > 32 && dr >= 9) {
-    return 'UK Garage';
-  }
-
+  if (spectral.bass >= 32 && spectral.bass < 40 && dr >= 8 && dr <= 10) return 'House';
+  if (spectral.bass >= 30 && spectral.bass < 38 && spectral.mids > 32 && dr >= 9) return 'UK Garage';
   if (spectral.mids > 35 && spectral.bass >= 32 && spectral.bass < 40 && dr >= 8 && dr <= 11) {
     return 'Breakbeat';
   }
-
-  if (spectral.mids > 35 && spectral.bass < 35 && dr > 10) {
-    return 'R&B / Soul';
-  }
-
-  if (spectral.mids > 35 && dr >= 8 && dr <= 12) {
-    return 'Rock';
-  }
-
-  if (spectral.bass > 35 && dr < 9) {
-    return 'EDM';
-  }
+  if (spectral.mids > 35 && spectral.bass < 35 && dr > 10) return 'R&B / Soul';
+  if (spectral.mids > 35 && dr >= 8 && dr <= 12) return 'Rock';
+  if (spectral.bass > 35 && dr < 9) return 'EDM';
 
   return 'Progressive House';
 }

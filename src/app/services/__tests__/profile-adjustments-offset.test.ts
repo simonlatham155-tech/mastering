@@ -4,18 +4,19 @@ import {
   profileAdjustmentsToUserOverrides,
 } from '../app-processing-context';
 
-describe('profile adjustment offsets', () => {
-  it('passes slider values as genre offsets (0 = no extra EQ)', () => {
-    const overrides = profileAdjustmentsToUserOverrides(
-      { lowShelfBoost: 0, midRangeAdjust: 0, highShelfBoost: 0, stereoWidth: 50 },
-      'deephouse'
-    );
-    expect(overrides.bassTilt).toBe(0);
-    expect(overrides.mudCut).toBe(0);
-    expect(overrides.airTilt).toBe(0);
-  });
+const baseDynamics = {
+  inputTrimDB: null,
+  outputTrimDB: 0,
+  sslGlue: 'auto' as const,
+  autoStageOnExport: true,
+  autoStageLive: false,
+  limiterCeilingDBTP: null,
+  forceMonoBass: false,
+  monoBassHz: 120,
+};
 
-  it('applies genre defaults when offsets are zero', () => {
+describe('profile adjustment offsets', () => {
+  it('cancels legacy fixed genre EQ when the engineer requests zero offset', () => {
     const plan = buildAppProcessingPlan({
       gearProfile: 'deephouse',
       exportPreset: 'spotify',
@@ -27,24 +28,35 @@ describe('profile adjustment offsets', () => {
         highShelfBoost: 0,
         stereoWidth: 50,
       },
-      proDynamics: {
-        inputTrimDB: null,
-        outputTrimDB: 0,
-        sslGlue: 'auto',
-        autoStageOnExport: true,
-        autoStageLive: false,
-        limiterCeilingDBTP: null,
-        forceMonoBass: false,
-        monoBassHz: 120,
-      },
+      proDynamics: baseDynamics,
     });
 
-    expect(plan.genreBehavior.bassTilt).toBe(1);
-    expect(plan.genreBehavior.mudCut).toBe(-1);
-    expect(plan.genreBehavior.airTilt).toBe(-2);
+    expect(plan.genreBehavior.bassTilt).toBe(0);
+    expect(plan.genreBehavior.mudCut).toBe(0);
+    expect(plan.genreBehavior.airTilt).toBe(0);
   });
 
-  it('adds user offset on top of genre defaults', () => {
+  it('keeps a no-analysis source tonally neutral instead of applying genre defaults', () => {
+    const plan = buildAppProcessingPlan({
+      gearProfile: 'deephouse',
+      exportPreset: 'spotify',
+      logicMode: 'dynamics',
+      circuitDrive: 50,
+      profileAdjustments: {
+        lowShelfBoost: 0,
+        midRangeAdjust: 0,
+        highShelfBoost: 0,
+        stereoWidth: 50,
+      },
+      proDynamics: baseDynamics,
+    });
+
+    expect(plan.genreBehavior.bassTilt).toBe(0);
+    expect(plan.genreBehavior.mudCut).toBe(0);
+    expect(plan.genreBehavior.airTilt).toBe(0);
+  });
+
+  it('applies engineer offsets directly on top of the source-relative correction', () => {
     const plan = buildAppProcessingPlan({
       gearProfile: 'deephouse',
       exportPreset: 'spotify',
@@ -56,21 +68,12 @@ describe('profile adjustment offsets', () => {
         highShelfBoost: 1.5,
         stereoWidth: 50,
       },
-      proDynamics: {
-        inputTrimDB: null,
-        outputTrimDB: 0,
-        sslGlue: 'auto',
-        autoStageOnExport: true,
-        autoStageLive: false,
-        limiterCeilingDBTP: null,
-        forceMonoBass: false,
-        monoBassHz: 120,
-      },
+      proDynamics: baseDynamics,
     });
 
-    expect(plan.genreBehavior.bassTilt).toBe(3);
-    expect(plan.genreBehavior.mudCut).toBe(-2);
-    expect(plan.genreBehavior.airTilt).toBe(-0.5);
+    expect(plan.genreBehavior.bassTilt).toBe(2);
+    expect(plan.genreBehavior.mudCut).toBe(-1);
+    expect(plan.genreBehavior.airTilt).toBe(1.5);
   });
 
   it('passes monoBassHz when forceMonoBass is null (genre default)', () => {
@@ -78,12 +81,7 @@ describe('profile adjustment offsets', () => {
       { lowShelfBoost: 0, midRangeAdjust: 0, highShelfBoost: 0, stereoWidth: 50 },
       'dubstep',
       {
-        inputTrimDB: null,
-        outputTrimDB: 0,
-        sslGlue: 'auto',
-        autoStageOnExport: true,
-        autoStageLive: false,
-        limiterCeilingDBTP: null,
+        ...baseDynamics,
         forceMonoBass: null,
         monoBassHz: 95,
       }
@@ -98,12 +96,7 @@ describe('profile adjustment offsets', () => {
       { lowShelfBoost: 0, midRangeAdjust: 0, highShelfBoost: 0, stereoWidth: 50 },
       'dubstep',
       {
-        inputTrimDB: null,
-        outputTrimDB: 0,
-        sslGlue: 'auto',
-        autoStageOnExport: true,
-        autoStageLive: false,
-        limiterCeilingDBTP: null,
+        ...baseDynamics,
         forceMonoBass: false,
         monoBassHz: 95,
       }

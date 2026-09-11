@@ -12,6 +12,7 @@ import type { GearProfileId } from '../components/gear-selector';
 import type { ExportPresetId } from '../data/export-presets';
 import { getExportPreset } from '../data/export-presets';
 import { getGenrePreset } from '../data/genre-presets';
+import { calculateGenreCorrection } from '../data/genre-target-space';
 import { resolveProcessingPlan, type ProcessingPlan, type UserOverrides } from '../data/preset-resolution';
 import { finiteDB } from '../utils/finite-audio';
 import {
@@ -23,6 +24,7 @@ import type { ProcessingSettings } from '../services/audio-processor';
 import type { AIMasteringRecommendation } from '../services/ai-mastering-engine';
 import type { RealtimeAudioPlayer } from '../services/realtime-audio-player';
 import { getSuggestedProDynamics } from '../utils/suggested-settings';
+import { getMasteringSourceAnalysis } from './mastering-source-analysis';
 
 export type LogicMode = 'brickwall' | 'dynamics';
 
@@ -62,9 +64,24 @@ const NEUTRAL_PROFILE_ADJUSTMENTS: ProfileAdjustments = {
 
 export { NEUTRAL_PROFILE_ADJUSTMENTS };
 
+function resolveAutomaticGenreCorrection(gearProfile: GearProfileId) {
+  const source = getMasteringSourceAnalysis();
+  return source ? calculateGenreCorrection(gearProfile, source) : null;
+}
+
 /**
- * Sliders store user offsets from the active genre preset (0 = genre default).
- * Harmonic color comes from the THD knob — not duplicated here.
+ * Profile sliders are engineer offsets on top of the calculated source -> genre correction.
+ *
+ * The legacy ProcessingPlan resolver still adds the old genre bias internally, so this
+ * adapter subtracts that legacy baseline. The final DSP therefore receives:
+ *
+ *   calculated genre correction + engineer offset
+ *
+ * rather than:
+ *
+ *   fixed genre EQ + engineer offset
+ *
+ * Harmonic colour remains controlled separately by the THD/rack stages.
  */
 export function profileAdjustmentsToUserOverrides(
   profileAdjustments: ProfileAdjustments,
@@ -72,11 +89,27 @@ export function profileAdjustmentsToUserOverrides(
   proDynamics?: ProDynamicsSettings,
   rackStages?: RackStageOverrides
 ): UserOverrides {
+  const genre = getGenrePreset(gearProfile);
+  const correction = resolveAutomaticGenreCorrection(gearProfile);
+
+  const autoBass = correction?.bassTiltDB ?? 0;
+  const autoMud = correction?.mudCutDB ?? 0;
+  const autoAir = correction?.airTiltDB ?? 0;
+  const autoWidth = correction?.widthOffset ?? 0;
+  const manualWidth = (profileAdjustments.stereoWidth - 50) / 100 * 0.6;
+
+  const legacyBass = genre?.biases.bassTilt ?? 0;
+  const legacyMud = genre?.biases.mudCut ?? 0;
+  const legacyAir = genre?.biases.airTilt ?? 0;
+  const legacyWidth = genre?.biases.width ?? 1;
+
   const overrides: UserOverrides = {
-    width: (profileAdjustments.stereoWidth - 50) / 100 * 0.6,
-    bassTilt: profileAdjustments.lowShelfBoost,
-    mudCut: profileAdjustments.midRangeAdjust,
-    airTilt: profileAdjustments.highShelfBoost,
+    // Subtract the legacy preset baseline because resolveProcessingPlan currently
+    // adds it. This keeps the resulting DSP value source-relative and neutral by default.
+    bassTilt: autoBass + profileAdjustments.lowShelfBoost - legacyBass,
+    mudCut: autoMud + profileAdjustments.midRangeAdjust - legacyMud,
+    airTilt: autoAir + profileAdjustments.highShelfBoost - legacyAir,
+    width: (1 + autoWidth + manualWidth) - legacyWidth,
   };
 
   if (rackStages?.transformer != null) {
@@ -138,30 +171,23 @@ export function resolveLimiterCeilingOverride(
   return proDynamics.limiterCeilingDBTP ?? undefined;
 }
 
-/** Push profile slider values to live AudioParams (call after chain build / on slider move). */
+/** Push the exact same source-relative tonal result into live AudioParams. */
 export function applyProfileAdjustmentsToPlayer(
   player: RealtimeAudioPlayer,
   gearProfile: GearProfileId,
   profileAdjustments: ProfileAdjustments
 ): void {
-  const genre = getGenrePreset(gearProfile);
-  if (!genre) return;
-
-  player.updateParameter(
-    'lowShelfGain',
-    clampCombinedBassTilt(genre.biases.bassTilt, profileAdjustments.lowShelfBoost)
-  );
-  player.updateParameter(
-    'midRangeGain',
-    clampCombinedMudCut(genre.biases.mudCut, profileAdjustments.midRangeAdjust)
-  );
-  player.updateParameter(
-    'highShelfGain',
-    clampCombinedAirTilt(genre.biases.airTilt, profileAdjustments.highShelfBoost)
-  );
-
+  const correction = resolveAutomaticGenreCorrection(gearProfile);
+  const bass = (correction?.bassTiltDB ?? 0) + profileAdjustments.lowShelfBoost;
+  const mud = (correction?.mudCutDB ?? 0) + profileAdjustments.midRangeAdjust;
+  const air = (correction?.airTiltDB ?? 0) + profileAdjustments.highShelfBoost;
   const widthOffset = (finiteDB(profileAdjustments.stereoWidth, 50) - 50) / 100 * 0.6;
-  player.updateParameter('stereoWidth', finiteDB(genre.biases.width + widthOffset, 1));
+  const width = Math.max(0.9, Math.min(1.15, 1 + (correction?.widthOffset ?? 0) + widthOffset));
+
+  player.updateParameter('lowShelfGain', clampCombinedBassTilt(0, bass));
+  player.updateParameter('midRangeGain', clampCombinedMudCut(0, mud));
+  player.updateParameter('highShelfGain', clampCombinedAirTilt(0, air));
+  player.updateParameter('stereoWidth', width);
 }
 
 export function applyProDynamicsToPlayer(
