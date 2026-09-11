@@ -41,7 +41,8 @@ export interface BatchExportSummary {
 
 /**
  * Album/batch export — same mastering pipeline as single export, per file:
- * load → analyze (per-track headroom) → export-quality render → auto-stage → WAV.
+ * load → analyze (per-track headroom + LUFS) → guarded pre-limiter drive →
+ * export-quality render → fine auto-stage → WAV.
  */
 export async function runBatchAlbumExport(
   files: File[],
@@ -73,6 +74,7 @@ export async function runBatchAlbumExport(
         exportPresetId: presetId,
         proDynamics: context.proDynamics,
         autoInputTrimDB,
+        inputLUFS: analysis.lufs,
       });
 
       rows.push({
@@ -120,6 +122,7 @@ export async function batchResultsToZip(
       truePeakDBTP: row.result.report.truePeakDBTP,
       outputTrimDB: row.result.outputTrimDB,
       inputTrimDB: row.result.inputTrimDB,
+      loudnessDriveDB: row.result.loudnessDriveDB,
     };
   });
 
