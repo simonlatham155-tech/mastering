@@ -50,7 +50,7 @@ describe('auto-staging trim correction', () => {
 });
 
 describe('delivery quality report', () => {
-  test('peakOk uses true peak vs ceiling', () => {
+  test('reports a verified pass when loudness and true peak are valid', () => {
     const report = buildExportQualityReport(
       { momentary: -10, shortTerm: -10, integrated: -14, totalBlocks: 100 },
       { truePeakDBTP: -1.1, digitalPeakDB: -1.2, ispDifference: 0.1, source: 'linear' },
@@ -59,9 +59,11 @@ describe('delivery quality report', () => {
     );
     expect(report.peakOk).toBe(true);
     expect(report.onTarget).toBe(true);
+    expect(report.deliveryStatus).toBe('pass');
+    expect(report.deliveryMessage).toContain('Delivery verified');
   });
 
-  test('flags true peak above ceiling', () => {
+  test('flags true peak above ceiling as a delivery failure', () => {
     const report = buildExportQualityReport(
       { momentary: -8, shortTerm: -8, integrated: -8, totalBlocks: 100 },
       { truePeakDBTP: 0.2, digitalPeakDB: -0.5, ispDifference: 0.7, source: 'worklet' },
@@ -69,11 +71,25 @@ describe('delivery quality report', () => {
       -0.5
     );
     expect(report.peakOk).toBe(false);
+    expect(report.deliveryStatus).toBe('peak-fail');
+  });
+
+  test('reports a transparent loudness miss instead of pretending target success', () => {
+    const report = buildExportQualityReport(
+      { momentary: -10, shortTerm: -10, integrated: -10.2, totalBlocks: 100 },
+      { truePeakDBTP: -0.6, digitalPeakDB: -0.8, ispDifference: 0.2, source: 'linear' },
+      -8,
+      -0.5
+    );
+
+    expect(report.onTarget).toBe(false);
+    expect(report.peakOk).toBe(true);
+    expect(report.deliveryStatus).toBe('loudness-limited');
+    expect(report.deliveryMessage).toContain('Best verified result');
   });
 });
 
 describe('genre × delivery matrix (plan resolution)', () => {
-  /** Hero genres for listen QA — cover club, house, trance, bass */
   const heroGenres = [
     'dnb',
     'techno',
